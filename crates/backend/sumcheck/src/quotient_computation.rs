@@ -86,21 +86,12 @@ where
     N: PrimeCharacteristicRing + Copy,
     D: Algebra<N> + Copy + MulAssign,
 {
-    // Precompute shared differences to avoid recomputation inside sumcheck_quadratic.
-    // d2 is used in both single (u2,u3) and double_b (u1,u2) quadratics.
-    // d3 is used in both single (u2,u3) and double_a (u0,u3) quadratics.
-    let d2 = u2_right - u2_left;
-    let d3 = u3_right - u3_left;
-
-    let mut c0_term_single = u3_left * u2_left;
-    let mut c2_term_single = d3 * d2;
+    let (mut c0_term_single, mut c2_term_single) = sumcheck_quadratic(((&u2_left, &u2_right), (&u3_left, &u3_right)));
     c0_term_single *= eq_val;
     c2_term_single *= eq_val;
 
-    let c0_term_double_a = u3_left * u0_left;
-    let c2_term_double_a = d3 * (u0_right - u0_left);
-    let c0_term_double_b = u2_left * u1_left;
-    let c2_term_double_b = d2 * (u1_right - u1_left);
+    let (c0_term_double_a, c2_term_double_a) = sumcheck_quadratic(((&u0_left, &u0_right), (&u3_left, &u3_right)));
+    let (c0_term_double_b, c2_term_double_b) = sumcheck_quadratic(((&u1_left, &u1_right), (&u2_left, &u2_right)));
     let mut c0_term_double = c0_term_double_a + c0_term_double_b;
     let mut c2_term_double = c2_term_double_a + c2_term_double_b;
     c0_term_double *= eq_val;
