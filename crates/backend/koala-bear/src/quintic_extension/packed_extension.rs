@@ -516,7 +516,7 @@ where
     F: QuinticExtendable,
     PF: PackedField<Scalar = F>,
 {
-    #[inline(always)]
+    #[inline]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
     }
@@ -527,7 +527,7 @@ where
     F: QuinticExtendable,
     PF: PackedField<Scalar = F>,
 {
-    #[inline(always)]
+    #[inline]
     fn mul_assign(&mut self, rhs: QuinticExtensionField<F>) {
         *self = *self * rhs;
     }
