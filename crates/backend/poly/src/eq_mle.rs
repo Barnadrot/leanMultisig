@@ -155,37 +155,22 @@ pub fn compute_eval_eq_packed<EF, const INITIALIZED: bool>(eval: &[EF], out: &mu
 where
     EF: ExtensionField<PF<EF>>,
 {
-    // It's possible for this to be called with F = EF (Despite F actually being an extension field).
-    //
-    // IMPORTANT: We previously checked here that `packing_width > 1`,
-    // but this check is **not viable** for Goldilocks on Neon or when not using `target-cpu=native`.
-    //
-    // Why? Because Neon SIMD vectors are 128 bits and Goldilocks elements are already 64 bits,
-    // so no packing happens (width stays 1), and there's no performance advantage.
-    //
-    // Be careful: this means code relying on packing optimizations should **not assume**
-    // `packing_width > 1` is always true.
     let packing_width = packing_width::<EF>();
     let log_packing_width = log2_strict_usize(packing_width);
 
     assert!(log_packing_width <= eval.len());
     assert_eq!(out.len(), 1 << (eval.len() - log_packing_width));
 
-    // If the number of variables is small, there is no need to use
-    // parallelization or packings.
+    // For the small case, compute directly in packed form via packed_eq_poly +
+    // eval_eq_with_packed_output. This avoids allocating an unpacked intermediate
+    // buffer and the costly parallel transpose (from_ext_slice).
     if eval.len() <= packing_width + 1 + LOG_NUM_THREADS {
-        // A basic recursive approach.
-        let mut output_no_packing = EF::zero_vec(1 << eval.len());
-        eval_eq_basic::<_, _, _, false>(eval, &mut output_no_packing, scalar);
-        out.par_iter_mut()
-            .zip(output_no_packing.into_par_iter().chunks(packing_width))
-            .for_each(|(out_elem, chunk)| {
-                if INITIALIZED {
-                    *out_elem += EF::ExtensionPacking::from_ext_slice(&chunk);
-                } else {
-                    *out_elem = EF::ExtensionPacking::from_ext_slice(&chunk);
-                }
-            });
+        let packed_scalar = packed_eq_poly(&eval[eval.len() - log_packing_width..], scalar);
+        eval_eq_with_packed_output::<_, _, INITIALIZED>(
+            &eval[..eval.len() - log_packing_width],
+            out,
+            packed_scalar,
+        );
     } else {
         let log_packing_width = log2_strict_usize(packing_width);
         let eval_len_min_packing = eval.len() - log_packing_width;
