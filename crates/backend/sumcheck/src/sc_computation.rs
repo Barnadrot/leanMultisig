@@ -278,7 +278,7 @@ fn handle_gkr_quotient_with_fold<'a, EF: ExtensionField<PF<EF>>, ED: AlphaPowers
             (poly, MleGroupOwned::Extension(folded))
         }
         MleGroupRef::ExtensionPacked(m) => {
-            let r = EFPacking::<EF>::from(prev_folding_factor);
+            let r = prev_folding_factor;
             let fold_ext = |u: &[EFPacking<EF>], i: usize, half: usize, quarter: usize| {
                 let left = (u[i + half] - u[i]) * r + u[i];
                 let right = (u[i + half + quarter] - u[i + quarter]) * r + u[i + quarter];
@@ -484,7 +484,6 @@ where
         MleGroupRef::ExtensionPacked(multilinears) if split_eq.is_some() => {
             assert!(!split_eq.unwrap().is_remainder_mode());
             let prev_folded_size = multilinears[0].len() / 2;
-            let prev_folding_factor_packed = EFPacking::<EF>::from(prev_folding_factor);
             sumcheck_fold_and_compute_with_split_eq(
                 multilinears,
                 degree,
@@ -493,7 +492,7 @@ where
                 extra_data,
                 missing_mul_factor,
                 compute_fold_size,
-                |m, id| (m[id + prev_folded_size] - m[id]) * prev_folding_factor_packed + m[id],
+                |m, id| (m[id + prev_folded_size] - m[id]) * prev_folding_factor + m[id],
                 |sc, pf, ed| sc.eval_packed_extension(&pf, ed),
                 packing_unpack_sum,
                 MleGroupOwned::ExtensionPacked,
@@ -501,7 +500,6 @@ where
         }
         MleGroupRef::ExtensionPacked(multilinears) => {
             let prev_folded_size = multilinears[0].len() / 2;
-            let prev_folding_factor_packed = EFPacking::<EF>::from(prev_folding_factor);
             sumcheck_fold_and_compute_core(
                 multilinears,
                 degree,
@@ -510,7 +508,7 @@ where
                 extra_data,
                 missing_mul_factor,
                 compute_fold_size,
-                |m, id| (m[id + prev_folded_size] - m[id]) * prev_folding_factor_packed + m[id],
+                |m, id| (m[id + prev_folded_size] - m[id]) * prev_folding_factor + m[id],
                 |sc, pf, ed| sc.eval_packed_extension(&pf, ed),
                 packing_unpack_sum,
                 MleGroupOwned::ExtensionPacked,
