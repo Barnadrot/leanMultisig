@@ -430,7 +430,7 @@ where
 {
     type Output = Self;
 
-    #[inline(always)]
+    #[inline]
     fn mul(self, rhs: Self) -> Self {
         let a = self.value;
         let b = rhs.value;
@@ -448,7 +448,7 @@ where
 {
     type Output = Self;
 
-    #[inline(always)]
+    #[inline]
     fn mul(self, rhs: F) -> Self {
         Self::new(F::quintic_base_mul(self.value, rhs))
     }
