@@ -188,7 +188,7 @@ pub fn compute_product_sumcheck_polynomial_base_ext_packed<
 
     type Acc<const D: usize> = ([u128; D], [i128; D]);
 
-    let chunk_size = 2048;
+    let chunk_size = 1024;
 
     let (c0_acc, c2_acc) = pol_0[..half]
         .par_chunks(chunk_size)
