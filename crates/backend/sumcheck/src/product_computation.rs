@@ -206,15 +206,16 @@ pub fn compute_product_sumcheck_polynomial_base_ext_packed<
                 let x1_lanes = b_hi[i].as_slice();
                 let y0_coords = e_lo[i].as_basis_coefficients_slice();
                 let y1_coords = e_hi[i].as_basis_coefficients_slice();
-                // Loop lane-first so x0 and dx are hoisted out of the DIM loop
-                for lane in 0..PF::WIDTH {
-                    let x0 = x0_lanes[lane].to_unique_u32() as u64;
-                    let dx = x1_lanes[lane].to_unique_u32() as i64 - x0 as i64;
-                    for j in 0..DIM {
-                        let y0 = y0_coords[j].as_slice()[lane].to_unique_u32();
-                        let y1 = y1_coords[j].as_slice()[lane].to_unique_u32();
+                for j in 0..DIM {
+                    let y0_j = y0_coords[j].as_slice();
+                    let y1_j = y1_coords[j].as_slice();
+                    for lane in 0..PF::WIDTH {
+                        let x0 = x0_lanes[lane].to_unique_u32() as u64;
+                        let y0 = y0_j[lane].to_unique_u32();
+                        let y1 = y1_j[lane].to_unique_u32();
                         c0[j] += (y0 as u64 * x0) as u128;
-                        c2[j] += (y1 as i64 - y0 as i64) as i128 * dx as i128;
+                        c2[j] += (y1 as i64 - y0 as i64) as i128
+                            * (x1_lanes[lane].to_unique_u32() as i64 - x0 as i64) as i128;
                     }
                 }
             }
