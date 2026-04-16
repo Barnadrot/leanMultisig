@@ -218,12 +218,11 @@ where
     let eq_lo = &split_eq.eq_lo;
     let eq_hi = &split_eq.eq_hi_packed;
 
-    let zero = || (EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO);
-    let add = |a: (EP<EF>, EP<EF>, EP<EF>, EP<EF>), b: (EP<EF>, EP<EF>, EP<EF>, EP<EF>)| {
-        (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3)
-    };
+    let alpha_packed = <EP<EF> as From<EF>>::from(alpha);
+    let zero = || (EP::<EF>::ZERO, EP::<EF>::ZERO);
+    let add = |a: (EP<EF>, EP<EF>), b: (EP<EF>, EP<EF>)| (a.0 + b.0, a.1 + b.1);
 
-    let (c0s, c2s, c0d, c2d) = (0..n_lo)
+    let (c0_acc, c2_acc) = (0..n_lo)
         .into_par_iter()
         .fold(zero, |mut acc, b_lo| {
             let eq_lo_bc = <EP<EF> as From<EF>>::from(eq_lo[b_lo]);
@@ -247,25 +246,18 @@ where
                 l2 += t.2;
                 l3 += t.3;
             }
-            acc.0 += l0 * eq_lo_bc;
-            acc.1 += l1 * eq_lo_bc;
-            acc.2 += l2 * eq_lo_bc;
-            acc.3 += l3 * eq_lo_bc;
+            let c0 = l0 * alpha_packed + l2;
+            let c2 = l1 * alpha_packed + l3;
+            acc.0 += c0 * eq_lo_bc;
+            acc.1 += c2 * eq_lo_bc;
             acc
         })
         .reduce(zero, add);
 
-    finalize_polynomial(
-        c0s,
-        c2s,
-        c0d,
-        c2d,
-        alpha,
-        first_eq_factor,
-        missing_mul_factor,
-        sum,
-        crate::packing_decompose::<EF>,
-    )
+    let c0 = crate::packing_decompose::<EF>(c0_acc).into_iter().sum::<EF>();
+    let c2 = crate::packing_decompose::<EF>(c2_acc).into_iter().sum::<EF>();
+    let c1 = ((sum / missing_mul_factor) - c2 * first_eq_factor - c0) / first_eq_factor;
+    DensePolynomial::new(vec![c0 * missing_mul_factor, c1 * missing_mul_factor, c2 * missing_mul_factor])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -393,17 +385,16 @@ where
     let mut folded_u2 = unsafe { uninitialized_vec::<EP<EF>>(half) };
     let mut folded_u3 = unsafe { uninitialized_vec::<EP<EF>>(half) };
 
-    let zero = || (EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO);
-    let add = |a: (EP<EF>, EP<EF>, EP<EF>, EP<EF>), b: (EP<EF>, EP<EF>, EP<EF>, EP<EF>)| {
-        (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3)
-    };
+    let alpha_packed = <EP<EF> as From<EF>>::from(alpha);
+    let zero = || (EP::<EF>::ZERO, EP::<EF>::ZERO);
+    let add = |a: (EP<EF>, EP<EF>), b: (EP<EF>, EP<EF>)| (a.0 + b.0, a.1 + b.1);
 
     let packed_hi = split_eq.packed_hi();
     let log_packed_hi = split_eq.log_packed_hi;
     let eq_lo = &split_eq.eq_lo;
     let eq_hi = &split_eq.eq_hi_packed;
 
-    let (c0s, c2s, c0d, c2d) = {
+    let (c0_acc, c2_acc) = {
         let (fl0, fr0) = folded_u0.split_at_mut(quarter);
         let (fl1, fr1) = folded_u1.split_at_mut(quarter);
         let (fl2, fr2) = folded_u2.split_at_mut(quarter);
@@ -445,28 +436,21 @@ where
                         l2 += t.2;
                         l3 += t.3;
                     }
-                    acc.0 += l0 * eq_lo_bc;
-                    acc.1 += l1 * eq_lo_bc;
-                    acc.2 += l2 * eq_lo_bc;
-                    acc.3 += l3 * eq_lo_bc;
+                    let c0 = l0 * alpha_packed + l2;
+                    let c2 = l1 * alpha_packed + l3;
+                    acc.0 += c0 * eq_lo_bc;
+                    acc.1 += c2 * eq_lo_bc;
                     acc
                 },
             )
             .reduce(zero, add)
     };
 
+    let c0 = crate::packing_decompose::<EF>(c0_acc).into_iter().sum::<EF>();
+    let c2 = crate::packing_decompose::<EF>(c2_acc).into_iter().sum::<EF>();
+    let c1 = ((sum / missing_mul_factor) - c2 * first_eq_factor - c0) / first_eq_factor;
     (
-        finalize_polynomial(
-            c0s,
-            c2s,
-            c0d,
-            c2d,
-            alpha,
-            first_eq_factor,
-            missing_mul_factor,
-            sum,
-            crate::packing_decompose::<EF>,
-        ),
+        DensePolynomial::new(vec![c0 * missing_mul_factor, c1 * missing_mul_factor, c2 * missing_mul_factor]),
         vec![folded_u0, folded_u1, folded_u2, folded_u3],
     )
 }
