@@ -430,7 +430,7 @@ where
 {
     type Output = Self;
 
-    #[inline]
+    #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
         let a = self.value;
         let b = rhs.value;
@@ -448,7 +448,7 @@ where
 {
     type Output = Self;
 
-    #[inline]
+    #[inline(always)]
     fn mul(self, rhs: F) -> Self {
         Self::new(F::quintic_base_mul(self.value, rhs))
     }
@@ -546,7 +546,7 @@ pub fn quintic_mul<T: Copy + Sub<Output = T>>(
     ]
 }
 
-#[inline]
+#[inline(always)]
 pub(crate) fn quintic_square<F, R>(a: &[R; 5], res: &mut [R; 5])
 where
     F: Field,
