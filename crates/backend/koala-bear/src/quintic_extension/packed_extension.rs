@@ -492,7 +492,7 @@ where
 {
     type Output = Self;
 
-    #[inline]
+    #[inline(always)]
     fn mul(self, rhs: PF) -> Self {
         Self {
             value: self.value.map(|x| x * rhs),
@@ -516,7 +516,7 @@ where
     F: QuinticExtendable,
     PF: PackedField<Scalar = F>,
 {
-    #[inline]
+    #[inline(always)]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
     }
@@ -527,7 +527,7 @@ where
     F: QuinticExtendable,
     PF: PackedField<Scalar = F>,
 {
-    #[inline]
+    #[inline(always)]
     fn mul_assign(&mut self, rhs: QuinticExtensionField<F>) {
         *self = *self * rhs;
     }
