@@ -6,8 +6,8 @@ use rayon::prelude::*;
 
 /// Log of number of threads to spawn.
 /// Long term this should be a modifiable parameter and potentially be in an optimization file somewhere.
-/// I've chosen 32 here as my machine has 20 logical cores.
-const LOG_NUM_THREADS: usize = 5;
+/// Tuned for c7a.2xlarge (8 vCPUs).
+const LOG_NUM_THREADS: usize = 3;
 
 /// The number of threads to spawn for parallel computations.
 const NUM_THREADS: usize = 1 << LOG_NUM_THREADS;
