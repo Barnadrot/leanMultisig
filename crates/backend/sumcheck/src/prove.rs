@@ -264,8 +264,9 @@ pub fn on_challenge_received<'a, EF: ExtensionField<PF<EF>>>(
     *n_vars -= 1;
 
     if let Some((eq_factor, split_eq)) = eq_factor {
-        // Multiply sum by eq(α_i, r_i) since the polynomial doesn't include the eq linear factor
-        let eq_eval = (EF::ONE - eq_factor[0]) * (EF::ONE - challenge) + eq_factor[0] * challenge;
+        // Multiply sum by eq(α_i, r_i) since the polynomial doesn't include the eq linear factor.
+        // eq(α, r) = (1−α)(1−r) + αr = 1 − α − r + 2αr = (1−α) + r(2α−1)
+        let eq_eval = EF::ONE - eq_factor[0] + challenge * (eq_factor[0].double() - EF::ONE);
         *sum *= eq_eval;
 
         *missing_mul_factor = Some(
