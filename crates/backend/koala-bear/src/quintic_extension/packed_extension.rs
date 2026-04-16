@@ -295,7 +295,7 @@ where
 {
     type Output = Self;
 
-    #[inline]
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self {
         let value = vector_add(&self.value, &rhs.value);
         Self { value }
@@ -385,7 +385,7 @@ where
 {
     type Output = Self;
 
-    #[inline]
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self {
         let value = vector_sub(&self.value, &rhs.value);
         Self { value }
@@ -545,7 +545,7 @@ where
 }
 
 /// Add two vectors element wise.
-#[inline]
+#[inline(always)]
 pub fn vector_add<R: PrimeCharacteristicRing + Add<R2, Output = R>, R2: Copy, const D: usize>(
     a: &[R; D],
     b: &[R2; D],
@@ -554,7 +554,7 @@ pub fn vector_add<R: PrimeCharacteristicRing + Add<R2, Output = R>, R2: Copy, co
 }
 
 /// Subtract two vectors element wise.
-#[inline]
+#[inline(always)]
 pub fn vector_sub<R: PrimeCharacteristicRing + Sub<R2, Output = R>, R2: Copy, const D: usize>(
     a: &[R; D],
     b: &[R2; D],
