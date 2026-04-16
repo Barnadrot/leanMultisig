@@ -600,6 +600,61 @@ where
     [s000, s001, s010, s011, s100, s101, s110, s111]
 }
 
+/// Compute the scaled multilinear equality polynomial over `{0,1}^4` for 4 variables.
+/// Kept out-of-line to avoid inflating the recursive `eval_eq_basic` code footprint.
+#[inline(never)]
+fn eval_eq_4<F, FP>(eval: &[F], scalar: FP) -> [FP; 16]
+where
+    F: Field,
+    FP: Algebra<F> + Copy,
+{
+    assert_eq!(eval.len(), 4);
+
+    let z_0 = eval[0];
+    let z_1 = eval[1];
+    let z_2 = eval[2];
+    let z_3 = eval[3];
+
+    let s1 = scalar * z_0;
+    let s0 = scalar - s1;
+
+    let s01 = s0 * z_1;
+    let s00 = s0 - s01;
+    let s11 = s1 * z_1;
+    let s10 = s1 - s11;
+
+    let s001 = s00 * z_2;
+    let s000 = s00 - s001;
+    let s011 = s01 * z_2;
+    let s010 = s01 - s011;
+    let s101 = s10 * z_2;
+    let s100 = s10 - s101;
+    let s111 = s11 * z_2;
+    let s110 = s11 - s111;
+
+    let s0001 = s000 * z_3;
+    let s0000 = s000 - s0001;
+    let s0011 = s001 * z_3;
+    let s0010 = s001 - s0011;
+    let s0101 = s010 * z_3;
+    let s0100 = s010 - s0101;
+    let s0111 = s011 * z_3;
+    let s0110 = s011 - s0111;
+    let s1001 = s100 * z_3;
+    let s1000 = s100 - s1001;
+    let s1011 = s101 * z_3;
+    let s1010 = s101 - s1011;
+    let s1101 = s110 * z_3;
+    let s1100 = s110 - s1101;
+    let s1111 = s111 * z_3;
+    let s1110 = s111 - s1111;
+
+    [
+        s0000, s0001, s0010, s0011, s0100, s0101, s0110, s0111, s1000, s1001, s1010, s1011, s1100, s1101, s1110,
+        s1111,
+    ]
+}
+
 /// Computes the equality polynomial evaluations via a simple recursive algorithm.
 ///
 /// Given an evaluation point vector `eval`, the function computes
@@ -649,6 +704,11 @@ where
         3 => {
             // Manually unroll for three variable case
             let eq_evaluations = eval_eq_3(eval, scalar);
+
+            add_or_set_f::<_, INITIALIZED>(out, &eq_evaluations);
+        }
+        4 => {
+            let eq_evaluations = eval_eq_4(eval, scalar);
 
             add_or_set_f::<_, INITIALIZED>(out, &eq_evaluations);
         }
