@@ -428,9 +428,7 @@ where
 {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        for i in 0..5 {
-            self.value[i] -= rhs.value[i];
-        }
+        *self = *self - rhs;
     }
 }
 
@@ -441,9 +439,7 @@ where
 {
     #[inline]
     fn sub_assign(&mut self, rhs: QuinticExtensionField<F>) {
-        for i in 0..5 {
-            self.value[i] -= rhs.value[i];
-        }
+        *self = *self - rhs;
     }
 }
 
@@ -454,7 +450,7 @@ where
 {
     #[inline]
     fn sub_assign(&mut self, rhs: PF) {
-        self.value[0] -= rhs;
+        *self = *self - rhs;
     }
 }
 
