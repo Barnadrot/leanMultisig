@@ -566,7 +566,7 @@ where
     let a4_square = a[4].square();
 
     // Constant term = a0^2 + 2*a1*a4 + 2*a2*a3 - a4^2
-    res[0] = R::dot_product(&[a[0], two_a1], &[a[0], a[4]]) + two_a2_a3 - a4_square;
+    res[0] = a[0].square() + two_a1_a4 + two_a2_a3 - a4_square;
 
     // Linear term = 2*a0*a1 + a3^2 + 2*a2*a4
     res[1] = two_a0 * a[1] + a3_square + two_a2_a4;
