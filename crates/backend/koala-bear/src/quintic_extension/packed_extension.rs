@@ -45,7 +45,7 @@ impl<F: Field, PF: PackedField<Scalar = F>> Default for PackedQuinticExtensionFi
 }
 
 impl<F: Field, PF: PackedField<Scalar = F>> From<QuinticExtensionField<F>> for PackedQuinticExtensionField<F, PF> {
-    #[inline]
+    #[inline(always)]
     fn from(x: QuinticExtensionField<F>) -> Self {
         Self {
             value: x.value.map(Into::into),
