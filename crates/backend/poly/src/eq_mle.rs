@@ -652,39 +652,27 @@ where
 
             add_or_set_f::<_, INITIALIZED>(out, &eq_evaluations);
         }
-        4 => {
-            // Standard 1-var recursion for exactly 4 variables
+        _ => {
             let (&x, tail) = eval.split_first().unwrap();
+
+            // Divide the output buffer into two halves: one for `X_i = 0` and one for `X_i = 1`
             let (low, high) = out.split_at_mut(out.len() / 2);
-            let s1 = scalar * x;
-            let s0 = scalar - s1;
+
+            // Compute weight updates for the two branches:
+            // - `s0` corresponds to the case when `X_i = 0`
+            // - `s1` corresponds to the case when `X_i = 1`
+            //
+            // Mathematically, this follows the recurrence:
+            // ```text
+            // eq_{X1, ..., Xn}(X) = (1 - X_1) * eq_{X2, ..., Xn}(X) + X_1 * eq_{X2, ..., Xn}(X)
+            // ```
+            let s1 = scalar * x; // Contribution when `X_i = 1`
+            let s0 = scalar - s1; // Contribution when `X_i = 0`
+
+            // The recursive approach turns out to be faster than the iterative one here.
+            // Probably related to nice cache locality.
             eval_eq_basic::<_, _, _, INITIALIZED>(tail, low, s0);
             eval_eq_basic::<_, _, _, INITIALIZED>(tail, high, s1);
-        }
-        _ => {
-            // For 5+ variables: process 2 variables per level (4 sub-problems).
-            // Same total multiplications but halves recursion depth, reducing
-            // function-call overhead (match + split + call/return per level).
-            let z0 = eval[0];
-            let z1 = eval[1];
-            let tail = &eval[2..];
-
-            let quarter = out.len() / 4;
-            let (block_lo, block_hi) = out.split_at_mut(quarter * 2);
-            let (q00, q01) = block_lo.split_at_mut(quarter);
-            let (q10, q11) = block_hi.split_at_mut(quarter);
-
-            let s1 = scalar * z0;
-            let s0 = scalar - s1;
-            let s01 = s0 * z1;
-            let s00 = s0 - s01;
-            let s11 = s1 * z1;
-            let s10 = s1 - s11;
-
-            eval_eq_basic::<_, _, _, INITIALIZED>(tail, q00, s00);
-            eval_eq_basic::<_, _, _, INITIALIZED>(tail, q01, s01);
-            eval_eq_basic::<_, _, _, INITIALIZED>(tail, q10, s10);
-            eval_eq_basic::<_, _, _, INITIALIZED>(tail, q11, s11);
         }
     }
 }
