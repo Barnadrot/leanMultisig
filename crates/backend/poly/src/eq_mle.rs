@@ -452,7 +452,7 @@ where
     F: Field,
     FP: Algebra<F> + Copy,
 {
-    assert_eq!(eval.len(), 1);
+    debug_assert_eq!(eval.len(), 1);
 
     // Extract the evaluation point z_0
     let z_0 = eval[0];
@@ -502,7 +502,7 @@ where
     F: Field,
     FP: Algebra<F> + Copy,
 {
-    assert_eq!(eval.len(), 2);
+    debug_assert_eq!(eval.len(), 2);
 
     // Extract z_0, z_1 from the evaluation point
     let z_0 = eval[0];
@@ -559,7 +559,7 @@ where
     F: Field,
     FP: Algebra<F> + Copy,
 {
-    assert_eq!(eval.len(), 3);
+    debug_assert_eq!(eval.len(), 3);
 
     // Extract z_0, z_1, z_2 from the evaluation point
     let z_0 = eval[0];
