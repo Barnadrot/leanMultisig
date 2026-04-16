@@ -177,13 +177,15 @@ where
         // A basic recursive approach.
         let mut output_no_packing = EF::zero_vec(1 << eval.len());
         eval_eq_basic::<_, _, _, false>(eval, &mut output_no_packing, scalar);
-        out.par_iter_mut()
-            .zip(output_no_packing.into_par_iter().chunks(packing_width))
+        // Sequential iteration for the small case — rayon overhead exceeds
+        // benefit for the small output here.
+        out.iter_mut()
+            .zip(output_no_packing.chunks_exact(packing_width))
             .for_each(|(out_elem, chunk)| {
                 if INITIALIZED {
-                    *out_elem += EF::ExtensionPacking::from_ext_slice(&chunk);
+                    *out_elem += EF::ExtensionPacking::from_ext_slice(chunk);
                 } else {
-                    *out_elem = EF::ExtensionPacking::from_ext_slice(&chunk);
+                    *out_elem = EF::ExtensionPacking::from_ext_slice(chunk);
                 }
             });
     } else {
@@ -325,13 +327,15 @@ pub fn compute_eval_eq_base_packed<F, EF, const INITIALIZED: bool>(
         // A basic recursive approach.
         let mut output_no_packing = EF::zero_vec(1 << eval.len());
         eval_eq_basic::<_, _, _, false>(eval, &mut output_no_packing, scalar);
-        out.par_iter_mut()
-            .zip(output_no_packing.into_par_iter().chunks(packing_width))
+        // Sequential iteration for the small case — rayon overhead exceeds
+        // benefit for the small output here.
+        out.iter_mut()
+            .zip(output_no_packing.chunks_exact(packing_width))
             .for_each(|(out_elem, chunk)| {
                 if INITIALIZED {
-                    *out_elem += EF::ExtensionPacking::from_ext_slice(&chunk);
+                    *out_elem += EF::ExtensionPacking::from_ext_slice(chunk);
                 } else {
-                    *out_elem = EF::ExtensionPacking::from_ext_slice(&chunk);
+                    *out_elem = EF::ExtensionPacking::from_ext_slice(chunk);
                 }
             });
     } else {
