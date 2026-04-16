@@ -81,7 +81,7 @@ where
     } else {
         (0..size)
             .into_par_iter()
-            .fold(|| T::zero_vec(n), |acc, i| accumulate(acc, compute_iteration(i)))
+            .map(compute_iteration)
             .reduce(|| T::zero_vec(n), accumulate)
     }
 }
