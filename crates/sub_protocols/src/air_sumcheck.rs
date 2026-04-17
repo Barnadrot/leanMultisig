@@ -132,12 +132,16 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
 ) -> MultilinearPoint<EF> {
     let n_rounds = sessions.iter().map(|s| s.initial_n_vars()).max().unwrap_or(0);
     let max_full_degree = sessions.iter().map(|s| s.bare_degree() + 1).max().unwrap_or(1);
-    let eta_powers: Vec<EF> = eta.powers().collect_n(sessions.len());
 
     let mut challenges = Vec::with_capacity(n_rounds);
-    // Per-table prefix multiplier K_t.  Grows each round during padding,
-    // freezes once the table enters its active phase.
-    let mut k: Vec<EF> = vec![EF::ONE; sessions.len()];
+    // Precomputed per-session join round; avoids recomputing via dyn-method
+    // call twice per session per round.
+    let join_rounds: Vec<usize> = sessions.iter().map(|s| n_rounds - s.initial_n_vars()).collect();
+    // Fused prefix: eta^idx * K_t.  Initially eta_powers (K_t = ONE), grows
+    // each padding round by `challenge`, freezes when the session goes active.
+    // Collapses `eta_powers[idx] * k[idx]` into a single field element, saving
+    // one EF mul per use and eliminating the `eta_powers` vector.
+    let mut eta_k: Vec<EF> = eta.powers().collect_n(sessions.len());
     let mut combined_coeffs = EF::zero_vec(max_full_degree + 1);
     let mut bare_polys: Vec<Option<DensePolynomial<EF>>> = vec![None; sessions.len()];
 
@@ -146,16 +150,16 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
         bare_polys.fill(None);
 
         for (idx, session) in sessions.iter_mut().enumerate() {
-            let join_round = n_rounds - session.initial_n_vars();
-            if round < join_round {
+            if round < join_rounds[idx] {
                 // Padding
-                combined_coeffs[1] += eta_powers[idx] * k[idx] * session.sum();
+                combined_coeffs[1] += eta_k[idx] * session.sum();
             } else {
                 // Active: compute bare poly, expand by eq_linear, scale by frozen K_t
                 let bare_poly = session.compute_bare_round_poly();
                 let full_coeffs = expand_bare_to_full(&bare_poly.coeffs, session.eq_alpha());
+                let prefix = eta_k[idx];
                 for (i, &c) in full_coeffs.iter().enumerate() {
-                    combined_coeffs[i] += eta_powers[idx] * k[idx] * c;
+                    combined_coeffs[i] += prefix * c;
                 }
                 bare_polys[idx] = Some(bare_poly);
             }
@@ -166,9 +170,8 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
         challenges.push(challenge);
 
         for (idx, session) in sessions.iter_mut().enumerate() {
-            let join_round = n_rounds - session.initial_n_vars();
-            if round < join_round {
-                k[idx] *= challenge;
+            if round < join_rounds[idx] {
+                eta_k[idx] *= challenge;
             } else if let Some(bare_poly) = &bare_polys[idx] {
                 session.process_challenge(challenge, bare_poly);
             }
