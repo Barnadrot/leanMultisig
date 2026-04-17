@@ -25,7 +25,6 @@ where
     eq_factor_and_split: Option<(Vec<EF>, SplitEq<EF>)>,
     sum: EF,
     missing_mul_factors: Option<EF>,
-    prev_folding_factor: Option<EF>,
     computation: A,
     extra_data: A::ExtraData,
     initial_n_vars: usize,
@@ -50,7 +49,6 @@ where
             eq_factor_and_split: Some((eq_factor, split_eq)),
             sum,
             missing_mul_factors: None,
-            prev_folding_factor: None,
             computation,
             extra_data,
             initial_n_vars,
@@ -82,9 +80,6 @@ where
 
     fn compute_bare_round_poly(&mut self) -> DensePolynomial<EF> {
         if self.multilinears.is_packed() && must_unpack_multilinears::<EF>(self.multilinears.n_vars()) {
-            if let Some(pf) = self.prev_folding_factor.take() {
-                self.multilinears = self.multilinears.by_ref().fold(pf).into();
-            }
             let old = std::mem::replace(
                 &mut self.multilinears,
                 MleGroup::Owned(MleGroupOwned::Extension(vec![])),
@@ -93,7 +88,7 @@ where
         }
         compute_round_polynomial(
             &mut self.multilinears,
-            self.prev_folding_factor.take(),
+            None,
             &self.computation,
             &self.eq_factor_and_split,
             &self.extra_data,
@@ -104,7 +99,7 @@ where
 
     fn process_challenge(&mut self, challenge: EF, bare_poly: &DensePolynomial<EF>) {
         let mut n_vars = self.multilinears.n_vars();
-        self.prev_folding_factor = on_challenge_received(
+        on_challenge_received(
             &mut self.multilinears,
             &mut n_vars,
             &mut self.eq_factor_and_split,
@@ -112,23 +107,21 @@ where
             &mut self.missing_mul_factors,
             challenge,
             bare_poly,
-            false,
+            true,
         );
     }
 
     fn final_column_evals(&self) -> Vec<EF> {
-        if let Some(pf) = self.prev_folding_factor {
-            let folded = self.multilinears.by_ref().fold(pf);
-            folded.as_extension().unwrap().iter().map(|m| {
+        self.multilinears
+            .by_ref()
+            .as_extension()
+            .unwrap()
+            .iter()
+            .map(|m| {
                 assert_eq!(m.len(), 1);
                 m[0]
-            }).collect()
-        } else {
-            self.multilinears.by_ref().as_extension().unwrap().iter().map(|m| {
-                assert_eq!(m.len(), 1);
-                m[0]
-            }).collect()
-        }
+            })
+            .collect()
     }
 }
 
