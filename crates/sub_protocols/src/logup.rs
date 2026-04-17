@@ -238,21 +238,12 @@ pub fn prove_generic_logup(
     // sanity check
     assert_eq!(sum, EF::ZERO);
 
-    let eval_with_eq = |col: &[F], eq_vals: &[EF]| -> EF {
-        debug_assert_eq!(col.len(), eq_vals.len());
-        col.par_iter()
-            .zip(eq_vals.par_iter())
-            .map(|(&c, &e)| e * c)
-            .sum()
-    };
-
     // Memory: ...
     let memory_and_acc_point = MultilinearPoint(from_end(&claim_point_gkr, log2_strict_usize(memory.len())).to_vec());
-    let mem_eq = eval_eq::<EF>(&memory_and_acc_point.0);
-    let value_memory_acc = eval_with_eq(memory_acc, &mem_eq);
+    let value_memory_acc = memory_acc.evaluate(&memory_and_acc_point);
     prover_state.add_extension_scalar(value_memory_acc);
 
-    let value_memory = eval_with_eq(memory, &mem_eq);
+    let value_memory = memory.evaluate(&memory_and_acc_point);
     prover_state.add_extension_scalar(value_memory);
 
     let bytecode_and_acc_point = MultilinearPoint(from_end(&claim_point_gkr, log_bytecode).to_vec());
@@ -271,7 +262,6 @@ pub fn prove_generic_logup(
         let log_n_rows = trace.log_n_rows;
 
         let inner_point = MultilinearPoint(from_end(&claim_point_gkr, log_n_rows).to_vec());
-        let table_eq = eval_eq::<EF>(&inner_point.0);
         let mut table_values = BTreeMap::<ColIndex, EF>::new();
 
         if table == &Table::execution() {
@@ -281,15 +271,15 @@ pub fn prove_generic_logup(
                 .iter()
                 .collect::<Vec<_>>();
 
-            let eval_on_pc = eval_with_eq(pc_column, &table_eq);
+            let eval_on_pc = pc_column.evaluate(&inner_point);
             prover_state.add_extension_scalar(eval_on_pc);
             assert!(!table_values.contains_key(&COL_PC));
             table_values.insert(COL_PC, eval_on_pc);
 
-            let instr_evals: Vec<EF> = bytecode_columns
+            let instr_evals = bytecode_columns
                 .iter()
-                .map(|col| eval_with_eq(col, &table_eq))
-                .collect();
+                .map(|col| col.evaluate(&inner_point))
+                .collect::<Vec<_>>();
             prover_state.add_extension_scalars(&instr_evals);
             for (i, eval_on_instr_col) in instr_evals.iter().enumerate() {
                 let global_index = N_RUNTIME_COLUMNS + i;
@@ -302,7 +292,7 @@ pub fn prove_generic_logup(
 
         // I] Bus (data flow between tables)
         let eval_on_selector =
-            eval_with_eq(&trace.columns[table.bus().selector], &table_eq) * table.bus().direction.to_field_flag();
+            trace.columns[table.bus().selector].evaluate(&inner_point) * table.bus().direction.to_field_flag();
         prover_state.add_extension_scalar(eval_on_selector);
 
         let eval_on_data =
@@ -315,13 +305,13 @@ pub fn prove_generic_logup(
 
         // II] Lookup into memory
         for lookup in table.lookups() {
-            let index_eval = eval_with_eq(&trace.columns[lookup.index], &table_eq);
+            let index_eval = trace.columns[lookup.index].evaluate(&inner_point);
             prover_state.add_extension_scalar(index_eval);
             assert!(!table_values.contains_key(&lookup.index));
             table_values.insert(lookup.index, index_eval);
 
             for col_index in &lookup.values {
-                let value_eval = eval_with_eq(&trace.columns[*col_index], &table_eq);
+                let value_eval = trace.columns[*col_index].evaluate(&inner_point);
                 prover_state.add_extension_scalar(value_eval);
                 assert!(!table_values.contains_key(col_index));
                 table_values.insert(*col_index, value_eval);
