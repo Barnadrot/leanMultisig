@@ -262,6 +262,17 @@ pub fn prove_generic_logup(
         let log_n_rows = trace.log_n_rows;
 
         let inner_point = MultilinearPoint(from_end(&claim_point_gkr, log_n_rows).to_vec());
+        // Precompute the eq-polynomial values at `inner_point` once per table.
+        // This trades N recursive `column.evaluate(inner_point)` calls (each
+        // doing ~2^(n-1) EF×EF muls) for 1 eq_mle precompute (~2·2^n EF×EF)
+        // plus N `dot_product(eq, col)` calls (each 2^n F×EF muls). Because
+        // F×EF is ~10× cheaper than EF×EF on this quintic-extension stack,
+        // the break-even point is ~4 columns per table, and we also
+        // parallelise across columns where there are many of them.
+        let eq_vec: Vec<EF> = eval_eq(&inner_point.0);
+        let eval_col = |col: &[F]| -> EF {
+            dot_product::<EF, _, _>(eq_vec.iter().copied(), col.iter().copied())
+        };
         let mut table_values = BTreeMap::<ColIndex, EF>::new();
 
         if table == &Table::execution() {
@@ -271,15 +282,15 @@ pub fn prove_generic_logup(
                 .iter()
                 .collect::<Vec<_>>();
 
-            let eval_on_pc = pc_column.evaluate(&inner_point);
+            let eval_on_pc = eval_col(pc_column);
             prover_state.add_extension_scalar(eval_on_pc);
             assert!(!table_values.contains_key(&COL_PC));
             table_values.insert(COL_PC, eval_on_pc);
 
-            let instr_evals = bytecode_columns
-                .iter()
-                .map(|col| col.evaluate(&inner_point))
-                .collect::<Vec<_>>();
+            let instr_evals: Vec<EF> = bytecode_columns
+                .par_iter()
+                .map(|col| dot_product::<EF, _, _>(eq_vec.iter().copied(), col.iter().copied()))
+                .collect();
             prover_state.add_extension_scalars(&instr_evals);
             for (i, eval_on_instr_col) in instr_evals.iter().enumerate() {
                 let global_index = N_RUNTIME_COLUMNS + i;
@@ -291,8 +302,7 @@ pub fn prove_generic_logup(
         }
 
         // I] Bus (data flow between tables)
-        let eval_on_selector =
-            trace.columns[table.bus().selector].evaluate(&inner_point) * table.bus().direction.to_field_flag();
+        let eval_on_selector = eval_col(&trace.columns[table.bus().selector]) * table.bus().direction.to_field_flag();
         prover_state.add_extension_scalar(eval_on_selector);
 
         let eval_on_data =
@@ -305,13 +315,13 @@ pub fn prove_generic_logup(
 
         // II] Lookup into memory
         for lookup in table.lookups() {
-            let index_eval = trace.columns[lookup.index].evaluate(&inner_point);
+            let index_eval = eval_col(&trace.columns[lookup.index]);
             prover_state.add_extension_scalar(index_eval);
             assert!(!table_values.contains_key(&lookup.index));
             table_values.insert(lookup.index, index_eval);
 
             for col_index in &lookup.values {
-                let value_eval = trace.columns[*col_index].evaluate(&inner_point);
+                let value_eval = eval_col(&trace.columns[*col_index]);
                 prover_state.add_extension_scalar(value_eval);
                 assert!(!table_values.contains_key(col_index));
                 table_values.insert(*col_index, value_eval);
