@@ -6,7 +6,7 @@ use lean_vm::ColIndex;
 
 // back-loaded batched sumcheck (see https://hackmd.io/s/HyxaupAAA)
 
-pub trait OuterSumcheckSession<EF: ExtensionField<PF<EF>>>: Debug + Send + Sync {
+pub trait OuterSumcheckSession<EF: ExtensionField<PF<EF>>>: Debug {
     fn initial_n_vars(&self) -> usize;
     fn sum(&self) -> EF;
     fn bare_degree(&self) -> usize;
@@ -139,35 +139,25 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
     // freezes once the table enters its active phase.
     let mut k: Vec<EF> = vec![EF::ONE; sessions.len()];
     let mut combined_coeffs = EF::zero_vec(max_full_degree + 1);
+    let mut bare_polys: Vec<Option<DensePolynomial<EF>>> = vec![None; sessions.len()];
 
     for round in 0..n_rounds {
         combined_coeffs.fill(EF::ZERO);
+        bare_polys.fill(None);
 
-        let round_results: Vec<Option<(DensePolynomial<EF>, EF)>> = sessions
-            .par_iter_mut()
-            .map(|session| {
-                let join_round = n_rounds - session.initial_n_vars();
-                if round >= join_round {
-                    let bare_poly = session.compute_bare_round_poly();
-                    let eq_alpha = session.eq_alpha();
-                    Some((bare_poly, eq_alpha))
-                } else {
-                    None
+        for (idx, session) in sessions.iter_mut().enumerate() {
+            let join_round = n_rounds - session.initial_n_vars();
+            if round < join_round {
+                // Padding
+                combined_coeffs[1] += eta_powers[idx] * k[idx] * session.sum();
+            } else {
+                // Active: compute bare poly, expand by eq_linear, scale by frozen K_t
+                let bare_poly = session.compute_bare_round_poly();
+                let full_coeffs = expand_bare_to_full(&bare_poly.coeffs, session.eq_alpha());
+                for (i, &c) in full_coeffs.iter().enumerate() {
+                    combined_coeffs[i] += eta_powers[idx] * k[idx] * c;
                 }
-            })
-            .collect();
-
-        for (idx, result) in round_results.iter().enumerate() {
-            match result {
-                None => {
-                    combined_coeffs[1] += eta_powers[idx] * k[idx] * sessions[idx].sum();
-                }
-                Some((bare_poly, eq_alpha)) => {
-                    let full_coeffs = expand_bare_to_full(&bare_poly.coeffs, *eq_alpha);
-                    for (i, &c) in full_coeffs.iter().enumerate() {
-                        combined_coeffs[i] += eta_powers[idx] * k[idx] * c;
-                    }
-                }
+                bare_polys[idx] = Some(bare_poly);
             }
         }
 
@@ -179,7 +169,7 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
             let join_round = n_rounds - session.initial_n_vars();
             if round < join_round {
                 k[idx] *= challenge;
-            } else if let Some((bare_poly, _)) = &round_results[idx] {
+            } else if let Some(bare_poly) = &bare_polys[idx] {
                 session.process_challenge(challenge, bare_poly);
             }
         }
