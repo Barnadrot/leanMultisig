@@ -392,30 +392,18 @@ where
                     !seq.is_remainder_mode(),
                     "BasePacked sumcheck received SplitEq in remainder mode"
                 );
-                sumcheck_compute_with_split_eq_base(
-                    multilinears,
-                    degree,
-                    seq,
-                    computation,
-                    extra_data,
-                    missing_mul_factor,
-                    packed_fold_size,
-                    |sc, pf, ed| sc.eval_packed_base(&pf, ed),
-                    packing_unpack_sum,
-                )
-            } else {
-                sumcheck_compute_core(
-                    multilinears,
-                    degree,
-                    |i| split_eq.map(|seq| seq.get_packed(i)),
-                    computation,
-                    extra_data,
-                    missing_mul_factor,
-                    packed_fold_size,
-                    |sc, pf, ed| sc.eval_packed_base(&pf, ed),
-                    packing_unpack_sum,
-                )
             }
+            sumcheck_compute_core(
+                multilinears,
+                degree,
+                |i| split_eq.map(|seq| seq.get_packed(i)),
+                computation,
+                extra_data,
+                missing_mul_factor,
+                packed_fold_size,
+                |sc, pf, ed| sc.eval_packed_base(&pf, ed),
+                packing_unpack_sum,
+            )
         }
         MleGroupRef::Base(multilinears) => sumcheck_compute_core(
             multilinears,
@@ -783,82 +771,6 @@ where
                 block_acc[0] += e0;
 
                 // z = 2, 3, ...
-                for d in 1..degree {
-                    for [_, diff, running] in &mut rows {
-                        *running += *diff;
-                    }
-                    let pf = rows.iter().map(|r| r[2]).collect();
-                    let mut ev = eval_fn(computation, pf, extra_data);
-                    ev *= eq_val;
-                    block_acc[d] += ev;
-                }
-            }
-            for a in &mut block_acc {
-                *a *= eq_lo_bc;
-            }
-            block_acc
-        })
-        .reduce(zero, accumulate);
-
-    let unpacked = sums.into_iter().map(&unpack_sum);
-    build_evals(unpacked, missing_mul_factor)
-}
-
-#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
-fn sumcheck_compute_with_split_eq_base<EF, SC>(
-    multilinears: &[&[PFPacking<EF>]],
-    degree: usize,
-    split_eq: &SplitEq<EF>,
-    computation: &SC,
-    extra_data: &SC::ExtraData,
-    missing_mul_factor: Option<EF>,
-    fold_size: usize,
-    eval_fn: impl Fn(&SC, Vec<PFPacking<EF>>, &SC::ExtraData) -> EFPacking<EF> + Sync + Send,
-    unpack_sum: impl Fn(EFPacking<EF>) -> EF,
-) -> Vec<EF>
-where
-    EF: ExtensionField<PF<EF>>,
-    SC: SumcheckComputation<EF>,
-{
-    let n_lo = split_eq.n_lo();
-    let packed_hi = split_eq.packed_hi();
-    let log_packed_hi = split_eq.log_packed_hi;
-    let eq_lo = &split_eq.eq_lo;
-    let eq_hi = &split_eq.eq_hi_packed;
-
-    let zero = || EFPacking::<EF>::zero_vec(degree);
-    let accumulate = |mut acc: Vec<EFPacking<EF>>, vals: Vec<EFPacking<EF>>| -> Vec<EFPacking<EF>> {
-        for (a, v) in acc.iter_mut().zip(vals.iter()) {
-            *a += *v;
-        }
-        acc
-    };
-
-    let sums: Vec<EFPacking<EF>> = (0..n_lo)
-        .into_par_iter()
-        .map(|b_lo| {
-            let eq_lo_bc = EFPacking::<EF>::from(eq_lo[b_lo]);
-            let base = b_lo << log_packed_hi;
-            let mut block_acc = zero();
-            for k in 0..packed_hi {
-                let i = base + k;
-                let eq_val = eq_hi[k];
-
-                let mut rows = multilinears
-                    .iter()
-                    .map(|m| {
-                        let lo = m[i];
-                        let hi = m[i + fold_size];
-                        let diff = hi - lo;
-                        [lo, diff, hi]
-                    })
-                    .collect::<Vec<_>>();
-
-                let p0 = rows.iter().map(|r| r[0]).collect();
-                let mut e0 = eval_fn(computation, p0, extra_data);
-                e0 *= eq_val;
-                block_acc[0] += e0;
-
                 for d in 1..degree {
                     for [_, diff, running] in &mut rows {
                         *running += *diff;
