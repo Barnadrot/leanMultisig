@@ -25,7 +25,6 @@ where
     eq_factor_and_split: Option<(Vec<EF>, SplitEq<EF>)>,
     sum: EF,
     missing_mul_factors: Option<EF>,
-    prev_folding_factor: Option<EF>,
     computation: A,
     extra_data: A::ExtraData,
     initial_n_vars: usize,
@@ -50,7 +49,6 @@ where
             eq_factor_and_split: Some((eq_factor, split_eq)),
             sum,
             missing_mul_factors: None,
-            prev_folding_factor: None,
             computation,
             extra_data,
             initial_n_vars,
@@ -90,7 +88,7 @@ where
         }
         compute_round_polynomial(
             &mut self.multilinears,
-            self.prev_folding_factor.take(),
+            None,
             &self.computation,
             &self.eq_factor_and_split,
             &self.extra_data,
@@ -101,7 +99,7 @@ where
 
     fn process_challenge(&mut self, challenge: EF, bare_poly: &DensePolynomial<EF>) {
         let mut n_vars = self.multilinears.n_vars();
-        self.prev_folding_factor = on_challenge_received(
+        on_challenge_received(
             &mut self.multilinears,
             &mut n_vars,
             &mut self.eq_factor_and_split,
@@ -109,28 +107,21 @@ where
             &mut self.missing_mul_factors,
             challenge,
             bare_poly,
-            false,
+            true,
         );
     }
 
     fn final_column_evals(&self) -> Vec<EF> {
-        let by_ref = self.multilinears.by_ref();
-        let ext = by_ref.as_extension().unwrap();
-        if let Some(r) = self.prev_folding_factor {
-            ext.iter()
-                .map(|m| {
-                    assert_eq!(m.len(), 2);
-                    m[0] + r * (m[1] - m[0])
-                })
-                .collect()
-        } else {
-            ext.iter()
-                .map(|m| {
-                    assert_eq!(m.len(), 1);
-                    m[0]
-                })
-                .collect()
-        }
+        self.multilinears
+            .by_ref()
+            .as_extension()
+            .unwrap()
+            .iter()
+            .map(|m| {
+                assert_eq!(m.len(), 1);
+                m[0]
+            })
+            .collect()
     }
 }
 
