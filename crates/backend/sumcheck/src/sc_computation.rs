@@ -515,14 +515,25 @@ where
             )
         }
         MleGroupRef::BasePacked(multilinears) => {
-            if let Some(seq) = split_eq {
-                assert!(
-                    !seq.is_remainder_mode(),
-                    "BasePacked fold-and-compute received SplitEq in remainder mode"
-                );
-            }
             let prev_folded_size = multilinears[0].len() / 2;
             let prev_folding_factor_packed = EFPacking::<EF>::from(prev_folding_factor);
+            if let Some(seq) = split_eq {
+                if !seq.is_remainder_mode() {
+                    return sumcheck_fold_and_compute_with_split_eq(
+                        multilinears,
+                        degree,
+                        seq,
+                        computation,
+                        extra_data,
+                        missing_mul_factor,
+                        compute_fold_size,
+                        |m, id| prev_folding_factor_packed * (m[id + prev_folded_size] - m[id]) + m[id],
+                        |sc, pf, ed| sc.eval_packed_extension(&pf, ed),
+                        packing_unpack_sum,
+                        MleGroupOwned::ExtensionPacked,
+                    );
+                }
+            }
             sumcheck_fold_and_compute_core(
                 multilinears,
                 degree,
