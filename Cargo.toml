@@ -95,4 +95,3 @@ serde_json.workspace = true
 
 [profile.release]
 lto = "thin"
-codegen-units = 1
