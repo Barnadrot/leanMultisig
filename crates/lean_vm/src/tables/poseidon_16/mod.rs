@@ -328,7 +328,7 @@ pub const fn num_cols_poseidon_16() -> usize {
     size_of::<Poseidon1Cols16<u8>>()
 }
 
-#[inline(always)]
+#[inline]
 fn eval_2_full_rounds_16<AB: AirBuilder>(
     state: &mut [AB::IF; WIDTH],
     post_full_round: &[AB::IF; WIDTH],
@@ -352,7 +352,7 @@ fn eval_2_full_rounds_16<AB: AirBuilder>(
     }
 }
 
-#[inline(always)]
+#[inline]
 fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     initial_state: &[AB::IF; WIDTH],
     state: &mut [AB::IF; WIDTH],
