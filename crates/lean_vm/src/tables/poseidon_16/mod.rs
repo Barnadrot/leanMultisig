@@ -212,6 +212,7 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
     fn n_constraints(&self) -> usize {
         BUS as usize + 76
     }
+    #[inline(always)]
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
         let cols: Poseidon1Cols16<AB::IF> = {
             let up = builder.up();
@@ -265,6 +266,7 @@ pub(super) struct Poseidon1Cols16<T> {
     pub outputs: [T; WIDTH / 2],
 }
 
+#[inline(always)]
 fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<AB::IF>) {
     let mut state: [_; WIDTH] = local.inputs;
 
