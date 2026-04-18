@@ -260,45 +260,26 @@ pub fn prove_generic_logup(
     for (table, _) in &tables_log_heights_sorted {
         let trace = &traces[table];
         let log_n_rows = trace.log_n_rows;
-        let n_rows = 1usize << log_n_rows;
 
         let inner_point = MultilinearPoint(from_end(&claim_point_gkr, log_n_rows).to_vec());
-
-        // Collect all base-field column indices for batch evaluation
-        let mut col_indices: Vec<ColIndex> = Vec::new();
-        if table == &Table::execution() {
-            col_indices.push(COL_PC);
-            for i in 0..N_INSTRUCTION_COLUMNS {
-                col_indices.push(N_RUNTIME_COLUMNS + i);
-            }
-        }
-        col_indices.push(table.bus().selector);
-        for lookup in table.lookups() {
-            col_indices.push(lookup.index);
-            col_indices.extend(&lookup.values);
-        }
-
-        // Batch evaluate: compute eq(inner_point, ·) once, reuse for all columns
-        let col_slices: Vec<&[F]> = col_indices.iter()
-            .map(|&idx| &trace.columns[idx][..n_rows])
-            .collect();
-        let batch_evals = evaluate_columns_with_shared_eq(&col_slices, &inner_point.0);
-        let eval_map: BTreeMap<ColIndex, EF> = col_indices.into_iter()
-            .zip(batch_evals.into_iter())
-            .collect();
-
         let mut table_values = BTreeMap::<ColIndex, EF>::new();
 
         if table == &Table::execution() {
             // 0] bytecode lookup
-            let eval_on_pc = eval_map[&COL_PC];
+            let pc_column = &trace.columns[COL_PC];
+            let bytecode_columns = trace.columns[N_RUNTIME_COLUMNS..][..N_INSTRUCTION_COLUMNS]
+                .iter()
+                .collect::<Vec<_>>();
+
+            let eval_on_pc = pc_column.evaluate(&inner_point);
             prover_state.add_extension_scalar(eval_on_pc);
             assert!(!table_values.contains_key(&COL_PC));
             table_values.insert(COL_PC, eval_on_pc);
 
-            let instr_evals: Vec<EF> = (0..N_INSTRUCTION_COLUMNS)
-                .map(|i| eval_map[&(N_RUNTIME_COLUMNS + i)])
-                .collect();
+            let instr_evals = bytecode_columns
+                .iter()
+                .map(|col| col.evaluate(&inner_point))
+                .collect::<Vec<_>>();
             prover_state.add_extension_scalars(&instr_evals);
             for (i, eval_on_instr_col) in instr_evals.iter().enumerate() {
                 let global_index = N_RUNTIME_COLUMNS + i;
@@ -306,15 +287,16 @@ pub fn prove_generic_logup(
                 table_values.insert(global_index, *eval_on_instr_col);
             }
 
-            offset += n_rows;
+            offset += 1 << log_n_rows;
         }
 
         // I] Bus (data flow between tables)
-        let eval_on_selector = eval_map[&table.bus().selector] * table.bus().direction.to_field_flag();
+        let eval_on_selector =
+            trace.columns[table.bus().selector].evaluate(&inner_point) * table.bus().direction.to_field_flag();
         prover_state.add_extension_scalar(eval_on_selector);
 
         let eval_on_data =
-            MleRef::<EF>::ExtensionPacked(&denominators_packed[offset / width..][..n_rows / width])
+            MleRef::<EF>::ExtensionPacked(&denominators_packed[offset / width..][..(1 << log_n_rows) / width])
                 .evaluate(&inner_point);
         prover_state.add_extension_scalar(eval_on_data);
 
@@ -323,13 +305,13 @@ pub fn prove_generic_logup(
 
         // II] Lookup into memory
         for lookup in table.lookups() {
-            let index_eval = eval_map[&lookup.index];
+            let index_eval = trace.columns[lookup.index].evaluate(&inner_point);
             prover_state.add_extension_scalar(index_eval);
             assert!(!table_values.contains_key(&lookup.index));
             table_values.insert(lookup.index, index_eval);
 
             for col_index in &lookup.values {
-                let value_eval = eval_map[col_index];
+                let value_eval = trace.columns[*col_index].evaluate(&inner_point);
                 prover_state.add_extension_scalar(value_eval);
                 assert!(!table_values.contains_key(col_index));
                 table_values.insert(*col_index, value_eval);
@@ -534,23 +516,6 @@ pub fn verify_generic_logup(
         total_gkr_n_vars,
         bytecode_evaluation: Some(Evaluation::new(bytecode_point, bytecode_value)),
     })
-}
-
-fn evaluate_columns_with_shared_eq(
-    columns: &[&[F]],
-    point: &[EF],
-) -> Vec<EF> {
-    let eq_table = eval_eq(point);
-    columns
-        .par_iter()
-        .map(|col| {
-            debug_assert_eq!(col.len(), eq_table.len());
-            col.iter()
-                .zip(eq_table.iter())
-                .map(|(&c, &e)| e * c)
-                .sum::<EF>()
-        })
-        .collect()
 }
 
 fn offset_for_table(table: &Table, log_n_rows: usize) -> usize {
