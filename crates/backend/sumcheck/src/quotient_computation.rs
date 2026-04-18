@@ -81,40 +81,37 @@ pub fn compute_sumcheck_terms<N, D>(
     u3_left: D,
     u3_right: D,
     eq_val: D,
-) -> (D, D, D, D)
+    alpha_bc: D,
+) -> (D, D)
 where
     N: PrimeCharacteristicRing + Copy,
     D: Algebra<N> + Copy + MulAssign,
 {
-    let (mut c0_term_single, mut c2_term_single) = sumcheck_quadratic(((&u2_left, &u2_right), (&u3_left, &u3_right)));
-    c0_term_single *= eq_val;
-    c2_term_single *= eq_val;
+    let v_left = alpha_bc * u2_left + u0_left;
+    let v_right = alpha_bc * u2_right + u0_right;
 
-    let (c0_term_double_a, c2_term_double_a) = sumcheck_quadratic(((&u0_left, &u0_right), (&u3_left, &u3_right)));
-    let (c0_term_double_b, c2_term_double_b) = sumcheck_quadratic(((&u1_left, &u1_right), (&u2_left, &u2_right)));
-    let mut c0_term_double = c0_term_double_a + c0_term_double_b;
-    let mut c2_term_double = c2_term_double_a + c2_term_double_b;
-    c0_term_double *= eq_val;
-    c2_term_double *= eq_val;
+    let c0_a = u3_left * v_left;
+    let c2_a = (u3_right - u3_left) * (v_right - v_left);
 
-    (c0_term_single, c2_term_single, c0_term_double, c2_term_double)
+    let (c0_b, c2_b) = sumcheck_quadratic(((&u1_left, &u1_right), (&u2_left, &u2_right)));
+
+    let mut c0 = c0_a + c0_b;
+    let mut c2 = c2_a + c2_b;
+    c0 *= eq_val;
+    c2 *= eq_val;
+
+    (c0, c2)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn finalize_polynomial<A: Algebra<EF> + Copy + Send + Sync, EF: Field>(
-    c0_term_single: A,
-    c2_term_single: A,
-    c0_term_double: A,
-    c2_term_double: A,
-    alpha: EF,
+    c0: A,
+    c2: A,
     first_eq_factor: EF,
     missing_mul_factor: EF,
     sum: EF,
     decompose: impl Fn(A) -> Vec<EF>,
 ) -> DensePolynomial<EF> {
-    let c0 = c0_term_single * alpha + c0_term_double;
-    let c2 = c2_term_single * alpha + c2_term_double;
-
     let c0 = decompose(c0).into_iter().sum::<EF>();
     let c2 = decompose(c2).into_iter().sum::<EF>();
 
@@ -142,6 +139,7 @@ pub(crate) fn compute_gkr_quotient_sumcheck_polynomial<F: Algebra<EF> + Copy + S
 ) -> DensePolynomial<EF> {
     let n = u0.len();
     assert_eq!(eq_mle.len(), n / 2);
+    let alpha_bc = F::from(alpha);
 
     #[allow(clippy::type_complexity)]
     let map_fn = |(
@@ -149,11 +147,11 @@ pub(crate) fn compute_gkr_quotient_sumcheck_polynomial<F: Algebra<EF> + Copy + S
         &eq_val,
     ): (((((&F, &F), (&F, &F)), (&F, &F)), (&F, &F)), &F)| {
         compute_sumcheck_terms(
-            *u0_left, *u0_right, *u1_left, *u1_right, *u2_left, *u2_right, *u3_left, *u3_right, eq_val,
+            *u0_left, *u0_right, *u1_left, *u1_right, *u2_left, *u2_right, *u3_left, *u3_right, eq_val, alpha_bc,
         )
     };
 
-    let (c0_term_single, c2_term_single, c0_term_double, c2_term_double) = if n < PARALLEL_THRESHOLD {
+    let (c0, c2) = if n < PARALLEL_THRESHOLD {
         iter_split_2(u0)
             .zip(iter_split_2(u1))
             .zip(iter_split_2(u2))
@@ -161,8 +159,8 @@ pub(crate) fn compute_gkr_quotient_sumcheck_polynomial<F: Algebra<EF> + Copy + S
             .zip(eq_mle.iter())
             .map(map_fn)
             .fold(
-                (F::ZERO, F::ZERO, F::ZERO, F::ZERO),
-                |(a0, a1, a2, a3), (b0, b1, b2, b3)| (a0 + b0, a1 + b1, a2 + b2, a3 + b3),
+                (F::ZERO, F::ZERO),
+                |(a0, a1), (b0, b1)| (a0 + b0, a1 + b1),
             )
     } else {
         par_iter_split_2(u0)
@@ -172,17 +170,14 @@ pub(crate) fn compute_gkr_quotient_sumcheck_polynomial<F: Algebra<EF> + Copy + S
             .zip(eq_mle.par_iter())
             .map(map_fn)
             .reduce(
-                || (F::ZERO, F::ZERO, F::ZERO, F::ZERO),
-                |(a0, a1, a2, a3), (b0, b1, b2, b3)| (a0 + b0, a1 + b1, a2 + b2, a3 + b3),
+                || (F::ZERO, F::ZERO),
+                |(a0, a1), (b0, b1)| (a0 + b0, a1 + b1),
             )
     };
 
     finalize_polynomial(
-        c0_term_single,
-        c2_term_single,
-        c0_term_double,
-        c2_term_double,
-        alpha,
+        c0,
+        c2,
         first_eq_factor,
         missing_mul_factor,
         sum,
@@ -211,6 +206,7 @@ where
 
     let n = u0.len();
     let half = n / 2;
+    let alpha_bc = EP::<EF>::from(alpha);
 
     let n_lo = split_eq.n_lo();
     let packed_hi = split_eq.packed_hi();
@@ -218,17 +214,17 @@ where
     let eq_lo = &split_eq.eq_lo;
     let eq_hi = &split_eq.eq_hi_packed;
 
-    let zero = || (EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO);
-    let add = |a: (EP<EF>, EP<EF>, EP<EF>, EP<EF>), b: (EP<EF>, EP<EF>, EP<EF>, EP<EF>)| {
-        (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3)
+    let zero = || (EP::<EF>::ZERO, EP::<EF>::ZERO);
+    let add = |a: (EP<EF>, EP<EF>), b: (EP<EF>, EP<EF>)| {
+        (a.0 + b.0, a.1 + b.1)
     };
 
-    let (c0s, c2s, c0d, c2d) = (0..n_lo)
+    let (c0, c2) = (0..n_lo)
         .into_par_iter()
         .fold(zero, |mut acc, b_lo| {
             let eq_lo_bc = <EP<EF> as From<EF>>::from(eq_lo[b_lo]);
             let base = b_lo << log_packed_hi;
-            let (mut l0, mut l1, mut l2, mut l3) = (EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO);
+            let (mut l0, mut l1) = (EP::<EF>::ZERO, EP::<EF>::ZERO);
             for k in 0..packed_hi {
                 let i = base + k;
                 let t = compute_sumcheck_terms(
@@ -241,26 +237,20 @@ where
                     u3[i],
                     u3[i + half],
                     eq_hi[k],
+                    alpha_bc,
                 );
                 l0 += t.0;
                 l1 += t.1;
-                l2 += t.2;
-                l3 += t.3;
             }
             acc.0 += l0 * eq_lo_bc;
             acc.1 += l1 * eq_lo_bc;
-            acc.2 += l2 * eq_lo_bc;
-            acc.3 += l3 * eq_lo_bc;
             acc
         })
         .reduce(zero, add);
 
     finalize_polynomial(
-        c0s,
-        c2s,
-        c0d,
-        c2d,
-        alpha,
+        c0,
+        c2,
         first_eq_factor,
         missing_mul_factor,
         sum,
@@ -284,6 +274,7 @@ pub(crate) fn fold_and_compute_gkr_quotient_sumcheck_polynomial<F: Algebra<EF> +
 ) -> (DensePolynomial<EF>, Vec<Vec<F>>) {
     let n = u0.len();
     assert_eq!(eq_mle.len(), n / 4);
+    let alpha_bc = F::from(alpha);
 
     let mut folded_u0 = unsafe { uninitialized_vec::<F>(n / 2) };
     let mut folded_u1 = unsafe { uninitialized_vec::<F>(n / 2) };
@@ -318,11 +309,11 @@ pub(crate) fn fold_and_compute_gkr_quotient_sumcheck_polynomial<F: Algebra<EF> +
         let (u3_left, u3_right) = my_fold(u3_prev, u3_f);
 
         compute_sumcheck_terms(
-            u0_left, u0_right, u1_left, u1_right, u2_left, u2_right, u3_left, u3_right, eq_val,
+            u0_left, u0_right, u1_left, u1_right, u2_left, u2_right, u3_left, u3_right, eq_val, alpha_bc,
         )
     };
 
-    let (c0_term_single, c2_term_single, c0_term_double, c2_term_double) = if n < PARALLEL_THRESHOLD {
+    let (c0, c2) = if n < PARALLEL_THRESHOLD {
         zip_fold_2(u0, &mut folded_u0)
             .zip(zip_fold_2(u1, &mut folded_u1))
             .zip(zip_fold_2(u2, &mut folded_u2))
@@ -330,8 +321,8 @@ pub(crate) fn fold_and_compute_gkr_quotient_sumcheck_polynomial<F: Algebra<EF> +
             .zip(eq_mle.iter())
             .map(map_fn)
             .fold(
-                (F::ZERO, F::ZERO, F::ZERO, F::ZERO),
-                |(a0, a1, a2, a3), (b0, b1, b2, b3)| (a0 + b0, a1 + b1, a2 + b2, a3 + b3),
+                (F::ZERO, F::ZERO),
+                |(a0, a1), (b0, b1)| (a0 + b0, a1 + b1),
             )
     } else {
         par_zip_fold_2(u0, &mut folded_u0)
@@ -341,18 +332,15 @@ pub(crate) fn fold_and_compute_gkr_quotient_sumcheck_polynomial<F: Algebra<EF> +
             .zip(eq_mle.par_iter())
             .map(map_fn)
             .reduce(
-                || (F::ZERO, F::ZERO, F::ZERO, F::ZERO),
-                |(a0, a1, a2, a3), (b0, b1, b2, b3)| (a0 + b0, a1 + b1, a2 + b2, a3 + b3),
+                || (F::ZERO, F::ZERO),
+                |(a0, a1), (b0, b1)| (a0 + b0, a1 + b1),
             )
     };
 
     (
         finalize_polynomial(
-            c0_term_single,
-            c2_term_single,
-            c0_term_double,
-            c2_term_double,
-            alpha,
+            c0,
+            c2,
             first_eq_factor,
             missing_mul_factor,
             sum,
@@ -387,15 +375,16 @@ where
     let n = u0.len();
     let half = n / 2;
     let quarter = n / 4;
+    let alpha_bc = EP::<EF>::from(alpha);
 
     let mut folded_u0 = unsafe { uninitialized_vec::<EP<EF>>(half) };
     let mut folded_u1 = unsafe { uninitialized_vec::<EP<EF>>(half) };
     let mut folded_u2 = unsafe { uninitialized_vec::<EP<EF>>(half) };
     let mut folded_u3 = unsafe { uninitialized_vec::<EP<EF>>(half) };
 
-    let zero = || (EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO);
-    let add = |a: (EP<EF>, EP<EF>, EP<EF>, EP<EF>), b: (EP<EF>, EP<EF>, EP<EF>, EP<EF>)| {
-        (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3)
+    let zero = || (EP::<EF>::ZERO, EP::<EF>::ZERO);
+    let add = |a: (EP<EF>, EP<EF>), b: (EP<EF>, EP<EF>)| {
+        (a.0 + b.0, a.1 + b.1)
     };
 
     let packed_hi = split_eq.packed_hi();
@@ -403,7 +392,7 @@ where
     let eq_lo = &split_eq.eq_lo;
     let eq_hi = &split_eq.eq_hi_packed;
 
-    let (c0s, c2s, c0d, c2d) = {
+    let (c0, c2) = {
         let (fl0, fr0) = folded_u0.split_at_mut(quarter);
         let (fl1, fr1) = folded_u1.split_at_mut(quarter);
         let (fl2, fr2) = folded_u2.split_at_mut(quarter);
@@ -423,8 +412,7 @@ where
                 |mut acc, (b_lo, (((((((fl0, fr0), fl1), fr1), fl2), fr2), fl3), fr3))| {
                     let eq_lo_bc = <EP<EF> as From<EF>>::from(eq_lo[b_lo]);
                     let base = b_lo << log_packed_hi;
-                    let (mut l0, mut l1, mut l2, mut l3) =
-                        (EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO, EP::<EF>::ZERO);
+                    let (mut l0, mut l1) = (EP::<EF>::ZERO, EP::<EF>::ZERO);
                     for k in 0..packed_hi {
                         let i = base + k;
                         let (u0l, u0r) = fold_num(u0, i, half, quarter);
@@ -439,16 +427,12 @@ where
                         let (u3l, u3r) = fold_den(u3, i, half, quarter);
                         fl3[k] = u3l;
                         fr3[k] = u3r;
-                        let t = compute_sumcheck_terms(u0l, u0r, u1l, u1r, u2l, u2r, u3l, u3r, eq_hi[k]);
+                        let t = compute_sumcheck_terms(u0l, u0r, u1l, u1r, u2l, u2r, u3l, u3r, eq_hi[k], alpha_bc);
                         l0 += t.0;
                         l1 += t.1;
-                        l2 += t.2;
-                        l3 += t.3;
                     }
                     acc.0 += l0 * eq_lo_bc;
                     acc.1 += l1 * eq_lo_bc;
-                    acc.2 += l2 * eq_lo_bc;
-                    acc.3 += l3 * eq_lo_bc;
                     acc
                 },
             )
@@ -457,11 +441,8 @@ where
 
     (
         finalize_polynomial(
-            c0s,
-            c2s,
-            c0d,
-            c2d,
-            alpha,
+            c0,
+            c2,
             first_eq_factor,
             missing_mul_factor,
             sum,
