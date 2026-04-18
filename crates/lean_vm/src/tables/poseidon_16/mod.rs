@@ -266,6 +266,7 @@ pub(super) struct Poseidon1Cols16<T> {
     pub outputs: [T; WIDTH / 2],
 }
 
+#[inline(always)]
 fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<AB::IF>) {
     let mut state: [_; WIDTH] = local.inputs;
 
@@ -329,7 +330,7 @@ pub const fn num_cols_poseidon_16() -> usize {
     size_of::<Poseidon1Cols16<u8>>()
 }
 
-#[inline]
+#[inline(always)]
 fn eval_2_full_rounds_16<AB: AirBuilder>(
     state: &mut [AB::IF; WIDTH],
     post_full_round: &[AB::IF; WIDTH],
@@ -353,7 +354,7 @@ fn eval_2_full_rounds_16<AB: AirBuilder>(
     }
 }
 
-#[inline]
+#[inline(always)]
 fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     initial_state: &[AB::IF; WIDTH],
     state: &mut [AB::IF; WIDTH],
@@ -382,7 +383,7 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     }
 }
 
-#[inline]
+#[inline(always)]
 fn dense_mat_vec_air_16<A: PrimeCharacteristicRing + 'static>(mat: &[[F; 16]; 16], state: &mut [A; WIDTH]) {
     let input = *state;
     for i in 0..WIDTH {
@@ -394,7 +395,7 @@ fn dense_mat_vec_air_16<A: PrimeCharacteristicRing + 'static>(mat: &[[F; 16]; 16
     }
 }
 
-#[inline]
+#[inline(always)]
 fn sparse_mat_air_16<A: PrimeCharacteristicRing + 'static>(
     state: &mut [A; WIDTH],
     first_row: &[F; WIDTH],
