@@ -50,9 +50,9 @@ pub(super) fn generate_trace_rows_for_perm<F: Algebra<KoalaBear> + Copy>(perm: &
     for (full_round, constants) in perm
         .beginning_full_rounds
         .iter_mut()
-        .zip(poseidon1_initial_constants().iter())
+        .zip(poseidon1_initial_constants().chunks_exact(2))
     {
-        generate_1_full_round(&mut state, full_round, constants);
+        generate_2_full_round(&mut state, full_round, &constants[0], &constants[1]);
     }
 
     // --- Sparse partial rounds ---
@@ -94,49 +94,66 @@ pub(super) fn generate_trace_rows_for_perm<F: Algebra<KoalaBear> + Copy>(perm: &
     for (full_round, constants) in perm
         .ending_full_rounds
         .iter_mut()
-        .zip(poseidon1_final_constants().iter())
+        .zip(poseidon1_final_constants().chunks_exact(2))
     {
-        generate_1_full_round(&mut state, full_round, constants);
+        generate_2_full_round(&mut state, full_round, &constants[0], &constants[1]);
     }
 
-    generate_last_full_round(
+    // Last 2 full rounds with compression (add inputs to outputs)
+    generate_last_2_full_rounds(
         &mut state,
         &inputs,
         &mut perm.outputs,
-        &poseidon1_final_constants()[n_ending_full_rounds],
+        &poseidon1_final_constants()[2 * n_ending_full_rounds],
+        &poseidon1_final_constants()[2 * n_ending_full_rounds + 1],
     );
 }
 
 #[inline]
-fn generate_1_full_round<F: Algebra<KoalaBear> + Copy>(
+fn generate_2_full_round<F: Algebra<KoalaBear> + Copy>(
     state: &mut [F; WIDTH],
-    post_round: &mut [&mut F; WIDTH],
-    round_constants: &[KoalaBear; WIDTH],
+    post_full_round: &mut [&mut F; WIDTH],
+    round_constants_1: &[KoalaBear; WIDTH],
+    round_constants_2: &[KoalaBear; WIDTH],
 ) {
-    for (state_i, const_i) in state.iter_mut().zip(round_constants) {
+    for (state_i, const_i) in state.iter_mut().zip(round_constants_1) {
         *state_i += *const_i;
         *state_i = state_i.cube();
     }
     mds_circ_16(state);
 
-    post_round.iter_mut().zip(*state).for_each(|(post, x)| {
+    for (state_i, const_i) in state.iter_mut().zip(round_constants_2.iter()) {
+        *state_i += *const_i;
+        *state_i = state_i.cube();
+    }
+    mds_circ_16(state);
+
+    post_full_round.iter_mut().zip(*state).for_each(|(post, x)| {
         **post = x;
     });
 }
 
 #[inline]
-fn generate_last_full_round<F: Algebra<KoalaBear> + Copy>(
+fn generate_last_2_full_rounds<F: Algebra<KoalaBear> + Copy>(
     state: &mut [F; WIDTH],
     inputs: &[F; WIDTH],
     outputs: &mut [&mut F; WIDTH / 2],
-    round_constants: &[KoalaBear; WIDTH],
+    round_constants_1: &[KoalaBear; WIDTH],
+    round_constants_2: &[KoalaBear; WIDTH],
 ) {
-    for (state_i, const_i) in state.iter_mut().zip(round_constants) {
+    for (state_i, const_i) in state.iter_mut().zip(round_constants_1) {
         *state_i += *const_i;
         *state_i = state_i.cube();
     }
     mds_circ_16(state);
 
+    for (state_i, const_i) in state.iter_mut().zip(round_constants_2.iter()) {
+        *state_i += *const_i;
+        *state_i = state_i.cube();
+    }
+    mds_circ_16(state);
+
+    // Add inputs to outputs (compression)
     for ((output, state_i), &input_i) in outputs.iter_mut().zip(state).zip(inputs) {
         **output = *state_i + input_i;
     }
