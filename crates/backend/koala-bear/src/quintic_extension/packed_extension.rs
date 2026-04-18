@@ -236,7 +236,7 @@ impl<F> PackedFieldExtension<F, QuinticExtensionField<F>> for PackedQuinticExten
 where
     F: QuinticExtendable,
 {
-    #[inline(always)]
+    #[inline]
     fn from_ext_slice(ext_slice: &[QuinticExtensionField<F>]) -> Self {
         let width = F::Packing::WIDTH;
         assert_eq!(ext_slice.len(), width);
