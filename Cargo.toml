@@ -94,4 +94,4 @@ serde_json.workspace = true
 
 
 [profile.release]
-lto = "fat"
+lto = "thin"
