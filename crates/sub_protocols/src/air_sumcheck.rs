@@ -13,7 +13,7 @@ pub trait OuterSumcheckSession<EF: ExtensionField<PF<EF>>>: Debug {
     fn eq_alpha(&self) -> EF;
     fn compute_bare_round_poly(&mut self) -> DensePolynomial<EF>;
     fn process_challenge(&mut self, challenge: EF, bare_poly: &DensePolynomial<EF>);
-    fn final_column_evals(&self) -> Vec<EF>;
+    fn final_column_evals(&mut self) -> Vec<EF>;
 }
 
 #[derive(Debug)]
@@ -25,6 +25,7 @@ where
     eq_factor_and_split: Option<(Vec<EF>, SplitEq<EF>)>,
     sum: EF,
     missing_mul_factors: Option<EF>,
+    prev_folding_factor: Option<EF>,
     computation: A,
     extra_data: A::ExtraData,
     initial_n_vars: usize,
@@ -49,6 +50,7 @@ where
             eq_factor_and_split: Some((eq_factor, split_eq)),
             sum,
             missing_mul_factors: None,
+            prev_folding_factor: None,
             computation,
             extra_data,
             initial_n_vars,
@@ -79,7 +81,13 @@ where
     }
 
     fn compute_bare_round_poly(&mut self) -> DensePolynomial<EF> {
-        if self.multilinears.is_packed() && must_unpack_multilinears::<EF>(self.multilinears.n_vars()) {
+        let mut pf = self.prev_folding_factor.take();
+        let in_remainder = self.eq_factor_and_split.as_ref()
+            .map_or(false, |(_, seq)| seq.is_remainder_mode());
+        if pf.is_some() && in_remainder {
+            self.multilinears = self.multilinears.by_ref().fold(pf.take().unwrap()).into();
+        }
+        if pf.is_none() && self.multilinears.is_packed() && must_unpack_multilinears::<EF>(self.multilinears.n_vars()) {
             let old = std::mem::replace(
                 &mut self.multilinears,
                 MleGroup::Owned(MleGroupOwned::Extension(vec![])),
@@ -88,7 +96,7 @@ where
         }
         compute_round_polynomial(
             &mut self.multilinears,
-            None,
+            pf,
             &self.computation,
             &self.eq_factor_and_split,
             &self.extra_data,
@@ -99,7 +107,7 @@ where
 
     fn process_challenge(&mut self, challenge: EF, bare_poly: &DensePolynomial<EF>) {
         let mut n_vars = self.multilinears.n_vars();
-        on_challenge_received(
+        self.prev_folding_factor = on_challenge_received(
             &mut self.multilinears,
             &mut n_vars,
             &mut self.eq_factor_and_split,
@@ -107,11 +115,14 @@ where
             &mut self.missing_mul_factors,
             challenge,
             bare_poly,
-            true,
+            false,
         );
     }
 
-    fn final_column_evals(&self) -> Vec<EF> {
+    fn final_column_evals(&mut self) -> Vec<EF> {
+        if let Some(r) = self.prev_folding_factor.take() {
+            self.multilinears = self.multilinears.by_ref().fold(r).into();
+        }
         self.multilinears
             .by_ref()
             .as_extension()
