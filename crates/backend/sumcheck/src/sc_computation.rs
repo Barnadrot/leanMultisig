@@ -371,7 +371,7 @@ where
                 extra_data,
                 missing_mul_factor,
                 packed_fold_size,
-                |sc, pf, ed| sc.eval_packed_extension(&pf, ed),
+                |sc, pf, ed| sc.eval_packed_extension(pf, ed),
                 packing_unpack_sum,
             )
         }
@@ -493,7 +493,7 @@ where
                 missing_mul_factor,
                 compute_fold_size,
                 |m, id| (m[id + prev_folded_size] - m[id]) * prev_folding_factor + m[id],
-                |sc, pf, ed| sc.eval_packed_extension(&pf, ed),
+                |sc, pf, ed| sc.eval_packed_extension(pf, ed),
                 packing_unpack_sum,
                 MleGroupOwned::ExtensionPacked,
             )
@@ -723,7 +723,7 @@ fn sumcheck_compute_with_split_eq<EF, SC>(
     extra_data: &SC::ExtraData,
     missing_mul_factor: Option<EF>,
     fold_size: usize,
-    eval_fn: impl Fn(&SC, Vec<EFPacking<EF>>, &SC::ExtraData) -> EFPacking<EF> + Sync + Send,
+    eval_fn: impl Fn(&SC, &[EFPacking<EF>], &SC::ExtraData) -> EFPacking<EF> + Sync + Send,
     unpack_sum: impl Fn(EFPacking<EF>) -> EF,
 ) -> Vec<EF>
 where
@@ -744,39 +744,39 @@ where
         acc
     };
 
+    let n_cols = multilinears.len();
     let sums: Vec<EFPacking<EF>> = (0..n_lo)
         .into_par_iter()
         .map(|b_lo| {
             let eq_lo_bc = EFPacking::<EF>::from(eq_lo[b_lo]);
             let base = b_lo << log_packed_hi;
             let mut block_acc = zero();
+            let mut rows = vec![[EFPacking::<EF>::ZERO; 3]; n_cols];
+            let mut point = vec![EFPacking::<EF>::ZERO; n_cols];
             for k in 0..packed_hi {
                 let i = base + k;
                 let eq_val = eq_hi[k];
 
-                let mut rows = multilinears
-                    .iter()
-                    .map(|m| {
-                        let lo = m[i];
-                        let hi = m[i + fold_size];
-                        let diff = hi - lo;
-                        [lo, diff, hi]
-                    })
-                    .collect::<Vec<_>>();
+                for (j, m) in multilinears.iter().enumerate() {
+                    let lo = m[i];
+                    let hi = m[i + fold_size];
+                    rows[j] = [lo, hi - lo, hi];
+                    point[j] = lo;
+                }
 
                 // z = 0
-                let p0 = rows.iter().map(|r| r[0]).collect();
-                let mut e0 = eval_fn(computation, p0, extra_data);
+                let mut e0 = eval_fn(computation, &point, extra_data);
                 e0 *= eq_val;
                 block_acc[0] += e0;
 
                 // z = 2, 3, ...
                 for d in 1..degree {
-                    for [_, diff, running] in &mut rows {
-                        *running += *diff;
+                    for j in 0..n_cols {
+                        let diff = rows[j][1];
+                        rows[j][2] += diff;
+                        point[j] = rows[j][2];
                     }
-                    let pf = rows.iter().map(|r| r[2]).collect();
-                    let mut ev = eval_fn(computation, pf, extra_data);
+                    let mut ev = eval_fn(computation, &point, extra_data);
                     ev *= eq_val;
                     block_acc[d] += ev;
                 }
@@ -803,7 +803,7 @@ fn sumcheck_fold_and_compute_with_split_eq<EF, IF, SC>(
     missing_mul_factor: Option<EF>,
     compute_fold_size: usize,
     fold_f: impl Fn(&[IF], usize) -> EFPacking<EF> + Sync + Send,
-    eval_fn: impl Fn(&SC, Vec<EFPacking<EF>>, &SC::ExtraData) -> EFPacking<EF> + Sync + Send,
+    eval_fn: impl Fn(&SC, &[EFPacking<EF>], &SC::ExtraData) -> EFPacking<EF> + Sync + Send,
     unpack_sum: impl Fn(EFPacking<EF>) -> EF,
     wrap_f: impl FnOnce(Vec<Vec<EFPacking<EF>>>) -> MleGroupOwned<EF>,
 ) -> (Vec<EF>, MleGroupOwned<EF>)
@@ -831,43 +831,42 @@ where
         acc
     };
 
+    let n_cols = multilinears.len();
     let sums: Vec<EFPacking<EF>> = (0..n_lo)
         .into_par_iter()
         .map(|b_lo| {
             let eq_lo_bc = EFPacking::<EF>::from(eq_lo[b_lo]);
             let base = b_lo << log_packed_hi;
             let mut block_acc = zero();
+            let mut rows_f = vec![[EFPacking::<EF>::ZERO; 3]; n_cols];
+            let mut point = vec![EFPacking::<EF>::ZERO; n_cols];
             for k in 0..packed_hi {
                 let i = base + k;
                 let eq_val = eq_hi[k];
 
-                let mut rows_f: Vec<[EFPacking<EF>; 3]> = multilinears
-                    .iter()
-                    .enumerate()
-                    .map(|(j, m)| {
-                        let lo = fold_f(m, i);
-                        let hi = fold_f(m, i + compute_fold_size);
-                        unsafe {
-                            let ptr = folded_f[j].as_ptr() as *mut EFPacking<EF>;
-                            *ptr.add(i) = lo;
-                            *ptr.add(i + compute_fold_size) = hi;
-                        }
-                        let diff = hi - lo;
-                        [lo, diff, hi]
-                    })
-                    .collect();
+                for (j, m) in multilinears.iter().enumerate() {
+                    let lo = fold_f(m, i);
+                    let hi = fold_f(m, i + compute_fold_size);
+                    unsafe {
+                        let ptr = folded_f[j].as_ptr() as *mut EFPacking<EF>;
+                        *ptr.add(i) = lo;
+                        *ptr.add(i + compute_fold_size) = hi;
+                    }
+                    rows_f[j] = [lo, hi - lo, hi];
+                    point[j] = lo;
+                }
 
-                let p0 = rows_f.iter().map(|r| r[0]).collect();
-                let mut e0 = eval_fn(computation, p0, extra_data);
+                let mut e0 = eval_fn(computation, &point, extra_data);
                 e0 *= eq_val;
                 block_acc[0] += e0;
 
                 for d in 1..degree {
-                    for [_, diff, running] in &mut rows_f {
-                        *running += *diff;
+                    for j in 0..n_cols {
+                        let diff = rows_f[j][1];
+                        rows_f[j][2] += diff;
+                        point[j] = rows_f[j][2];
                     }
-                    let pf = rows_f.iter().map(|r| r[2]).collect();
-                    let mut ev = eval_fn(computation, pf, extra_data);
+                    let mut ev = eval_fn(computation, &point, extra_data);
                     ev *= eq_val;
                     block_acc[d] += ev;
                 }
