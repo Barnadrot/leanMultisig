@@ -70,13 +70,12 @@ pub fn prove_generic_logup(
         .enumerate()
         .for_each(|(chunk_idx, denom_packed)| {
             let base_i = chunk_idx * width;
-            let ramp = PFPacking::<EF>::from_fn(|w| F::from_usize(w));
             *denom_packed = c_packed
                 - finger_print_packed::<EF>(
                     memory_contrib,
                     &[
-                        PFPacking::<EF>::pack_slice(&memory[base_i..base_i + width])[0],
-                        ramp + PFPacking::<EF>::from(F::from_usize(base_i)),
+                        PFPacking::<EF>::from_fn(|w| memory[base_i + w]),
+                        PFPacking::<EF>::from_fn(|w| F::from_usize(base_i + w)),
                     ],
                     &alphas_packed,
                 );
@@ -96,12 +95,11 @@ pub fn prove_generic_logup(
             .enumerate()
             .for_each(|(chunk_idx, denom_packed)| {
                 let base_i = chunk_idx * width;
-                let ramp = PFPacking::<EF>::from_fn(|w| F::from_usize(w));
                 let mut data = [PFPacking::<EF>::ZERO; N_INSTRUCTION_COLUMNS + 1];
                 for k in 0..N_INSTRUCTION_COLUMNS {
                     data[k] = PFPacking::<EF>::from_fn(|w| bytecode_multilinear[(base_i + w) * bytecode_stride + k]);
                 }
-                data[N_INSTRUCTION_COLUMNS] = ramp + PFPacking::<EF>::from(F::from_usize(base_i));
+                data[N_INSTRUCTION_COLUMNS] = PFPacking::<EF>::from_fn(|w| F::from_usize(base_i + w));
                 *denom_packed = c_packed - finger_print_packed::<EF>(bytecode_contrib, &data, &alphas_packed);
             });
     }
@@ -132,9 +130,9 @@ pub fn prove_generic_logup(
                     let base_i = chunk_idx * width;
                     let mut data = [PFPacking::<EF>::ZERO; N_INSTRUCTION_COLUMNS + 1];
                     for k in 0..N_INSTRUCTION_COLUMNS {
-                        data[k] = PFPacking::<EF>::pack_slice(&bytecode_columns[k][base_i..base_i + width])[0];
+                        data[k] = PFPacking::<EF>::from_fn(|w| bytecode_columns[k][base_i + w]);
                     }
-                    data[N_INSTRUCTION_COLUMNS] = PFPacking::<EF>::pack_slice(&pc_column[base_i..base_i + width])[0];
+                    data[N_INSTRUCTION_COLUMNS] = PFPacking::<EF>::from_fn(|w| pc_column[base_i + w]);
                     *denom_packed = c_packed - finger_print_packed::<EF>(bytecode_contrib, &data, &alphas_packed);
                 });
             offset += 1 << log_n_rows;
@@ -161,7 +159,7 @@ pub fn prove_generic_logup(
                     let mut bus_data = [PFPacking::<EF>::ZERO; MAX_PRECOMPILE_BUS_WIDTH];
                     for (j, entry) in bus_data_entries.iter().enumerate() {
                         bus_data[j] = match entry {
-                            BusData::Column(col) => PFPacking::<EF>::pack_slice(&trace.columns[*col][base_i..base_i + width])[0],
+                            BusData::Column(col) => PFPacking::<EF>::from_fn(|w| trace.columns[*col][base_i + w]),
                             BusData::Constant(val) => PFPacking::<EF>::from(F::from_usize(*val)),
                         };
                     }
@@ -201,8 +199,8 @@ pub fn prove_generic_logup(
                                     - finger_print_packed::<EF>(
                                         memory_contrib,
                                         &[
-                                            PFPacking::<EF>::pack_slice(&col_values[i][base_j..base_j + width])[0],
-                                            PFPacking::<EF>::pack_slice(&col_index[base_j..base_j + width])[0] + PFPacking::<EF>::from(i_field),
+                                            PFPacking::<EF>::from_fn(|w| col_values[i][base_j + w]),
+                                            PFPacking::<EF>::from_fn(|w| col_index[base_j + w] + i_field),
                                         ],
                                         &alphas_packed,
                                     );
