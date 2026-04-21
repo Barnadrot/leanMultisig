@@ -45,10 +45,16 @@ impl<F: Field, PF: PackedField<Scalar = F>> Default for PackedQuinticExtensionFi
 }
 
 impl<F: Field, PF: PackedField<Scalar = F>> From<QuinticExtensionField<F>> for PackedQuinticExtensionField<F, PF> {
-    #[inline]
+    #[inline(always)]
     fn from(x: QuinticExtensionField<F>) -> Self {
         Self {
-            value: x.value.map(Into::into),
+            value: [
+                x.value[0].into(),
+                x.value[1].into(),
+                x.value[2].into(),
+                x.value[3].into(),
+                x.value[4].into(),
+            ],
         }
     }
 }
@@ -116,10 +122,16 @@ macro_rules! impl_packed_ext_scalar_ops {
 
         impl Mul<KoalaBear> for PackedQuinticExtensionField<KoalaBear, $pf> {
             type Output = Self;
-            #[inline]
+            #[inline(always)]
             fn mul(self, rhs: KoalaBear) -> Self {
                 Self {
-                    value: self.value.map(|x| x * rhs),
+                    value: [
+                        self.value[0] * rhs,
+                        self.value[1] * rhs,
+                        self.value[2] * rhs,
+                        self.value[3] * rhs,
+                        self.value[4] * rhs,
+                    ],
                 }
             }
         }
@@ -283,7 +295,13 @@ where
     #[inline]
     fn neg(self) -> Self {
         Self {
-            value: self.value.map(PF::neg),
+            value: [
+                -self.value[0],
+                -self.value[1],
+                -self.value[2],
+                -self.value[3],
+                -self.value[4],
+            ],
         }
     }
 }
@@ -295,10 +313,17 @@ where
 {
     type Output = Self;
 
-    #[inline]
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self {
-        let value = vector_add(&self.value, &rhs.value);
-        Self { value }
+        Self {
+            value: [
+                self.value[0] + rhs.value[0],
+                self.value[1] + rhs.value[1],
+                self.value[2] + rhs.value[2],
+                self.value[3] + rhs.value[3],
+                self.value[4] + rhs.value[4],
+            ],
+        }
     }
 }
 
@@ -309,10 +334,17 @@ where
 {
     type Output = Self;
 
-    #[inline]
+    #[inline(always)]
     fn add(self, rhs: QuinticExtensionField<F>) -> Self {
-        let value = vector_add(&self.value, &rhs.value);
-        Self { value }
+        Self {
+            value: [
+                self.value[0] + rhs.value[0],
+                self.value[1] + rhs.value[1],
+                self.value[2] + rhs.value[2],
+                self.value[3] + rhs.value[3],
+                self.value[4] + rhs.value[4],
+            ],
+        }
     }
 }
 
@@ -385,10 +417,17 @@ where
 {
     type Output = Self;
 
-    #[inline]
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self {
-        let value = vector_sub(&self.value, &rhs.value);
-        Self { value }
+        Self {
+            value: [
+                self.value[0] - rhs.value[0],
+                self.value[1] - rhs.value[1],
+                self.value[2] - rhs.value[2],
+                self.value[3] - rhs.value[3],
+                self.value[4] - rhs.value[4],
+            ],
+        }
     }
 }
 
@@ -399,10 +438,17 @@ where
 {
     type Output = Self;
 
-    #[inline]
+    #[inline(always)]
     fn sub(self, rhs: QuinticExtensionField<F>) -> Self {
-        let value = vector_sub(&self.value, &rhs.value);
-        Self { value }
+        Self {
+            value: [
+                self.value[0] - rhs.value[0],
+                self.value[1] - rhs.value[1],
+                self.value[2] - rhs.value[2],
+                self.value[3] - rhs.value[3],
+                self.value[4] - rhs.value[4],
+            ],
+        }
     }
 }
 
@@ -426,9 +472,11 @@ where
     F: QuinticExtendable,
     PF: PackedField<Scalar = F>,
 {
-    #[inline]
+    #[inline(always)]
     fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
+        for i in 0..5 {
+            self.value[i] -= rhs.value[i];
+        }
     }
 }
 
@@ -437,9 +485,11 @@ where
     F: QuinticExtendable,
     PF: PackedField<Scalar = F>,
 {
-    #[inline]
+    #[inline(always)]
     fn sub_assign(&mut self, rhs: QuinticExtensionField<F>) {
-        *self = *self - rhs;
+        for i in 0..5 {
+            self.value[i] -= rhs.value[i];
+        }
     }
 }
 
@@ -478,7 +528,13 @@ where
 
     #[inline(always)]
     fn mul(self, rhs: QuinticExtensionField<F>) -> Self {
-        let b: [PF; 5] = rhs.value.map(|x| x.into());
+        let b: [PF; 5] = [
+            rhs.value[0].into(),
+            rhs.value[1].into(),
+            rhs.value[2].into(),
+            rhs.value[3].into(),
+            rhs.value[4].into(),
+        ];
         Self {
             value: super::extension::quintic_mul(&self.value, &b, PF::dot_product::<5>),
         }
@@ -492,10 +548,16 @@ where
 {
     type Output = Self;
 
-    #[inline]
+    #[inline(always)]
     fn mul(self, rhs: PF) -> Self {
         Self {
-            value: self.value.map(|x| x * rhs),
+            value: [
+                self.value[0] * rhs,
+                self.value[1] * rhs,
+                self.value[2] * rhs,
+                self.value[3] * rhs,
+                self.value[4] * rhs,
+            ],
         }
     }
 }
@@ -545,19 +607,27 @@ where
 }
 
 /// Add two vectors element wise.
-#[inline]
+#[inline(always)]
 pub fn vector_add<R: PrimeCharacteristicRing + Add<R2, Output = R>, R2: Copy, const D: usize>(
     a: &[R; D],
     b: &[R2; D],
 ) -> [R; D] {
-    array::from_fn(|i| a[i] + b[i])
+    let mut out = *a;
+    for i in 0..D {
+        out[i] = a[i] + b[i];
+    }
+    out
 }
 
 /// Subtract two vectors element wise.
-#[inline]
+#[inline(always)]
 pub fn vector_sub<R: PrimeCharacteristicRing + Sub<R2, Output = R>, R2: Copy, const D: usize>(
     a: &[R; D],
     b: &[R2; D],
 ) -> [R; D] {
-    array::from_fn(|i| a[i] - b[i])
+    let mut out = *a;
+    for i in 0..D {
+        out[i] = a[i] - b[i];
+    }
+    out
 }
