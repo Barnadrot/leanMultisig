@@ -323,16 +323,62 @@ where
 {
     let unpack_sum_packed = |s: EFPacking<EF>| -> EF { EFPacking::<EF>::to_ext_iter([s]).sum::<EF>() };
     match multilinears {
-        MleGroupRef::BasePacked(cols) => compute_raw_poly_impl::<EF, A, PFPacking<EF>, EFPacking<EF>, _, _>(
-            cols,
-            |j| split_eq.get_packed(j),
-            computation,
-            extra_data,
-            fold_bit,
-            active_count_pairs,
-            A::eval_packed_base,
-            unpack_sum_packed,
-        ),
+        MleGroupRef::BasePacked(cols) => {
+            let degree = computation.degree();
+            let n_cols = cols.len();
+            let stride = 1usize << fold_bit;
+            let lo_mask = stride - 1;
+
+            let acc = (0..active_count_pairs)
+                .into_par_iter()
+                .fold(
+                    || {
+                        (
+                            vec![EFPacking::<EF>::ZERO; degree],
+                            Vec::<PFPacking<EF>>::with_capacity(n_cols),
+                            Vec::<PFPacking<EF>>::with_capacity(n_cols),
+                        )
+                    },
+                    |(mut acc, mut point, mut diff), new_j| {
+                        let i_hi = new_j >> fold_bit;
+                        let i_lo = new_j & lo_mask;
+                        let i0 = (i_hi << (fold_bit + 1)) | i_lo;
+                        let i1 = i0 | stride;
+                        let partial_eq = split_eq.get_packed(new_j);
+                        point.clear();
+                        diff.clear();
+                        for c in cols {
+                            let lo = c[i0];
+                            let hi = c[i1];
+                            point.push(lo);
+                            diff.push(hi - lo);
+                        }
+                        acc[0] += computation.eval_packed_base(&point, extra_data) * partial_eq;
+                        for k in 0..n_cols {
+                            point[k] += diff[k];
+                        }
+                        for acc_z in &mut acc[1..] {
+                            for k in 0..n_cols {
+                                point[k] += diff[k];
+                            }
+                            *acc_z += computation.eval_packed_base(&point, extra_data) * partial_eq;
+                        }
+                        (acc, point, diff)
+                    },
+                )
+                .map(|(acc, _, _)| acc)
+                .reduce(
+                    || vec![EFPacking::<EF>::ZERO; degree],
+                    |mut a, b| {
+                        for i in 0..degree {
+                            a[i] += b[i];
+                        }
+                        a
+                    },
+                );
+
+            acc.into_iter().map(unpack_sum_packed).collect()
+        },
         MleGroupRef::ExtensionPacked(cols) => compute_raw_poly_impl::<EF, A, EFPacking<EF>, EFPacking<EF>, _, _>(
             cols,
             |j| split_eq.get_packed(j),
