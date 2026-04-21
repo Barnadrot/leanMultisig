@@ -214,16 +214,13 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         BUS as usize + 76
     }
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
-        // SAFETY: We use a raw pointer to avoid copying the entire Poseidon1Cols16
-        // struct (30KB for EFPacking) onto the stack. The pointed-to data lives in
-        // the builder's column slice and is never mutated during eval.
-        let cols: &Poseidon1Cols16<AB::IF> = unsafe {
+        let cols: Poseidon1Cols16<AB::IF> = {
             let up = builder.up();
-            let (prefix, shorts, suffix) = up.align_to::<Poseidon1Cols16<AB::IF>>();
+            let (prefix, shorts, suffix) = unsafe { up.align_to::<Poseidon1Cols16<AB::IF>>() };
             debug_assert!(prefix.is_empty(), "Alignment should match");
             debug_assert!(suffix.is_empty(), "Alignment should match");
             debug_assert_eq!(shorts.len(), 1);
-            &*shorts.as_ptr()
+            unsafe { std::ptr::read(&shorts[0]) }
         };
 
         // Bus data: [POSEIDON_PRECOMPILE_DATA (constant), a, b, res]
@@ -250,7 +247,7 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
 
         builder.assert_bool(cols.flag);
 
-        eval_poseidon1_16(builder, cols)
+        eval_poseidon1_16(builder, &cols)
     }
 }
 
