@@ -22,10 +22,6 @@ pub trait Air: Send + Sync + 'static {
 
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData);
 
-    fn low_degree_air(&self) -> Option<usize> {
-        None
-    }
-
     fn n_down_columns(&self) -> usize {
         self.down_column_indexes().len()
     }
@@ -57,24 +53,6 @@ pub trait AirBuilder: Sized {
 
     fn assert_eq(&mut self, x: Self::IF, y: Self::IF) {
         self.assert_zero(x - y);
-    }
-
-    fn assert_zero_low(&mut self, x: Self::IF) {
-        self.assert_zero(x);
-    }
-
-    fn assert_eq_low(&mut self, x: Self::IF, y: Self::IF) {
-        self.assert_zero_low(x - y);
-    }
-
-    fn is_skip_low(&self) -> bool {
-        false
-    }
-
-    fn store_cached_state(&mut self, _state: &[Self::IF]) {}
-
-    fn get_cached_state(&self) -> &[Self::IF] {
-        &[]
     }
 
     fn assert_bool(&mut self, x: Self::IF) {
