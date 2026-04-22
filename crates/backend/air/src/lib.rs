@@ -77,16 +77,6 @@ pub trait AirBuilder: Sized {
         &[]
     }
 
-    fn push_mid_state(&mut self, _state: &[Self::IF]) {}
-
-    fn pop_mid_state(&mut self, _n: usize) -> &[Self::IF] {
-        &[]
-    }
-
-    fn has_mid_states(&self) -> bool {
-        false
-    }
-
     /// useful to build the recursion program
     #[inline(always)]
     fn declare_values(&mut self, values: &[Self::IF]) {

@@ -346,36 +346,19 @@ fn eval_2_full_rounds_16<AB: AirBuilder>(
     round_constants_2: &[F; WIDTH],
     builder: &mut AB,
 ) {
-    if builder.is_skip_low() && builder.has_mid_states() {
-        let mid = builder.pop_mid_state(WIDTH);
-        let mut ms: [AB::IF; WIDTH] = std::array::from_fn(|i| mid[i]);
-        for (s, r) in ms.iter_mut().zip(round_constants_2.iter()) {
-            add_kb(s, *r);
-            *s = s.cube();
-        }
-        mds_air_16(&mut ms);
-        for (ms_i, post_i) in ms.iter().zip(post_full_round) {
-            builder.assert_eq(*ms_i, *post_i);
-        }
-        for (state_i, post_i) in state.iter_mut().zip(post_full_round) {
-            *state_i = *post_i;
-        }
-    } else {
-        for (s, r) in state.iter_mut().zip(round_constants_1.iter()) {
-            add_kb(s, *r);
-            *s = s.cube();
-        }
-        mds_air_16(state);
-        builder.push_mid_state(state);
-        for (s, r) in state.iter_mut().zip(round_constants_2.iter()) {
-            add_kb(s, *r);
-            *s = s.cube();
-        }
-        mds_air_16(state);
-        for (state_i, post_i) in state.iter_mut().zip(post_full_round) {
-            builder.assert_eq(*state_i, *post_i);
-            *state_i = *post_i;
-        }
+    for (s, r) in state.iter_mut().zip(round_constants_1.iter()) {
+        add_kb(s, *r);
+        *s = s.cube();
+    }
+    mds_air_16(state);
+    for (s, r) in state.iter_mut().zip(round_constants_2.iter()) {
+        add_kb(s, *r);
+        *s = s.cube();
+    }
+    mds_air_16(state);
+    for (state_i, post_i) in state.iter_mut().zip(post_full_round) {
+        builder.assert_eq(*state_i, *post_i);
+        *state_i = *post_i;
     }
 }
 
@@ -388,42 +371,23 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     round_constants_2: &[F; WIDTH],
     builder: &mut AB,
 ) {
-    if builder.is_skip_low() && builder.has_mid_states() {
-        let mid = builder.pop_mid_state(WIDTH);
-        let mut ms: [AB::IF; WIDTH] = std::array::from_fn(|i| mid[i]);
-        for (s, r) in ms.iter_mut().zip(round_constants_2.iter()) {
-            add_kb(s, *r);
-            *s = s.cube();
-        }
-        mds_air_16(&mut ms);
-        for (ms_i, init_i) in ms.iter_mut().zip(initial_state) {
-            *ms_i += *init_i;
-        }
-        for (ms_i, output_i) in ms.iter().zip(outputs) {
-            builder.assert_eq(*ms_i, *output_i);
-        }
-        for (state_i, output_i) in state.iter_mut().zip(outputs) {
-            *state_i = *output_i;
-        }
-    } else {
-        for (s, r) in state.iter_mut().zip(round_constants_1.iter()) {
-            add_kb(s, *r);
-            *s = s.cube();
-        }
-        mds_air_16(state);
-        builder.push_mid_state(state);
-        for (s, r) in state.iter_mut().zip(round_constants_2.iter()) {
-            add_kb(s, *r);
-            *s = s.cube();
-        }
-        mds_air_16(state);
-        for (state_i, init_state_i) in state.iter_mut().zip(initial_state) {
-            *state_i += *init_state_i;
-        }
-        for (state_i, output_i) in state.iter_mut().zip(outputs) {
-            builder.assert_eq(*state_i, *output_i);
-            *state_i = *output_i;
-        }
+    for (s, r) in state.iter_mut().zip(round_constants_1.iter()) {
+        add_kb(s, *r);
+        *s = s.cube();
+    }
+    mds_air_16(state);
+    for (s, r) in state.iter_mut().zip(round_constants_2.iter()) {
+        add_kb(s, *r);
+        *s = s.cube();
+    }
+    mds_air_16(state);
+    // add inputs to outputs (for compression)
+    for (state_i, init_state_i) in state.iter_mut().zip(initial_state) {
+        *state_i += *init_state_i;
+    }
+    for (state_i, output_i) in state.iter_mut().zip(outputs) {
+        builder.assert_eq(*state_i, *output_i);
+        *state_i = *output_i;
     }
 }
 
