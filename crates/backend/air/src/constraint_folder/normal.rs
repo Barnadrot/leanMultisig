@@ -12,9 +12,6 @@ pub struct ConstraintFolder<'a, IF, EF: ExtensionField<PF<EF>>, ExtraData: Alpha
     pub skip_low: bool,
     pub accumulator_low: EF,
     pub cached_state: Vec<IF>,
-    pub mid_capture: Vec<IF>,
-    pub mid_source: Vec<IF>,
-    pub mid_offset: usize,
 }
 
 impl<'a, IF, EF, ExtraData> AirBuilder for ConstraintFolder<'a, IF, EF, ExtraData>
