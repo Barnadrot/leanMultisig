@@ -12,6 +12,9 @@ pub struct ConstraintFolderPacked<'a, IF, EF: ExtensionField<PF<EF>>, ExtraData:
     pub skip_low: bool,
     pub accumulator_low: EFPacking<EF>,
     pub cached_state: Vec<IF>,
+    pub mid_capture: Vec<IF>,
+    pub mid_source: Vec<IF>,
+    pub mid_offset: usize,
 }
 
 impl<'a, IF, EF, ExtraData> AirBuilder for ConstraintFolderPacked<'a, IF, EF, ExtraData>
@@ -83,5 +86,23 @@ where
     #[inline]
     fn eval_virtual_column(&mut self, x: Self::EF) {
         self.assert_zero_ef(x);
+    }
+
+    #[inline]
+    fn push_mid_state(&mut self, state: &[IF]) {
+        self.mid_capture.extend_from_slice(state);
+    }
+
+    #[inline]
+    fn pop_mid_state(&mut self, n: usize) -> &[IF] {
+        let start = self.mid_offset;
+        let end = (start + n).min(self.mid_source.len());
+        self.mid_offset = end;
+        &self.mid_source[start..end]
+    }
+
+    #[inline]
+    fn has_mid_states(&self) -> bool {
+        self.mid_offset < self.mid_source.len()
     }
 }

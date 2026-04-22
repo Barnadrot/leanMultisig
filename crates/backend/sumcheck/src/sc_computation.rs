@@ -28,6 +28,9 @@ macro_rules! impl_air_eval {
             skip_low: false,
             accumulator_low: Default::default(),
             cached_state: Vec::new(),
+            mid_capture: Vec::new(),
+            mid_source: Vec::new(),
+            mid_offset: 0,
         };
         Air::eval($self, &mut folder, $extra_data);
         folder.accumulator
