@@ -99,7 +99,7 @@ pub fn fold_multilinear_lsb<
 >(
     m: &[IF],
     alpha: EF,
-    mul_if_of: &Mul,
+    mul_if_of: Mul,
 ) -> Vec<OF> {
     let new_size = m.len() / 2;
     let mut res = unsafe { uninitialized_vec(new_size) };
@@ -123,7 +123,7 @@ pub fn fold_multilinear_at_bit<
     m: &[IF],
     alpha: EF,
     bit: usize,
-    mul_if_of: &Mul,
+    mul_if_of: Mul,
 ) -> Vec<OF> {
     let new_size = m.len() / 2;
     assert!(m.len() >= 2 * (1 << bit), "bit out of range for slice length");
@@ -166,7 +166,7 @@ pub fn fold_multilinear<
 >(
     m: &[IF],
     alpha: EF,
-    mul_if_of: &F,
+    mul_if_of: F,
 ) -> Vec<OF> {
     let new_size = m.len() / 2;
     let mut res = unsafe { uninitialized_vec(new_size) };

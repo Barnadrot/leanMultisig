@@ -126,7 +126,7 @@ pub(super) fn quotient_sumcheck_prove_packed_br_base<EF: ExtensionField<PF<EF>>>
         // Tiny-layer fallback: unfused fold.
         let fold_bit = parent_chunk_log - 2 - w;
         let nums_ext = fold_base_to_ext_at_bit::<EF>(packed_nums, r0, fold_bit);
-        let dens_ext = fold_multilinear_at_bit(packed_dens, r0, fold_bit, &|v, a| v * a);
+        let dens_ext = fold_multilinear_at_bit(packed_dens, r0, fold_bit, |v, a| v * a);
         run_phase1_sumcheck(
             prover_state,
             Cow::Owned(nums_ext),
@@ -208,8 +208,8 @@ pub(super) fn run_phase1_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
 
     if let Some(prev_r) = pending_r {
         let prev_bit = layer_chunk_log - 1 - w;
-        nums = Cow::Owned(fold_multilinear_at_bit(nums.as_ref(), prev_r, prev_bit, &|v, a| v * a));
-        dens = Cow::Owned(fold_multilinear_at_bit(dens.as_ref(), prev_r, prev_bit, &|v, a| v * a));
+        nums = Cow::Owned(fold_multilinear_at_bit(nums.as_ref(), prev_r, prev_bit, |v, a| v * a));
+        dens = Cow::Owned(fold_multilinear_at_bit(dens.as_ref(), prev_r, prev_bit, |v, a| v * a));
     }
 
     let nums_nat = unpack_and_unreverse_slice(nums.as_ref(), layer_chunk_log);
@@ -293,7 +293,7 @@ pub(super) fn run_phase2_sumcheck<EF: ExtensionField<PF<EF>>>(
         sum = eq_eval * bare.evaluate(r);
         mmf *= eq_eval;
 
-        let fold = |v: &[EF]| fold_multilinear_lsb(v, r, &|diff, a| a * diff);
+        let fold = |v: &[EF]| fold_multilinear_lsb(v, r, |diff, a| a * diff);
         num_l = fold(&num_l);
         num_r = fold(&num_r);
         den_l = fold(&den_l);
@@ -494,7 +494,7 @@ where
     EFPacking<EF>: Algebra<PFPacking<EF>>,
 {
     let alpha_packed: EFPacking<EF> = <EFPacking<EF> as From<EF>>::from(alpha);
-    fold_multilinear_at_bit(m, alpha_packed, bit, &|diff, a| a * diff)
+    fold_multilinear_at_bit(m, alpha_packed, bit, |diff, a| a * diff)
 }
 
 pub(super) fn even_odd_split<EF: Copy>(v: &[EF]) -> (Vec<EF>, Vec<EF>) {
