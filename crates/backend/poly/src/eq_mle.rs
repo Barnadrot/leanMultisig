@@ -1292,4 +1292,42 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_batched_eq_base_packed_matches_sequential() {
+        let packing_width = <F as Field>::Packing::WIDTH;
+        let log_packing_width = log2_strict_usize(packing_width);
+
+        for n_vars in [8, 12, 14, 16, 18, 20, 22] {
+            if n_vars < log_packing_width {
+                continue;
+            }
+            let mut rng = StdRng::seed_from_u64(0x1234_5678);
+            let packed_len = 1 << (n_vars - log_packing_width);
+
+            let n_queries = if n_vars >= 20 { 50 } else { 274 };
+            let points: Vec<Vec<F>> = (0..n_queries)
+                .map(|_| (0..n_vars).map(|_| rng.random()).collect())
+                .collect();
+            let scalars: Vec<EF> = (0..n_queries).map(|_| rng.random()).collect();
+
+            let init: Vec<<EF as ExtensionField<F>>::ExtensionPacking> = (0..packed_len)
+                .map(|_| rng.random())
+                .collect();
+
+            let mut out_seq = init.clone();
+            for (point, &scalar) in points.iter().zip(&scalars) {
+                compute_eval_eq_base_packed::<F, EF, true>(point, &mut out_seq, scalar);
+            }
+
+            let mut out_batch = init;
+            let eval_slices: Vec<&[F]> = points.iter().map(|p| p.as_slice()).collect();
+            compute_eval_eq_base_packed_batched::<F, EF>(&eval_slices, &mut out_batch, &scalars);
+
+            assert_eq!(
+                out_seq, out_batch,
+                "batched != sequential for n_vars={n_vars}, n_queries={n_queries}"
+            );
+        }
+    }
 }
