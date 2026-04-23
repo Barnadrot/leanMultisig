@@ -1,15 +1,10 @@
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Mul, Sub};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use backend::*;
 use lean_vm::ColIndex;
 use tracing::info_span;
-
-pub static AIR_RAW_POLY_CALLS: AtomicU64 = AtomicU64::new(0);
-pub static AIR_RAW_POLY_ITERS: AtomicU64 = AtomicU64::new(0);
-pub static AIR_FOLD_CALLS: AtomicU64 = AtomicU64::new(0);
 
 // Sumcheck to prove validity of AIR constraints
 //
@@ -279,7 +274,6 @@ where
         let was_in_phase_1 = self.in_phase_1();
         let fold_bit = self.folding_bit_packed();
 
-        AIR_FOLD_CALLS.fetch_add(1, Ordering::Relaxed);
         self.multilinears = self.multilinears.by_ref().fold_at_bit(challenge, fold_bit).into();
 
         self.current_unpadded_len = self.current_unpadded_len.div_ceil(2);
@@ -396,8 +390,6 @@ where
     let n_cols = cols.len();
     let stride = 1usize << fold_bit;
     let lo_mask = stride - 1;
-    AIR_RAW_POLY_CALLS.fetch_add(1, Ordering::Relaxed);
-    AIR_RAW_POLY_ITERS.fetch_add(active_count_pairs as u64, Ordering::Relaxed);
 
     let acc = (0..active_count_pairs)
         .into_par_iter()

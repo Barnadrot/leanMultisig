@@ -1,7 +1,6 @@
 use std::{
     mem::ManuallyDrop,
     ops::{Add, Range, Sub},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use field::*;
@@ -15,61 +14,9 @@ use crate::{EFPacking, PF, PFPacking};
 
 pub const PARALLEL_THRESHOLD: usize = 1 << 9;
 
-pub static FOLD_AT_BIT_CALLS: AtomicU64 = AtomicU64::new(0);
-pub static FOLD_AT_BIT_ELEMS: AtomicU64 = AtomicU64::new(0);
-pub static FOLD_LSB_CALLS: AtomicU64 = AtomicU64::new(0);
-pub static FOLD_LSB_ELEMS: AtomicU64 = AtomicU64::new(0);
-pub static FOLD_CALLS: AtomicU64 = AtomicU64::new(0);
-pub static FOLD_ELEMS: AtomicU64 = AtomicU64::new(0);
-pub static PACK_EXT_CALLS: AtomicU64 = AtomicU64::new(0);
-pub static PACK_EXT_ELEMS: AtomicU64 = AtomicU64::new(0);
-pub static UNPACK_EXT_CALLS: AtomicU64 = AtomicU64::new(0);
-pub static UNPACK_EXT_ELEMS: AtomicU64 = AtomicU64::new(0);
-
-pub static ALLOC_PHASE: AtomicU64 = AtomicU64::new(0);
-pub static PHASE_COUNTS: [AtomicU64; 32] = [
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-];
-
-pub fn set_alloc_phase(phase: u64) {
-    ALLOC_PHASE.store(phase, Ordering::Relaxed);
-}
-
-pub fn record_alloc_in_phase() {
-    let phase = ALLOC_PHASE.load(Ordering::Relaxed) as usize;
-    if phase < 32 {
-        PHASE_COUNTS[phase].fetch_add(1, Ordering::Relaxed);
-    }
-}
-
-pub fn print_phase_counts(names: &[&str]) {
-    eprintln!("\n=== ALLOC PHASE COUNTS ===");
-    for (i, name) in names.iter().enumerate() {
-        eprintln!("  phase {:>2} ({:<30}): {:>12}", i, name, PHASE_COUNTS[i].load(Ordering::Relaxed));
-    }
-}
-
-pub fn print_alloc_counters() {
-    eprintln!("\n=== POLY ALLOC COUNTERS ===");
-    eprintln!("fold_at_bit:   {:>8} calls, {:>12} elems", FOLD_AT_BIT_CALLS.load(Ordering::Relaxed), FOLD_AT_BIT_ELEMS.load(Ordering::Relaxed));
-    eprintln!("fold_lsb:      {:>8} calls, {:>12} elems", FOLD_LSB_CALLS.load(Ordering::Relaxed), FOLD_LSB_ELEMS.load(Ordering::Relaxed));
-    eprintln!("fold:          {:>8} calls, {:>12} elems", FOLD_CALLS.load(Ordering::Relaxed), FOLD_ELEMS.load(Ordering::Relaxed));
-    eprintln!("pack_ext:      {:>8} calls, {:>12} elems", PACK_EXT_CALLS.load(Ordering::Relaxed), PACK_EXT_ELEMS.load(Ordering::Relaxed));
-    eprintln!("unpack_ext:    {:>8} calls, {:>12} elems", UNPACK_EXT_CALLS.load(Ordering::Relaxed), UNPACK_EXT_ELEMS.load(Ordering::Relaxed));
-}
-
 pub fn pack_extension<EF: ExtensionField<PF<EF>>>(slice: &[EF]) -> Vec<EFPacking<EF>> {
     let width = packing_width::<EF>();
     let n_packed = slice.len() / width;
-    PACK_EXT_CALLS.fetch_add(1, Ordering::Relaxed);
-    PACK_EXT_ELEMS.fetch_add(n_packed as u64, Ordering::Relaxed);
     let mut out: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(n_packed) };
     let write = |slot: &mut EFPacking<EF>, chunk: &[EF]| {
         *slot = EFPacking::<EF>::from_ext_slice(chunk);
@@ -89,8 +36,6 @@ pub fn pack_extension<EF: ExtensionField<PF<EF>>>(slice: &[EF]) -> Vec<EFPacking
 pub fn unpack_extension<EF: ExtensionField<PF<EF>>>(vec: &[EFPacking<EF>]) -> Vec<EF> {
     let width = packing_width::<EF>();
     let total = vec.len() * width;
-    UNPACK_EXT_CALLS.fetch_add(1, Ordering::Relaxed);
-    UNPACK_EXT_ELEMS.fetch_add(total as u64, Ordering::Relaxed);
     let mut out: Vec<EF> = unsafe { uninitialized_vec(total) };
     let write = |out_chunk: &mut [EF], x: &EFPacking<EF>| {
         let packed_coeffs = x.as_basis_coefficients_slice();
@@ -157,8 +102,6 @@ pub fn fold_multilinear_lsb<
     mul_if_of: &Mul,
 ) -> Vec<OF> {
     let new_size = m.len() / 2;
-    FOLD_LSB_CALLS.fetch_add(1, Ordering::Relaxed);
-    FOLD_LSB_ELEMS.fetch_add(new_size as u64, Ordering::Relaxed);
     let mut res = unsafe { uninitialized_vec(new_size) };
     let compute = |(c, r_v): (&[IF], &mut OF)| {
         *r_v = mul_if_of(c[1] - c[0], alpha) + c[0];
@@ -183,8 +126,6 @@ pub fn fold_multilinear_at_bit<
     mul_if_of: &Mul,
 ) -> Vec<OF> {
     let new_size = m.len() / 2;
-    FOLD_AT_BIT_CALLS.fetch_add(1, Ordering::Relaxed);
-    FOLD_AT_BIT_ELEMS.fetch_add(new_size as u64, Ordering::Relaxed);
     assert!(m.len() >= 2 * (1 << bit), "bit out of range for slice length");
 
     if bit == 0 {
@@ -228,8 +169,6 @@ pub fn fold_multilinear<
     mul_if_of: &F,
 ) -> Vec<OF> {
     let new_size = m.len() / 2;
-    FOLD_CALLS.fetch_add(1, Ordering::Relaxed);
-    FOLD_ELEMS.fetch_add(new_size as u64, Ordering::Relaxed);
     let mut res = unsafe { uninitialized_vec(new_size) };
 
     if new_size < PARALLEL_THRESHOLD {

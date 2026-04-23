@@ -1,19 +1,13 @@
 use std::{
     borrow::Cow,
     ops::{Add, AddAssign, Mul},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use backend::*;
 
 use crate::quotient_gkr::layers::unpack_and_unreverse_active;
 
-pub static EVEN_ODD_SPLIT_CALLS: AtomicU64 = AtomicU64::new(0);
-pub static EVEN_ODD_SPLIT_ELEMS: AtomicU64 = AtomicU64::new(0);
-
 pub(super) fn even_odd_split<T: Copy>(v: &[T]) -> (Vec<T>, Vec<T>) {
-    EVEN_ODD_SPLIT_CALLS.fetch_add(1, Ordering::Relaxed);
-    EVEN_ODD_SPLIT_ELEMS.fetch_add(v.len() as u64, Ordering::Relaxed);
     (
         v.iter().step_by(2).copied().collect(),
         v.iter().skip(1).step_by(2).copied().collect(),

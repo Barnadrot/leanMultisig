@@ -1,10 +1,8 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::*;
 use lean_vm::*;
 
-use backend::set_alloc_phase;
 use sub_protocols::*;
 use tracing::info_span;
 use utils::ansi::Colorize;
@@ -26,7 +24,6 @@ pub fn prove_execution(
     check_rate(whir_config.starting_log_inv_rate)
         .map_err(|err| panic!("{err}"))
         .unwrap();
-    set_alloc_phase(1);
     let ExecutionTrace {
         traces,
         public_memory_size,
@@ -74,36 +71,29 @@ pub fn prove_execution(
     table_log = table_log.trim_end_matches(" | ").to_string();
     tracing::info!("Trace tables sizes: {}", table_log.magenta());
 
-    let memory_acc: Vec<F> = info_span!("Building memory access count").in_scope(|| {
-        let acc: Vec<AtomicU32> = (0..memory.len()).map(|_| AtomicU32::new(0)).collect();
+    // TODO parrallelize
+    let mut memory_acc = F::zero_vec(memory.len());
+    info_span!("Building memory access count").in_scope(|| {
         for (table, trace) in &traces {
             for lookup in table.lookups() {
-                let values_len = lookup.values.len();
-                trace.columns[lookup.index].par_chunks(4096).for_each(|chunk| {
-                    for i in chunk {
-                        let addr = i.to_usize();
-                        for j in 0..values_len {
-                            acc[addr + j].fetch_add(1, Ordering::Relaxed);
-                        }
+                for i in &trace.columns[lookup.index] {
+                    for j in 0..lookup.values.len() {
+                        memory_acc[i.to_usize() + j] += F::ONE;
                     }
-                });
+                }
             }
         }
-        acc.into_par_iter().map(|v| F::from_u32(v.into_inner())).collect()
     });
 
-    let bytecode_acc: Vec<F> = info_span!("Building bytecode access count").in_scope(|| {
-        let acc: Vec<AtomicU32> = (0..bytecode.padded_size()).map(|_| AtomicU32::new(0)).collect();
-        traces[&Table::execution()].columns[COL_PC].par_chunks(4096).for_each(|chunk| {
-            for pc in chunk {
-                acc[pc.to_usize()].fetch_add(1, Ordering::Relaxed);
-            }
-        });
-        acc.into_par_iter().map(|v| F::from_u32(v.into_inner())).collect()
+    // // TODO parrallelize
+    let mut bytecode_acc = F::zero_vec(bytecode.padded_size());
+    info_span!("Building bytecode access count").in_scope(|| {
+        for pc in traces[&Table::execution()].columns[COL_PC].iter() {
+            bytecode_acc[pc.to_usize()] += F::ONE;
+        }
     });
 
     // 1st Commitment
-    set_alloc_phase(2);
     let stacked_pcs_witness = stack_polynomials_and_commit(
         &mut prover_state,
         whir_config,
@@ -114,7 +104,6 @@ pub fn prove_execution(
     );
 
     // logup (GKR)
-    set_alloc_phase(3);
     let logup_c = prover_state.sample();
     let logup_alphas = prover_state.sample_vec(log2_ceil_usize(max_bus_width_including_domainsep()));
     let logup_alphas_eq_poly = eval_eq(&logup_alphas);
@@ -143,7 +132,6 @@ pub fn prove_execution(
         );
     }
 
-    set_alloc_phase(4);
     let bus_beta = prover_state.sample();
     let air_alpha = prover_state.sample();
     let air_alpha_powers: Vec<EF> = air_alpha.powers().collect_n(max_air_constraints() + 1);
@@ -199,7 +187,6 @@ pub fn prove_execution(
         sessions.push(delegate_to_inner!(table => make_session));
     }
 
-    set_alloc_phase(5);
     let sumcheck_air_point = info_span!("batched AIR sumcheck")
         .in_scope(|| prove_batched_air_sumcheck(&mut prover_state, &mut sessions, air_eta));
 
@@ -252,7 +239,6 @@ pub fn prove_execution(
         &committed_statements,
     );
 
-    set_alloc_phase(6);
     WhirConfig::new(whir_config, stacked_pcs_witness.global_polynomial.by_ref().n_vars()).prove(
         &mut prover_state,
         global_statements_base,
@@ -260,7 +246,6 @@ pub fn prove_execution(
         &stacked_pcs_witness.global_polynomial.by_ref(),
     );
 
-    set_alloc_phase(7);
     ExecutionProof {
         proof: prover_state.into_proof(),
         metadata,

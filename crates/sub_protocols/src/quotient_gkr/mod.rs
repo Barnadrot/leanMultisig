@@ -15,7 +15,6 @@ use crate::{
 
 mod layers;
 mod sumcheck_utils;
-pub use sumcheck_utils::{EVEN_ODD_SPLIT_CALLS, EVEN_ODD_SPLIT_ELEMS};
 
 // GKR for Σ nᵢ/dᵢ
 // Folding = 'right to left' (LSB first)  (x_0 = MSB, x_{L-1} = LSB)

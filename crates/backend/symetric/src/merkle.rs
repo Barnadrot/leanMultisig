@@ -2,15 +2,11 @@
 // - Plonky3 (https://github.com/Plonky3/Plonky3) (MIT and Apache-2.0 licenses).
 
 use std::array;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use field::PackedValue;
 use rayon::prelude::*;
 
 use crate::Compression;
-
-pub static MERKLE_COMPRESS_CALLS: AtomicU64 = AtomicU64::new(0);
-pub static MERKLE_COMPRESS_ELEMS: AtomicU64 = AtomicU64::new(0);
 
 pub const DIGEST_ELEMS: usize = 8;
 
@@ -68,8 +64,6 @@ where
     };
     let next_len = prev_layer.len() / 2;
 
-    MERKLE_COMPRESS_CALLS.fetch_add(1, Ordering::Relaxed);
-    MERKLE_COMPRESS_ELEMS.fetch_add(next_len_padded as u64, Ordering::Relaxed);
     let default_digest = [P::Value::default(); DIGEST_ELEMS];
     let mut next_digests = vec![default_digest; next_len_padded];
 

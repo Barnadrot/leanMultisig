@@ -5,7 +5,6 @@ use fiat_shamir::{FSProver, MerklePath, ProofResult};
 use field::PrimeCharacteristicRing;
 use field::{ExtensionField, Field, TwoAdicField};
 use poly::*;
-use poly::set_alloc_phase;
 use rayon::prelude::*;
 use sumcheck::{ProductComputation, run_product_sumcheck, sumcheck_prove_many_rounds};
 use tracing::{info_span, instrument};
@@ -46,7 +45,6 @@ where
         assert!(self.validate_witness(&witness, polynomial));
         self.validate_statement(&statement);
 
-        set_alloc_phase(12); // WHIR: initial setup
         let mut round_state =
             RoundState::initialize_first_round_state(self, prover_state, statement, witness, polynomial).unwrap();
 
@@ -77,7 +75,6 @@ where
         let folding_factor_next = self.folding_factor.at_round(round_index + 1);
 
         // Compute polynomial evaluations and build Merkle tree
-        set_alloc_phase(8); // WHIR: DFT+Merkle
         let domain_reduction = 1 << self.rs_reduction_factor(round_index);
         let new_domain_size = round_state.domain_size / domain_reduction;
         let inv_rate = new_domain_size >> num_variables;
@@ -90,20 +87,17 @@ where
             )
         });
 
-        set_alloc_phase(14); // WHIR: Merkle build
         let full = 1 << folding_factor_next;
         let (prover_data, root) = MerkleData::build(folded_matrix, full, full);
 
         prover_state.add_base_scalars(&root);
 
-        set_alloc_phase(9); // WHIR: OOD+queries
         // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) =
             sample_ood_points::<EF, _>(prover_state, round_params.ood_samples, num_variables, |point| {
                 info_span!("ood evaluation").in_scope(|| folded_evaluations.evaluate(point))
             });
 
-        set_alloc_phase(15); // WHIR: pow_grinding
         prover_state.pow_grinding(round_params.query_pow_bits);
 
         let (ood_challenges, stir_challenges, stir_challenges_indexes) = self.compute_stir_queries(
@@ -115,7 +109,6 @@ where
             round_index,
         )?;
 
-        set_alloc_phase(10); // WHIR: Merkle open+eval
         let folding_randomness = round_state.folding_randomness(
             self.folding_factor.at_round(round_index) + round_state.commitment_merkle_prover_data_b.is_some() as usize,
         );
@@ -148,7 +141,6 @@ where
                 .collect()
         };
 
-        set_alloc_phase(11); // WHIR: add_equality
         // Randomness for combination
         let combination_randomness_gen: EF = prover_state.sample();
         let ood_combination_randomness: Vec<_> = combination_randomness_gen.powers().collect_n(ood_challenges.len());
@@ -167,7 +159,6 @@ where
             &stir_combination_randomness,
         );
 
-        set_alloc_phase(13); // WHIR: sumcheck rounds
         let next_folding_randomness = round_state.sumcheck_prover.run_sumcheck_many_rounds(
             None,
             prover_state,

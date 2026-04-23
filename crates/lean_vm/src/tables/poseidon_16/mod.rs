@@ -174,6 +174,7 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
 
         let arg0 = ctx.memory.get_slice(arg_a.to_usize(), DIGEST_LEN)?;
         let arg1 = ctx.memory.get_slice(arg_b.to_usize(), DIGEST_LEN)?;
+
         let mut input = [F::ZERO; DIGEST_LEN * 2];
         input[..DIGEST_LEN].copy_from_slice(&arg0);
         input[DIGEST_LEN..].copy_from_slice(&arg1);
