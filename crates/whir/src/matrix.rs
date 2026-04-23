@@ -179,6 +179,29 @@ where
             .take(len)
         }
     }
+
+    #[inline]
+    fn vertically_packed_row_rtl<P>(
+        &self,
+        r: usize,
+        effective_width: usize,
+        n_leading_zeros: usize,
+    ) -> impl Iterator<Item = P>
+    where
+        F: Copy,
+        P: PackedValue<Value = F> + Default,
+    {
+        let dim = EF::DIMENSION;
+        let inner_rows = self.0.wrapping_row_slices(r, P::WIDTH);
+
+        (0..n_leading_zeros)
+            .map(|_| P::default())
+            .chain((0..effective_width).rev().map(move |c| {
+                let ext_col = c / dim;
+                let coeff_idx = c % dim;
+                P::from_fn(|i| inner_rows[i][ext_col].as_basis_coefficients_slice()[coeff_idx])
+            }))
+    }
 }
 
 pub struct FlatIter<F, I: Iterator> {
