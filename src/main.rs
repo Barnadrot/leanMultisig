@@ -1,3 +1,7 @@
+#[cfg(feature = "zkalloc")]
+#[global_allocator]
+static GLOBAL: zk_alloc::ZkAllocator = zk_alloc::ZkAllocator;
+
 use clap::Parser;
 use rec_aggregation::{AggregationTopology, benchmark::run_aggregation_benchmark};
 

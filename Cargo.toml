@@ -78,6 +78,7 @@ lz4_flex = "0.13.0"
 
 [features]
 prox-gaps-conjecture = ["rec_aggregation/prox-gaps-conjecture"]
+zkalloc = ["dep:zk-alloc"]
 
 [dependencies]
 clap.workspace = true
@@ -88,6 +89,7 @@ utils.workspace = true
 lean_vm.workspace = true
 xmss.workspace = true
 backend.workspace = true
+zk-alloc = { path = "../zk-alloc", optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
