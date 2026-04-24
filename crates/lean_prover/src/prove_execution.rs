@@ -35,8 +35,6 @@ pub fn prove_execution(
         info_span!("Building execution trace").in_scope(|| get_execution_trace(bytecode, execution_result))
     });
 
-    #[cfg(feature = "zkalloc")]
-    zk_alloc::phase_boundary();
 
     // Memory must be at least MIN_LOG_MEMORY_SIZE and at least bytecode size
     // (required by the stacked polynomial ordering)
@@ -106,8 +104,6 @@ pub fn prove_execution(
         &traces,
     );
 
-    #[cfg(feature = "zkalloc")]
-    zk_alloc::phase_boundary();
 
     // logup (GKR)
     let logup_c = prover_state.sample();
@@ -125,8 +121,6 @@ pub fn prove_execution(
         &traces,
     );
 
-    #[cfg(feature = "zkalloc")]
-    zk_alloc::phase_boundary();
 
     let gkr_point = &logup_statements.gkr_point;
     let mut committed_statements: CommittedStatements = Default::default();
@@ -213,8 +207,6 @@ pub fn prove_execution(
         committed_statements.get_mut(table).unwrap().push(claim);
     }
 
-    #[cfg(feature = "zkalloc")]
-    zk_alloc::phase_boundary();
 
     let public_memory_random_point = MultilinearPoint(prover_state.sample_vec(log2_strict_usize(public_memory_size)));
     let public_memory_eval = (&memory[..public_memory_size]).evaluate(&public_memory_random_point);
