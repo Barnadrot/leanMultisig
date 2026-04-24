@@ -35,6 +35,9 @@ pub fn prove_execution(
         info_span!("Building execution trace").in_scope(|| get_execution_trace(bytecode, execution_result))
     });
 
+    #[cfg(feature = "zkalloc")]
+    zk_alloc::phase_boundary();
+
     // Memory must be at least MIN_LOG_MEMORY_SIZE and at least bytecode size
     // (required by the stacked polynomial ordering)
     let min_memory_size = (1 << MIN_LOG_MEMORY_SIZE).max(1 << bytecode.log_size());

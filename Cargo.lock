@@ -648,6 +648,7 @@ dependencies = [
  "tracing",
  "utils",
  "xmss",
+ "zk-alloc",
 ]
 
 [[package]]
