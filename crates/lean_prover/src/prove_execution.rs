@@ -106,6 +106,9 @@ pub fn prove_execution(
         &traces,
     );
 
+    #[cfg(feature = "zkalloc")]
+    zk_alloc::phase_boundary();
+
     // logup (GKR)
     let logup_c = prover_state.sample();
     let logup_alphas = prover_state.sample_vec(log2_ceil_usize(max_bus_width_including_domainsep()));
@@ -121,6 +124,10 @@ pub fn prove_execution(
         &bytecode_acc,
         &traces,
     );
+
+    #[cfg(feature = "zkalloc")]
+    zk_alloc::phase_boundary();
+
     let gkr_point = &logup_statements.gkr_point;
     let mut committed_statements: CommittedStatements = Default::default();
     for table in ALL_TABLES {
@@ -205,6 +212,9 @@ pub fn prove_execution(
         let claim = delegate_to_inner!(table => split);
         committed_statements.get_mut(table).unwrap().push(claim);
     }
+
+    #[cfg(feature = "zkalloc")]
+    zk_alloc::phase_boundary();
 
     let public_memory_random_point = MultilinearPoint(prover_state.sample_vec(log2_strict_usize(public_memory_size)));
     let public_memory_eval = (&memory[..public_memory_size]).evaluate(&public_memory_random_point);
