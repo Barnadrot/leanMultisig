@@ -643,6 +643,7 @@ dependencies = [
  "pest",
  "pest_derive",
  "rand",
+ "rayon",
  "rec_aggregation",
  "sub_protocols",
  "tracing",
@@ -1741,7 +1742,6 @@ name = "zk-alloc"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "libc",
 ]
 
 [[package]]

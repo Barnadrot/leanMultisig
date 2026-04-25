@@ -9,6 +9,7 @@ workspace = true
 [features]
 prox-gaps-conjecture = []
 zkalloc = ["dep:zk-alloc"]
+zkalloc_preload = []
 
 [dependencies]
 pest.workspace = true
@@ -23,6 +24,7 @@ lean_vm.workspace = true
 lean_compiler.workspace = true
 backend.workspace = true
 itertools.workspace = true
+rayon.workspace = true
 zk-alloc = { path = "../../zk-alloc", optional = true }
 
 [dev-dependencies]

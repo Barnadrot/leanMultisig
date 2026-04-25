@@ -9,6 +9,7 @@ workspace = true
 [features]
 prox-gaps-conjecture = ["lean_prover/prox-gaps-conjecture"]
 zkalloc = ["lean_prover/zkalloc"]
+zkalloc_preload = ["lean_prover/zkalloc_preload"]
 
 [dependencies]
 utils.workspace = true

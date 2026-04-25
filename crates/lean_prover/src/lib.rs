@@ -9,6 +9,9 @@ mod trace_gen;
 pub mod prove_execution;
 pub mod verify_execution;
 
+#[cfg(feature = "zkalloc_preload")]
+pub(crate) mod preload_ffi;
+
 #[cfg(test)]
 mod test_zkvm;
 
