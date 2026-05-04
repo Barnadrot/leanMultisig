@@ -4,7 +4,6 @@
 
 mod permutation;
 pub use permutation::*;
-pub use koala_bear::symmetric::Permutation;
 
 mod sponge;
 pub use sponge::*;
