@@ -70,14 +70,14 @@ fn build_merkle_tree_koalabear(
         );
         let packed_state: [PFPacking<KoalaBear>; 16] =
             std::array::from_fn(|i| PFPacking::<KoalaBear>::from_fn(|_| scalar_state[i]));
-        first_digest_layer_dense_with_initial_state::<PFPacking<KoalaBear>, _, DIGEST_ELEMS, 16, 8>(
+        first_digest_layer_with_initial_state::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(
             &perm,
             &leaf,
             &packed_state,
             effective_base_width,
         )
     } else {
-        first_digest_layer_dense::<PFPacking<KoalaBear>, _, DIGEST_ELEMS, 16, 8>(&perm, &leaf, full_base_width)
+        first_digest_layer::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(&perm, &leaf, full_base_width)
     };
     let tree = symetric::merkle::MerkleTree::from_first_layer::<PFPacking<KoalaBear>, _, 16>(&perm, first_layer);
     WhirMerkleTree {
@@ -279,123 +279,6 @@ where
                     rtl_iter,
                     packed_initial_state,
                 );
-            for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                *dst = src;
-            }
-        });
-
-    digests
-}
-
-#[instrument(name = "first digest layer (dense)", level = "debug", skip_all)]
-fn first_digest_layer_dense<P, Perm, const DIGEST_ELEMS: usize, const WIDTH: usize, const RATE: usize>(
-    perm: &Perm,
-    matrix: &DenseMatrix<P::Value>,
-    full_width: usize,
-) -> Vec<[P::Value; DIGEST_ELEMS]>
-where
-    P: PackedValue + Default,
-    P::Value: Default + Copy,
-    Perm: Compression<[P::Value; WIDTH]> + Compression<[P; WIDTH]>,
-{
-    let pack_width = P::WIDTH;
-    let height = matrix.height();
-    let mw = matrix.width;
-    let values: &[P::Value] = &matrix.values;
-    assert!(height.is_multiple_of(pack_width));
-    let n_zeros = full_width - mw;
-
-    let mut digests = unsafe { uninitialized_vec(height) };
-
-    digests
-        .par_chunks_exact_mut(pack_width)
-        .enumerate()
-        .for_each(|(i, digests_chunk)| {
-            let fr = i * pack_width;
-
-            let mut state: [P; WIDTH] = std::array::from_fn(|pos| {
-                let idx = WIDTH - 1 - pos;
-                if idx < n_zeros {
-                    P::default()
-                } else {
-                    let col = mw - 1 - (idx - n_zeros);
-                    P::from_fn(|lane| unsafe { *values.get_unchecked((fr + lane) * mw + col) })
-                }
-            });
-            perm.compress_mut(&mut state);
-
-            let remaining = full_width - WIDTH;
-            let n_chunks = remaining / RATE;
-            for c in 0..n_chunks {
-                let base_idx = WIDTH + c * RATE;
-                for j in 0..RATE {
-                    let idx = base_idx + j;
-                    if idx < n_zeros {
-                        state[WIDTH - 1 - j] = P::default();
-                    } else {
-                        let col = mw - 1 - (idx - n_zeros);
-                        state[WIDTH - 1 - j] =
-                            P::from_fn(|lane| unsafe { *values.get_unchecked((fr + lane) * mw + col) });
-                    }
-                }
-                perm.compress_mut(&mut state);
-            }
-
-            let packed_digest: [P; DIGEST_ELEMS] = state[..DIGEST_ELEMS].try_into().unwrap();
-            for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                *dst = src;
-            }
-        });
-
-    digests
-}
-
-#[instrument(skip_all)]
-fn first_digest_layer_dense_with_initial_state<P, Perm, const DIGEST_ELEMS: usize, const WIDTH: usize, const RATE: usize>(
-    perm: &Perm,
-    matrix: &DenseMatrix<P::Value>,
-    packed_initial_state: &[P; WIDTH],
-    effective_base_width: usize,
-) -> Vec<[P::Value; DIGEST_ELEMS]>
-where
-    P: PackedValue + Default,
-    P::Value: Default + Copy,
-    Perm: Compression<[P::Value; WIDTH]> + Compression<[P; WIDTH]>,
-{
-    let pack_width = P::WIDTH;
-    let height = matrix.height();
-    let mw = matrix.width;
-    let values: &[P::Value] = &matrix.values;
-    assert!(height.is_multiple_of(pack_width));
-    let n_pad = (RATE - effective_base_width % RATE) % RATE;
-    let total = effective_base_width + n_pad;
-    let n_chunks = total / RATE;
-
-    let mut digests = unsafe { uninitialized_vec(height) };
-
-    digests
-        .par_chunks_exact_mut(pack_width)
-        .enumerate()
-        .for_each(|(i, digests_chunk)| {
-            let fr = i * pack_width;
-            let mut state = *packed_initial_state;
-
-            for c in 0..n_chunks {
-                let base_idx = c * RATE;
-                for j in 0..RATE {
-                    let idx = base_idx + j;
-                    if idx < n_pad {
-                        state[WIDTH - 1 - j] = P::default();
-                    } else {
-                        let col = effective_base_width - 1 - (idx - n_pad);
-                        state[WIDTH - 1 - j] =
-                            P::from_fn(|lane| unsafe { *values.get_unchecked((fr + lane) * mw + col) });
-                    }
-                }
-                perm.compress_mut(&mut state);
-            }
-
-            let packed_digest: [P; DIGEST_ELEMS] = state[..DIGEST_ELEMS].try_into().unwrap();
             for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
                 *dst = src;
             }
