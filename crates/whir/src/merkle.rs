@@ -64,20 +64,20 @@ fn build_merkle_tree_koalabear(
     let perm = default_koalabear_poseidon1_16();
     let n_zero_suffix_rate_chunks = (full_base_width - effective_base_width) / 8;
     let first_layer = if n_zero_suffix_rate_chunks >= 2 {
-        let scalar_state = symetric::precompute_zero_suffix_state::<KoalaBear, _, 16, 8, DIGEST_ELEMS>(
+        let scalar_state = symetric::precompute_zero_suffix_state_perm::<KoalaBear, _, 16, 8, DIGEST_ELEMS>(
             &perm,
             n_zero_suffix_rate_chunks,
         );
         let packed_state: [PFPacking<KoalaBear>; 16] =
             std::array::from_fn(|i| PFPacking::<KoalaBear>::from_fn(|_| scalar_state[i]));
-        first_digest_layer_with_initial_state::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(
+        first_digest_layer_perm::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(
             &perm,
             &leaf,
             &packed_state,
             effective_base_width,
         )
     } else {
-        first_digest_layer::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(&perm, &leaf, full_base_width)
+        first_digest_layer_perm_full::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(&perm, &leaf, full_base_width)
     };
     let tree = symetric::merkle::MerkleTree::from_first_layer::<PFPacking<KoalaBear>, _, 16>(&perm, first_layer);
     WhirMerkleTree {
@@ -275,6 +275,82 @@ where
             let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
             let packed_digest: [P; DIGEST_ELEMS] =
                 symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
+                    perm,
+                    rtl_iter,
+                    packed_initial_state,
+                );
+            for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
+                *dst = src;
+            }
+        });
+
+    digests
+}
+
+#[instrument(name = "first digest layer", level = "debug", skip_all)]
+fn first_digest_layer_perm_full<P, Perm, M, const DIGEST_ELEMS: usize, const WIDTH: usize, const RATE: usize>(
+    perm: &Perm,
+    matrix: &M,
+    full_width: usize,
+) -> Vec<[P::Value; DIGEST_ELEMS]>
+where
+    P: PackedValue + Default,
+    P::Value: Default + Copy,
+    Perm: symetric::Permutation<[P::Value; WIDTH]> + symetric::Permutation<[P; WIDTH]>,
+    M: Matrix<P::Value>,
+{
+    let width = P::WIDTH;
+    let height = matrix.height();
+    assert!(height.is_multiple_of(width));
+    let matrix_width = matrix.width();
+    let n_trailing_zeros = full_width - matrix_width;
+
+    let mut digests = unsafe { uninitialized_vec(height) };
+
+    digests
+        .par_chunks_exact_mut(width)
+        .enumerate()
+        .for_each(|(i, digests_chunk)| {
+            let first_row = i * width;
+            let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, matrix_width, n_trailing_zeros);
+            let packed_digest: [P; DIGEST_ELEMS] =
+                symetric::hash_rtl_iter_perm::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(perm, rtl_iter);
+            for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
+                *dst = src;
+            }
+        });
+
+    digests
+}
+
+#[instrument(skip_all)]
+fn first_digest_layer_perm<P, Perm, M, const DIGEST_ELEMS: usize, const WIDTH: usize, const RATE: usize>(
+    perm: &Perm,
+    matrix: &M,
+    packed_initial_state: &[P; WIDTH],
+    effective_base_width: usize,
+) -> Vec<[P::Value; DIGEST_ELEMS]>
+where
+    P: PackedValue + Default,
+    P::Value: Default + Copy,
+    Perm: symetric::Permutation<[P::Value; WIDTH]> + symetric::Permutation<[P; WIDTH]>,
+    M: Matrix<P::Value>,
+{
+    let width = P::WIDTH;
+    let height = matrix.height();
+    assert!(height.is_multiple_of(width));
+    let n_pad = (RATE - effective_base_width % RATE) % RATE;
+
+    let mut digests = unsafe { uninitialized_vec(height) };
+
+    digests
+        .par_chunks_exact_mut(width)
+        .enumerate()
+        .for_each(|(i, digests_chunk)| {
+            let first_row = i * width;
+            let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
+            let packed_digest: [P; DIGEST_ELEMS] =
+                symetric::hash_rtl_iter_with_initial_state_perm::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
                     perm,
                     rtl_iter,
                     packed_initial_state,
