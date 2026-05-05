@@ -92,21 +92,11 @@ where
 
         prover_state.add_base_scalars(&root);
 
-        // Handle OOD (Out-Of-Domain) samples — inline + parallelize the eval map
-        // so multiple evaluations on the (cache-resident) folded polynomial
-        // proceed concurrently instead of strictly serially.
-        let (ood_points, ood_answers) = if round_params.ood_samples > 0 {
-            let pts: Vec<EF> = prover_state.sample_vec(round_params.ood_samples);
-            let answers: Vec<EF> = info_span!("ood evaluation").in_scope(|| {
-                pts.par_iter()
-                    .map(|&p| folded_evaluations.evaluate(&MultilinearPoint::expand_from_univariate(p, num_variables)))
-                    .collect()
+        // Handle OOD (Out-Of-Domain) samples
+        let (ood_points, ood_answers) =
+            sample_ood_points::<EF, _>(prover_state, round_params.ood_samples, num_variables, |point| {
+                info_span!("ood evaluation").in_scope(|| folded_evaluations.evaluate(point))
             });
-            prover_state.add_extension_scalars(&answers);
-            (pts, answers)
-        } else {
-            (Vec::new(), Vec::new())
-        };
 
         prover_state.pow_grinding(round_params.query_pow_bits);
 
