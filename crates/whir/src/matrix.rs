@@ -197,37 +197,6 @@ impl<T: Clone + Send + Sync, S: DenseStorage<T>> Matrix<T> for DenseMatrix<T, S>
         }
     }
 
-    /// Specialized for DenseMatrix: direct index arithmetic into the contiguous
-    /// values buffer, avoiding the per-call `wrapping_row_slices` Vec<&[T]>
-    /// allocation in the default trait impl. Callers in WHIR's leaf hashing
-    /// invoke this with `r = i * P::WIDTH` where `i * P::WIDTH < height`, so
-    /// no actual row-wrap occurs; the modulo is preserved for correctness in
-    /// the general case but compiles to a single unconditional add when the
-    /// bounds are obvious.
-    #[inline]
-    fn vertically_packed_row_rtl<P>(
-        &self,
-        r: usize,
-        effective_width: usize,
-        n_leading_zeros: usize,
-    ) -> impl Iterator<Item = P>
-    where
-        T: Copy,
-        P: PackedValue<Value = T> + Default,
-    {
-        let height = self.height();
-        let width = self.width;
-        let values = self.values.borrow();
-        (0..n_leading_zeros).map(|_| P::default()).chain(
-            (0..effective_width).rev().map(move |c| {
-                P::from_fn(|i| {
-                    let row_idx = (r + i) % height;
-                    unsafe { *values.get_unchecked(row_idx * width + c) }
-                })
-            }),
-        )
-    }
-
     fn to_row_major_matrix(self) -> RowMajorMatrix<T>
     where
         Self: Sized,
