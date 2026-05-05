@@ -203,18 +203,11 @@ where
             prover_state,
         );
 
-        // Parallelize the per-challenge merkle opens (read-only random access).
-        let opens: Vec<(usize, MleOwned<EF>, Vec<[PF<EF>; DIGEST_ELEMS]>)> = final_challenge_indexes
-            .par_iter()
-            .map(|&challenge| {
-                let (answer, sibling_hashes) = round_state.merkle_prover_data.open(challenge);
-                (challenge, answer, sibling_hashes)
-            })
-            .collect();
-
         let mut base_paths = Vec::new();
         let mut ext_paths = Vec::new();
-        for (challenge, answer, sibling_hashes) in opens {
+        for challenge in final_challenge_indexes {
+            let (answer, sibling_hashes) = round_state.merkle_prover_data.open(challenge);
+
             match answer {
                 MleOwned::Base(leaf) => {
                     base_paths.push(MerklePath {
@@ -288,23 +281,13 @@ fn open_merkle_tree_at_challenges<EF: ExtensionField<PF<EF>>>(
     prover_state: &mut impl FSProver<EF>,
     stir_challenges_indexes: &[usize],
 ) -> Vec<MleOwned<EF>> {
-    // Each merkle_tree.open(challenge) is a read-only random-access operation
-    // (loads one leaf row + log_height sibling hashes). With ~100 challenges
-    // per round and 4 rounds, the cumulative random reads dominate the cache
-    // miss profile of the open phase. Run them in parallel via rayon.
-    let opens: Vec<(usize, MleOwned<EF>, Vec<[PF<EF>; DIGEST_ELEMS]>)> = stir_challenges_indexes
-        .par_iter()
-        .map(|&challenge| {
-            let (answer, sibling_hashes) = merkle_tree.open(challenge);
-            (challenge, answer, sibling_hashes)
-        })
-        .collect();
-
-    let mut answers = Vec::with_capacity(opens.len());
+    let mut answers = Vec::new();
     let mut base_paths = Vec::new();
     let mut ext_paths = Vec::new();
 
-    for (challenge, answer, sibling_hashes) in opens {
+    for &challenge in stir_challenges_indexes {
+        let (answer, sibling_hashes) = merkle_tree.open(challenge);
+
         match &answer {
             MleOwned::Base(leaf) => {
                 base_paths.push(MerklePath {
