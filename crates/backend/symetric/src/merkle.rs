@@ -64,24 +64,8 @@ where
     };
     let next_len = prev_layer.len() / 2;
 
-    // Skip zero-init when no padding is required (always true for power-of-2
-    // prev_layer.len(), which is the case for all four xmss_leaf commitments).
-    // The par loop and scalar tail together cover [0..next_len); next_len_padded
-    // is only larger when prev_layer.len() is odd-after-halving, in which case
-    // we keep the safe vec![]-with-default path.
-    let mut next_digests: Vec<[P::Value; DIGEST_ELEMS]> = if next_len_padded == next_len {
-        let mut v: Vec<[P::Value; DIGEST_ELEMS]> = Vec::with_capacity(next_len_padded);
-        // SAFETY: Vec has at least next_len_padded capacity; every position in
-        // [0..next_len) is written by the par loop or the scalar tail before
-        // any read (caller treats next_digests as logically full of length
-        // next_len_padded == next_len). Each [P::Value; DIGEST_ELEMS] has no
-        // Drop impl (P::Value: Copy), so leaving uninit data is sound.
-        unsafe { v.set_len(next_len_padded); }
-        v
-    } else {
-        let default_digest = [P::Value::default(); DIGEST_ELEMS];
-        vec![default_digest; next_len_padded]
-    };
+    let default_digest = [P::Value::default(); DIGEST_ELEMS];
+    let mut next_digests = vec![default_digest; next_len_padded];
 
     next_digests[0..next_len]
         .par_chunks_exact_mut(width)
