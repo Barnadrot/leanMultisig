@@ -184,11 +184,7 @@ where
         // Skip the FF override when it would collapse num_rounds to 0
         // (preserves the small whir test).
         let mut whir_parameters_owned: WhirConfigBuilder = whir_parameters.clone();
-        // Subsequent folding factor: try 6 instead of builder's 5.
-        // n_rounds: (15-8).div_ceil(6) = 2 — same as sub=5. Round leaves halve
-        // per round but per-leaf perm count almost doubles. FFT batches
-        // differently — wider matrices, fewer rows.
-        let proposed_ff = FoldingFactor::new(11, 6);
+        let proposed_ff = FoldingFactor::new(11, whir_parameters.folding_factor.at_round(1));
         let (proposed_n_rounds, _) =
             proposed_ff.compute_number_of_rounds(num_variables, whir_parameters.max_num_variables_to_send_coeffs);
         if proposed_n_rounds >= 1 {
