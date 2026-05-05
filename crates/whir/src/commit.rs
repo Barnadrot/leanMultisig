@@ -86,10 +86,22 @@ where
 
         prover_state.add_base_scalars(&root);
 
-        let (ood_points, ood_answers) =
-            sample_ood_points::<EF, _>(prover_state, self.commitment_ood_samples, self.num_variables, |point| {
-                polynomial.evaluate(point)
-            });
+        // Sample OOD points and evaluate the polynomial at them in parallel.
+        // Inlines sample_ood_points so we can dispatch the per-point evaluation
+        // through rayon — useful when commitment_ood_samples > 1 because the
+        // polynomial buffer is shared across evaluations and stays in cache.
+        let (ood_points, ood_answers) = if self.commitment_ood_samples > 0 {
+            let pts: Vec<EF> = prover_state.sample_vec(self.commitment_ood_samples);
+            use rayon::prelude::*;
+            let answers: Vec<EF> = pts
+                .par_iter()
+                .map(|&p| polynomial.evaluate(&MultilinearPoint::expand_from_univariate(p, self.num_variables)))
+                .collect();
+            prover_state.add_extension_scalars(&answers);
+            (pts, answers)
+        } else {
+            (Vec::new(), Vec::new())
+        };
 
         Witness {
             prover_data,
