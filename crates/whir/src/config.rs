@@ -190,10 +190,10 @@ where
         if proposed_n_rounds >= 1 {
             whir_parameters_owned.folding_factor = proposed_ff;
             // Bump rs_domain_initial_reduction_factor only when FF=11 path is active.
-            // 8 <= 11 so the `rs_red <= ff_0` assert stays satisfied. Higher
-            // rs_red further shrinks Round 0's domain (2^15 → 2^14 leaves).
-            if whir_parameters_owned.rs_domain_initial_reduction_factor < 8 {
-                whir_parameters_owned.rs_domain_initial_reduction_factor = 8;
+            // 7 <= 11 so the `rs_red <= ff_0` assert stays satisfied. Higher
+            // rs_red further shrinks Round 0's domain (2^16 → 2^15 leaves).
+            if whir_parameters_owned.rs_domain_initial_reduction_factor < 7 {
+                whir_parameters_owned.rs_domain_initial_reduction_factor = 7;
             }
         } else {
             // Fall back to FF=8 (iter 11 win) when num_variables is small.
