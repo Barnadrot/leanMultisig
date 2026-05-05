@@ -115,20 +115,35 @@ pub fn stack_polynomials_and_commit(
         &tables_heights_sorted.iter().cloned().collect(),
     );
     let mut global_polynomial = F::zero_vec(1 << stacked_n_vars); // TODO avoid cloning all witness data
-    global_polynomial[..memory.len()].copy_from_slice(memory);
-    let mut offset = memory.len();
-    global_polynomial[offset..][..memory_acc.len()].copy_from_slice(memory_acc);
-    offset += memory_acc.len();
 
-    global_polynomial[offset..][..bytecode_acc.len()].copy_from_slice(bytecode_acc);
-    let largest_table_height = 1 << tables_heights_sorted[0].1;
-    offset += largest_table_height.max(bytecode_acc.len()); // we may pad bytecode_acc to match largest table height
-
-    // Parallelize the per-column copies. The destination segments are non-
-    // overlapping (offset advances monotonically), so we precompute the
-    // (segment_offset, source_slice) pairs and dispatch the copies via rayon.
+    // Build a list of (dst_offset, src_slice) copy specs. Large segments
+    // (memory, memory_acc, bytecode_acc) are split into ~4 MB chunks so they
+    // distribute across rayon workers rather than hogging a single thread.
     use rayon::prelude::*;
+    const CHUNK_BYTES: usize = 4 * 1024 * 1024;
+    let chunk_elems = CHUNK_BYTES / std::mem::size_of::<F>();
     let mut copies: Vec<(usize, &[F])> = Vec::new();
+    let mut push_chunked = |copies: &mut Vec<(usize, &[F])>, base: usize, src: &'_ [F]| {
+        let mut start = 0;
+        while start < src.len() {
+            let end = (start + chunk_elems).min(src.len());
+            // SAFETY: lifetimes are bounded by the function's input borrows,
+            // which outlive the par_iter below.
+            let slice: &[F] = unsafe { std::slice::from_raw_parts(src.as_ptr().add(start), end - start) };
+            copies.push((base + start, slice));
+            start = end;
+        }
+    };
+
+    let mut offset = 0usize;
+    push_chunked(&mut copies, offset, memory);
+    offset += memory.len();
+    push_chunked(&mut copies, offset, memory_acc);
+    offset += memory_acc.len();
+    push_chunked(&mut copies, offset, bytecode_acc);
+    let largest_table_height = 1 << tables_heights_sorted[0].1;
+    offset += largest_table_height.max(bytecode_acc.len()); // pad bytecode_acc to max table height
+
     for (table, log_n_rows) in &tables_heights_sorted {
         let n_rows = 1 << *log_n_rows;
         for col_index in 0..table.n_columns() {
@@ -137,13 +152,12 @@ pub fn stack_polynomials_and_commit(
             offset += n_rows;
         }
     }
+
     // SAFETY: each (start, src) pair targets a disjoint slice of
-    // global_polynomial; copy_from_slice is the only write.
+    // global_polynomial. Concurrent writes through the raw pointer never alias.
     let dst_ptr = global_polynomial.as_mut_ptr() as usize;
     copies.par_iter().for_each(|&(start, src)| {
         let n = src.len();
-        // Safety: disjoint [start..start+n) ranges from monotonically advancing
-        // `offset`, so concurrent writes through the raw pointer never alias.
         unsafe {
             let dst = (dst_ptr as *mut F).add(start);
             std::ptr::copy_nonoverlapping(src.as_ptr(), dst, n);
