@@ -116,11 +116,11 @@ pub fn stack_polynomials_and_commit(
     );
     let mut global_polynomial = F::zero_vec(1 << stacked_n_vars); // TODO avoid cloning all witness data
 
-    // Build a list of (dst_offset, src_slice) copy specs. Large segments
-    // (memory, memory_acc, bytecode_acc) are split into ~4 MB chunks so they
-    // distribute across rayon workers rather than hogging a single thread.
+    // Build a list of (dst_offset, src_slice) copy specs. Every segment is
+    // chunked to a uniform 1 MB so rayon's work-stealing sees a flat,
+    // balanced task list instead of a mix of huge and small tasks.
     use rayon::prelude::*;
-    const CHUNK_BYTES: usize = 4 * 1024 * 1024;
+    const CHUNK_BYTES: usize = 1024 * 1024;
     let chunk_elems = CHUNK_BYTES / std::mem::size_of::<F>();
     let mut copies: Vec<(usize, &[F])> = Vec::new();
     let mut push_chunked = |copies: &mut Vec<(usize, &[F])>, base: usize, src: &'_ [F]| {
@@ -148,7 +148,7 @@ pub fn stack_polynomials_and_commit(
         let n_rows = 1 << *log_n_rows;
         for col_index in 0..table.n_columns() {
             let col = &traces[table].columns[col_index];
-            copies.push((offset, &col[..n_rows]));
+            push_chunked(&mut copies, offset, &col[..n_rows]);
             offset += n_rows;
         }
     }
