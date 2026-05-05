@@ -174,21 +174,26 @@ where
 
     #[allow(clippy::too_many_lines)]
     pub fn new(whir_parameters: &WhirConfigBuilder, num_variables: usize) -> Self {
-        // Override initial folding_factor to 11 (was 7, iter 11 = 8, iter 13 = 10).
-        // Compounds three wins:
-        //   1. n_rounds stays at 2 (same as FF=8) so no round-count regression.
-        //   2. Zero-suffix sponge opt with k=8 RATE chunks of trailing zeros
-        //      per leaf (full=2048 base elems, effective=1984), saving
-        //      k-1 = 7 perms/leaf × 2^16 leaves ≈ 459 K perms vs no opt.
-        //   3. Tree compress halves again (131K @ FF=10 → 65K @ FF=11).
-        //   4. DFT operates on 2^16 rows × 2048 cols — even smaller per-row FFT.
-        // Skip the override when num_rounds would collapse to 0 (small tests).
+        // Override two parameters:
+        //   1. Initial folding_factor → 11 (iter 14 winner).
+        //   2. rs_domain_initial_reduction_factor → 6 (was 5).
+        //      With FF=11: log_inv_rate_at(1) = 1 + 11 - 6 = 6 (vs 7 with rs=5),
+        //      so Round 0's merkle tree has 2^16 leaves instead of 2^17 — half
+        //      the leaf hashing AND half the tree compress work. The constraint
+        //      `rs_red <= ff_0` allows up to rs_red = 11; 6 is a moderate step.
+        // Skip the FF override when it would collapse num_rounds to 0
+        // (preserves the small whir test).
         let mut whir_parameters_owned: WhirConfigBuilder = whir_parameters.clone();
         let proposed_ff = FoldingFactor::new(11, whir_parameters.folding_factor.at_round(1));
         let (proposed_n_rounds, _) =
             proposed_ff.compute_number_of_rounds(num_variables, whir_parameters.max_num_variables_to_send_coeffs);
         if proposed_n_rounds >= 1 {
             whir_parameters_owned.folding_factor = proposed_ff;
+            // Bump rs_domain_initial_reduction_factor only when FF=11 path is active.
+            // 6 <= 11 so the assert below stays satisfied.
+            if whir_parameters_owned.rs_domain_initial_reduction_factor < 6 {
+                whir_parameters_owned.rs_domain_initial_reduction_factor = 6;
+            }
         } else {
             // Fall back to FF=8 (iter 11 win) when num_variables is small.
             whir_parameters_owned.folding_factor =
