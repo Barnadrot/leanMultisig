@@ -267,47 +267,22 @@ where
 
     let mut digests = unsafe { uninitialized_vec(height) };
 
-    if n_pad == 0 {
-        let n_blocks = effective_base_width / RATE;
-        digests
-            .par_chunks_exact_mut(width)
-            .enumerate()
-            .for_each(|(i, digests_chunk)| {
-                let first_row = i * width;
-                let row_slices = matrix.wrapping_row_slices(first_row, width);
-                let mut state = *packed_initial_state;
-
-                for block in 0..n_blocks {
-                    let base_col = effective_base_width - 1 - block * RATE;
-                    for r in 0..RATE {
-                        state[WIDTH - 1 - r] = P::from_fn(|k| row_slices[k][base_col - r]);
-                    }
-                    perm.compress_mut(&mut state);
-                }
-
-                let packed_digest: [P; DIGEST_ELEMS] = std::array::from_fn(|j| state[j]);
-                for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                    *dst = src;
-                }
-            });
-    } else {
-        digests
-            .par_chunks_exact_mut(width)
-            .enumerate()
-            .for_each(|(i, digests_chunk)| {
-                let first_row = i * width;
-                let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
-                let packed_digest: [P; DIGEST_ELEMS] =
-                    symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
-                        perm,
-                        rtl_iter,
-                        packed_initial_state,
-                    );
-                for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                    *dst = src;
-                }
-            });
-    }
+    digests
+        .par_chunks_exact_mut(width)
+        .enumerate()
+        .for_each(|(i, digests_chunk)| {
+            let first_row = i * width;
+            let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
+            let packed_digest: [P; DIGEST_ELEMS] =
+                symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
+                    perm,
+                    rtl_iter,
+                    packed_initial_state,
+                );
+            for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
+                *dst = src;
+            }
+        });
 
     digests
 }
