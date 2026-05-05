@@ -190,12 +190,13 @@ where
         // iter 24 +0.07%/revert-FAIL) suggest iter 22 was a noise-rider. This
         // iter tests whether (11, 5) is actually faster than (9, 7).
         let proposed_ff = FoldingFactor::new(11, 5);
-        let proposed_max = whir_parameters.max_num_variables_to_send_coeffs.max(12);
-        let (proposed_n_rounds, _) = proposed_ff.compute_number_of_rounds(num_variables, proposed_max);
+        let (proposed_n_rounds, _) =
+            proposed_ff.compute_number_of_rounds(num_variables, whir_parameters.max_num_variables_to_send_coeffs);
         if proposed_n_rounds >= 1 {
             whir_parameters_owned.folding_factor = proposed_ff;
-            whir_parameters_owned.max_num_variables_to_send_coeffs = proposed_max;
-            // Bump rs_domain_initial_reduction_factor when FF=11 path is active.
+            // Bump rs_domain_initial_reduction_factor only when FF=11 path is active.
+            // 7 <= 11 so the `rs_red <= ff_0` assert stays satisfied. Higher
+            // rs_red further shrinks Round 0's domain (2^16 → 2^15 leaves).
             if whir_parameters_owned.rs_domain_initial_reduction_factor < 7 {
                 whir_parameters_owned.rs_domain_initial_reduction_factor = 7;
             }
