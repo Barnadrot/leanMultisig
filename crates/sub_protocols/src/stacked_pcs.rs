@@ -115,20 +115,21 @@ pub fn stack_polynomials_and_commit(
         &tables_heights_sorted.iter().cloned().collect(),
     );
     let mut global_polynomial = F::zero_vec(1 << stacked_n_vars); // TODO avoid cloning all witness data
-    global_polynomial[..memory.len()].copy_from_slice(memory);
-    let mut offset = memory.len();
-    global_polynomial[offset..][..memory_acc.len()].copy_from_slice(memory_acc);
-    offset += memory_acc.len();
 
-    global_polynomial[offset..][..bytecode_acc.len()].copy_from_slice(bytecode_acc);
+    // Build the full list of (dst_offset, src_slice) pairs for parallel copy.
+    // Each segment lives at a unique non-overlapping range of global_polynomial,
+    // so all copies can run concurrently through a raw pointer.
+    use rayon::prelude::*;
+    let mut copies: Vec<(usize, &[F])> = Vec::new();
+    let mut offset = 0usize;
+    copies.push((offset, memory));
+    offset += memory.len();
+    copies.push((offset, memory_acc));
+    offset += memory_acc.len();
+    copies.push((offset, bytecode_acc));
     let largest_table_height = 1 << tables_heights_sorted[0].1;
     offset += largest_table_height.max(bytecode_acc.len()); // we may pad bytecode_acc to match largest table height
 
-    // Parallelize the per-column copies. The destination segments are non-
-    // overlapping (offset advances monotonically), so we precompute the
-    // (segment_offset, source_slice) pairs and dispatch the copies via rayon.
-    use rayon::prelude::*;
-    let mut copies: Vec<(usize, &[F])> = Vec::new();
     for (table, log_n_rows) in &tables_heights_sorted {
         let n_rows = 1 << *log_n_rows;
         for col_index in 0..table.n_columns() {
@@ -137,13 +138,12 @@ pub fn stack_polynomials_and_commit(
             offset += n_rows;
         }
     }
+
     // SAFETY: each (start, src) pair targets a disjoint slice of
-    // global_polynomial; copy_from_slice is the only write.
+    // global_polynomial. Concurrent writes through the raw pointer never alias.
     let dst_ptr = global_polynomial.as_mut_ptr() as usize;
     copies.par_iter().for_each(|&(start, src)| {
         let n = src.len();
-        // Safety: disjoint [start..start+n) ranges from monotonically advancing
-        // `offset`, so concurrent writes through the raw pointer never alias.
         unsafe {
             let dst = (dst_ptr as *mut F).add(start);
             std::ptr::copy_nonoverlapping(src.as_ptr(), dst, n);
