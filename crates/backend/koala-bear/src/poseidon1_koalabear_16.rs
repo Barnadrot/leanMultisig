@@ -951,26 +951,13 @@ impl Poseidon1KoalaBear16 {
         use crate::{add_rc_and_sbox, sbox};
 
         let simd = &self.pre.simd;
-        let lambda16 = &simd.packed_lambda_over_16;
-
-        /// FFT MDS: state = C * state.
-        /// Uses lambda/16 eigenvalues so no separate /16 step needed.
-        /// C * x = DIT_FFT((lambda/16) ⊙ DIF_IFFT(x))
-        #[inline(always)]
-        fn mds_fft(state: &mut [PackedKB; 16], lambda16: &[PackedKB; 16]) {
-            dif_ifft_16_mut(state);
-            for i in 0..16 {
-                state[i] *= lambda16[i];
-            }
-            dit_fft_16_mut(state);
-        }
 
         // --- Initial full rounds (first 3 of 4) ---
         for round_constants in &simd.packed_initial_rc {
             for (s, &rc) in state.iter_mut().zip(round_constants.iter()) {
                 add_rc_and_sbox::<FP, 3>(s, rc);
             }
-            mds_fft(state, lambda16);
+            mds_circ_16(state);
         }
 
         // --- Last initial full round: AddRC + S-box, then fused (m_i * MDS) ---
@@ -1021,7 +1008,7 @@ impl Poseidon1KoalaBear16 {
             for (s, &rc) in state.iter_mut().zip(round_constants.iter()) {
                 add_rc_and_sbox::<FP, 3>(s, rc);
             }
-            mds_fft(state, lambda16);
+            mds_circ_16(state);
         }
     }
 
