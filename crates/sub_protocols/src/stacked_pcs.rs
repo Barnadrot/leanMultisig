@@ -124,14 +124,31 @@ pub fn stack_polynomials_and_commit(
     let largest_table_height = 1 << tables_heights_sorted[0].1;
     offset += largest_table_height.max(bytecode_acc.len()); // we may pad bytecode_acc to match largest table height
 
+    // Parallelize the per-column copies. The destination segments are non-
+    // overlapping (offset advances monotonically), so we precompute the
+    // (segment_offset, source_slice) pairs and dispatch the copies via rayon.
+    use rayon::prelude::*;
+    let mut copies: Vec<(usize, &[F])> = Vec::new();
     for (table, log_n_rows) in &tables_heights_sorted {
         let n_rows = 1 << *log_n_rows;
         for col_index in 0..table.n_columns() {
             let col = &traces[table].columns[col_index];
-            global_polynomial[offset..][..n_rows].copy_from_slice(&col[..n_rows]);
+            copies.push((offset, &col[..n_rows]));
             offset += n_rows;
         }
     }
+    // SAFETY: each (start, src) pair targets a disjoint slice of
+    // global_polynomial; copy_from_slice is the only write.
+    let dst_ptr = global_polynomial.as_mut_ptr() as usize;
+    copies.par_iter().for_each(|&(start, src)| {
+        let n = src.len();
+        // Safety: disjoint [start..start+n) ranges from monotonically advancing
+        // `offset`, so concurrent writes through the raw pointer never alias.
+        unsafe {
+            let dst = (dst_ptr as *mut F).add(start);
+            std::ptr::copy_nonoverlapping(src.as_ptr(), dst, n);
+        }
+    });
     assert_eq!(log2_ceil_usize(offset), stacked_n_vars);
     tracing::info!(
         "{}",
