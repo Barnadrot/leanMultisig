@@ -1025,19 +1025,17 @@ impl Poseidon1KoalaBear16 {
         }
     }
 
-    /// Compression mode: output[0..8] = permute(input)[0..8] + input[0..8].
-    /// Only feeds forward the rate portion (first DIGEST_ELEMS=8 elements).
-    /// All callers extract only the first 8 elements: sponge returns state[..OUT],
-    /// tree compression returns out[..CHUNK], both with OUT=CHUNK=8.
+    /// Compression mode: output = permute(input) + input.
     #[inline(always)]
     pub fn compress_in_place<R: Algebra<KoalaBear> + InjectiveMonomial<3> + Send + Sync + 'static>(
         &self,
         state: &mut [R; 16],
     ) {
-        let rate: [R; 8] = state[..8].try_into().unwrap();
+        let initial = *state;
+        // Use permute_mut so the SIMD fast path is dispatched when applicable.
         Permutation::permute_mut(self, state);
-        for i in 0..8 {
-            state[i] += rate[i];
+        for (s, init) in state.iter_mut().zip(initial) {
+            *s += init;
         }
     }
 }
