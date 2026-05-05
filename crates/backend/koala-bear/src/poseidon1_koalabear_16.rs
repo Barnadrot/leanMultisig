@@ -588,8 +588,8 @@ struct SimdPrecomputed {
     packed_sparse_first_row: [[PackedKB; 16]; POSEIDON1_PARTIAL_ROUNDS],
     /// Pre-packed v vectors.
     packed_sparse_v: [[PackedKB; 16]; POSEIDON1_PARTIAL_ROUNDS],
-    /// Pre-packed scalar round constants for partial rounds 0..RP-2.
-    packed_round_constants: [PackedKB; POSEIDON1_PARTIAL_ROUNDS - 1],
+    /// Pre-packed scalar round constants for partial rounds (last element is zero).
+    packed_round_constants: [PackedKB; POSEIDON1_PARTIAL_ROUNDS],
     /// Fused matrix: m_i * MDS * state_after_last_initial_sbox + m_i * first_rc.
     /// Replaces: FFT MDS + add first_rc + dense m_i → single dense multiply.
     packed_fused_mi_mds: [[PackedKB; 16]; 16],
@@ -663,8 +663,10 @@ fn precomputed() -> &'static Precomputed {
                 core::array::from_fn(|r| sparse_first_row[r].map(pack));
             let packed_sparse_v: [[PackedKB; 16]; POSEIDON1_PARTIAL_ROUNDS] =
                 core::array::from_fn(|r| sparse_v[r].map(pack));
-            let packed_round_constants: [PackedKB; POSEIDON1_PARTIAL_ROUNDS - 1] =
-                core::array::from_fn(|r| pack(scalar_round_constants[r]));
+            let packed_round_constants: [PackedKB; POSEIDON1_PARTIAL_ROUNDS] =
+                core::array::from_fn(|r| {
+                    if r < POSEIDON1_PARTIAL_ROUNDS - 1 { pack(scalar_round_constants[r]) } else { PackedKB::ZERO }
+                });
 
             // Fused matrix: (m_i * MDS), replaces last initial FFT MDS + add first_rc + m_i.
             let fused_mi_mds = matrix_mul_16(&m_i, &mds);
@@ -993,10 +995,8 @@ impl Poseidon1KoalaBear16 {
                 // PATH A (high latency): S-box on s0 only.
                 state[0] = sbox::<FP, 3>(state[0]);
 
-                // Add scalar round constant (except last round).
-                if r < POSEIDON1_PARTIAL_ROUNDS - 1 {
-                    state[0] += simd.packed_round_constants[r];
-                }
+                // Add scalar round constant (last round's constant is zero).
+                state[0] += simd.packed_round_constants[r];
 
                 // PATH B (can overlap with S-box): partial dot product on s_hi.
                 let s_hi: &[PackedKB; 15] = unsafe { &*(state.as_ptr().add(1) as *const [PackedKB; 15]) };
