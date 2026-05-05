@@ -174,23 +174,14 @@ where
 
     #[allow(clippy::too_many_lines)]
     pub fn new(whir_parameters: &WhirConfigBuilder, num_variables: usize) -> Self {
-        // Override initial folding_factor to 9 (was 7, then iter 11 used 8).
-        // n_rounds stays at 2 (same as FF=8). The win comes from zero-suffix
-        // sponge opt: at FF=9, full_n_cols=512 base elems, effective=496
-        // (data fits in 65M / 2^17), trailing zeros = 16 = 2 RATE chunks.
-        // The opt threshold (>= 2) is met so the first compress in the leaf
-        // sponge is replaced by a precomputed state; saves 1 perm per leaf
-        // × 2^18 leaves ≈ 262K Poseidon perms. Plus tree compress halves
-        // (524K → 262K). Both prover and verifier go through this
-        // constructor so the override is consistent. Skip the override when
-        // it would collapse num_rounds to 0 (small num_variables in tests).
+        // Override folding_factor to FF=(8,5) — increases the initial fold by 1
+        // which trims one entire round commit (n_rounds: 3 → 2 for num_variables=26
+        // and max_num_variables_to_send_coeffs=8). The initial Merkle commit work
+        // stays invariant (both 16.78M perms), but rounds 2 disappear, saving
+        // ~700K Poseidon perms total (~3.3% of WHIR Merkle work). Both prover
+        // and verifier go through this constructor so the override is consistent.
         let mut whir_parameters_owned: WhirConfigBuilder = whir_parameters.clone();
-        let proposed_ff = FoldingFactor::new(9, whir_parameters.folding_factor.at_round(1));
-        let (proposed_n_rounds, _) =
-            proposed_ff.compute_number_of_rounds(num_variables, whir_parameters.max_num_variables_to_send_coeffs);
-        if proposed_n_rounds >= 1 {
-            whir_parameters_owned.folding_factor = proposed_ff;
-        }
+        whir_parameters_owned.folding_factor = FoldingFactor::new(8, whir_parameters.folding_factor.at_round(1));
         let whir_parameters = &whir_parameters_owned;
 
         whir_parameters.folding_factor.check_validity(num_variables).unwrap();
