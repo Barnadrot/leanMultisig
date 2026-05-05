@@ -174,17 +174,17 @@ where
 
     #[allow(clippy::too_many_lines)]
     pub fn new(whir_parameters: &WhirConfigBuilder, num_variables: usize) -> Self {
-        // Override initial folding_factor to 10 (was 7, then iter 11 = 8).
-        // Compounds two wins:
+        // Override initial folding_factor to 11 (was 7, iter 11 = 8, iter 13 = 10).
+        // Compounds three wins:
         //   1. n_rounds stays at 2 (same as FF=8) so no round-count regression.
-        //   2. Zero-suffix sponge opt activates with k=4 RATE chunks of trailing
-        //      zeros per leaf (full=1024 base elems, effective=992).
-        //      Per-leaf saving: k-1 = 3 perms × 2^17 leaves ≈ 393 K perms.
-        //   3. Tree compress drops further (524K @ FF=8 → 131K @ FF=10).
-        // Total saving over FF=8 in initial commit: ~400K Poseidon perms.
+        //   2. Zero-suffix sponge opt with k=8 RATE chunks of trailing zeros
+        //      per leaf (full=2048 base elems, effective=1984), saving
+        //      k-1 = 7 perms/leaf × 2^16 leaves ≈ 459 K perms vs no opt.
+        //   3. Tree compress halves again (131K @ FF=10 → 65K @ FF=11).
+        //   4. DFT operates on 2^16 rows × 2048 cols — even smaller per-row FFT.
         // Skip the override when num_rounds would collapse to 0 (small tests).
         let mut whir_parameters_owned: WhirConfigBuilder = whir_parameters.clone();
-        let proposed_ff = FoldingFactor::new(10, whir_parameters.folding_factor.at_round(1));
+        let proposed_ff = FoldingFactor::new(11, whir_parameters.folding_factor.at_round(1));
         let (proposed_n_rounds, _) =
             proposed_ff.compute_number_of_rounds(num_variables, whir_parameters.max_num_variables_to_send_coeffs);
         if proposed_n_rounds >= 1 {
