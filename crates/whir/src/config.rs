@@ -200,6 +200,11 @@ where
             if whir_parameters_owned.rs_domain_initial_reduction_factor < 7 {
                 whir_parameters_owned.rs_domain_initial_reduction_factor = 7;
             }
+            // Lower pow_bits 18 → 16. Affects query_security_level (107 vs 105),
+            // shifting some weight from PoW grinding to query count.
+            if whir_parameters_owned.pow_bits > 16 {
+                whir_parameters_owned.pow_bits = 16;
+            }
         } else {
             // Fall back to FF=8 (iter 11 win) when num_variables is small.
             whir_parameters_owned.folding_factor =
