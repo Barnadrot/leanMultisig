@@ -174,24 +174,23 @@ where
 
     #[allow(clippy::too_many_lines)]
     pub fn new(whir_parameters: &WhirConfigBuilder, num_variables: usize) -> Self {
-        // Override two parameters: initial folding_factor and
-        // max_num_variables_to_send_coeffs.
-        //   - FF=11 (iter 14 winner) keeps n_rounds at 2 with default max=8.
-        //   - Bumping max from 8 → 12 drops n_rounds from 2 → 1: Round 1's
-        //     entire Merkle commit disappears (~1.24M Poseidon perms), with
-        //     the cost of sending 2^10 final coefficients in the proof.
-        // Apply both overrides only when (FF=11, max=12) gives n_rounds >= 1.
-        // Otherwise fall back to FF=8 with the builder's default max (small tests).
+        // Override initial folding_factor to 11 (was 7, iter 11 = 8, iter 13 = 10).
+        // Compounds three wins:
+        //   1. n_rounds stays at 2 (same as FF=8) so no round-count regression.
+        //   2. Zero-suffix sponge opt with k=8 RATE chunks of trailing zeros
+        //      per leaf (full=2048 base elems, effective=1984), saving
+        //      k-1 = 7 perms/leaf × 2^16 leaves ≈ 459 K perms vs no opt.
+        //   3. Tree compress halves again (131K @ FF=10 → 65K @ FF=11).
+        //   4. DFT operates on 2^16 rows × 2048 cols — even smaller per-row FFT.
+        // Skip the override when num_rounds would collapse to 0 (small tests).
         let mut whir_parameters_owned: WhirConfigBuilder = whir_parameters.clone();
         let proposed_ff = FoldingFactor::new(11, whir_parameters.folding_factor.at_round(1));
-        let proposed_max = whir_parameters.max_num_variables_to_send_coeffs.max(12);
-        let (proposed_n_rounds, _) = proposed_ff.compute_number_of_rounds(num_variables, proposed_max);
+        let (proposed_n_rounds, _) =
+            proposed_ff.compute_number_of_rounds(num_variables, whir_parameters.max_num_variables_to_send_coeffs);
         if proposed_n_rounds >= 1 {
             whir_parameters_owned.folding_factor = proposed_ff;
-            whir_parameters_owned.max_num_variables_to_send_coeffs = proposed_max;
         } else {
-            // Small num_variables (test): keep the builder's max and fall back
-            // to FF=8 (iter 11 win) so n_rounds stays viable.
+            // Fall back to FF=8 (iter 11 win) when num_variables is small.
             whir_parameters_owned.folding_factor =
                 FoldingFactor::new(8, whir_parameters.folding_factor.at_round(1));
         }
