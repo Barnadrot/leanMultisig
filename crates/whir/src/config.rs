@@ -174,6 +174,16 @@ where
 
     #[allow(clippy::too_many_lines)]
     pub fn new(whir_parameters: &WhirConfigBuilder, num_variables: usize) -> Self {
+        // Override folding_factor to FF=(8,5) — increases the initial fold by 1
+        // which trims one entire round commit (n_rounds: 3 → 2 for num_variables=26
+        // and max_num_variables_to_send_coeffs=8). The initial Merkle commit work
+        // stays invariant (both 16.78M perms), but rounds 2 disappear, saving
+        // ~700K Poseidon perms total (~3.3% of WHIR Merkle work). Both prover
+        // and verifier go through this constructor so the override is consistent.
+        let mut whir_parameters_owned: WhirConfigBuilder = whir_parameters.clone();
+        whir_parameters_owned.folding_factor = FoldingFactor::new(8, whir_parameters.folding_factor.at_round(1));
+        let whir_parameters = &whir_parameters_owned;
+
         whir_parameters.folding_factor.check_validity(num_variables).unwrap();
 
         assert!(
