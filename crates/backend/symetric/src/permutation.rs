@@ -16,7 +16,6 @@ pub trait Compression<T: Clone>: Clone + Sync {
 impl<R: Algebra<KoalaBear> + InjectiveMonomial<3> + Send + Sync + 'static> Compression<[R; 16]>
     for Poseidon1KoalaBear16
 {
-    #[inline]
     fn compress_mut(&self, input: &mut [R; 16]) {
         self.compress_in_place(input);
     }
