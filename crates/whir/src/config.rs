@@ -184,13 +184,12 @@ where
         // Skip the FF override when it would collapse num_rounds to 0
         // (preserves the small whir test).
         let mut whir_parameters_owned: WhirConfigBuilder = whir_parameters.clone();
-        // Try FF=(9, 7): smaller initial fold (weaker zero-suffix opt — only k=2)
-        // but BIGGER subsequent fold so round commits shrink dramatically:
-        //   Round 0 leaves: 2^15 → 2^13 (-75%)
-        //   Round 1 leaves: 2^14 → 2^12 (-75%)
-        // Per-leaf perm count grows ~2× per round but leaf count drops 4×, so
-        // round commits halve. Total expected saving: ~500 K perms.
-        let proposed_ff = FoldingFactor::new(9, 7);
+        // Revert FF to (11, 5) — the iter 18 state that was rock-solid keep.
+        // Iter 22 kept FF=(9, 7) on a noisy paired (-0.08% p=0.6) but with
+        // suspicious revert-A/B (0.96% p=0.01); follow-on tweaks (iter 23 +2.1%,
+        // iter 24 +0.07%/revert-FAIL) suggest iter 22 was a noise-rider. This
+        // iter tests whether (11, 5) is actually faster than (9, 7).
+        let proposed_ff = FoldingFactor::new(11, 5);
         let (proposed_n_rounds, _) =
             proposed_ff.compute_number_of_rounds(num_variables, whir_parameters.max_num_variables_to_send_coeffs);
         if proposed_n_rounds >= 1 {
