@@ -34,29 +34,6 @@ impl<F: Clone + Copy + Default + Send + Sync, const DIGEST_ELEMS: usize> MerkleT
         Self { digest_layers }
     }
 
-    /// Build a Merkle tree from a pre-computed level-0 layer AND level-1 layer.
-    /// The caller is responsible for producing both layers consistently
-    /// (i.e. layer1[i] = compress(layer0[2i], layer0[2i+1]) for all i).
-    pub fn from_first_two_layers<P, Comp, const WIDTH: usize>(
-        comp: &Comp,
-        layer0: Vec<[F; DIGEST_ELEMS]>,
-        layer1: Vec<[F; DIGEST_ELEMS]>,
-    ) -> Self
-    where
-        P: PackedValue<Value = F> + Default,
-        Comp: Compression<[F; WIDTH]> + Compression<[P; WIDTH]>,
-    {
-        let mut digest_layers = vec![layer0, layer1];
-        loop {
-            let prev_layer = digest_layers.last().unwrap().as_slice();
-            if prev_layer.len() == 1 {
-                break;
-            }
-            digest_layers.push(compress_layer::<P, Comp, DIGEST_ELEMS, WIDTH>(prev_layer, comp));
-        }
-        Self { digest_layers }
-    }
-
     #[must_use]
     pub fn root(&self) -> [F; DIGEST_ELEMS] {
         self.digest_layers.last().unwrap()[0]

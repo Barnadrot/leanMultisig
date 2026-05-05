@@ -63,27 +63,6 @@ fn build_merkle_tree_koalabear(
 ) -> RoundMerkleTree<KoalaBear> {
     let perm = default_koalabear_poseidon1_16();
     let n_zero_suffix_rate_chunks = (full_base_width - effective_base_width) / 8;
-    let height = leaf.height();
-    let packing_w = <PFPacking<KoalaBear> as PackedValue>::WIDTH;
-
-    // Fused first-two-layers path: each rayon task hashes 2*packing_w leaves and
-    // immediately compresses them into packing_w level-1 digests, eliminating the
-    // rayon barrier between leaf hashing and the first compress_layer.
-    // Restricted to the non-zero-suffix path; height must accommodate 2 packed leaf
-    // groups per task. All four xmss_leaf_1400sigs commitments meet this.
-    if n_zero_suffix_rate_chunks < 2 && height >= 2 * packing_w && height.is_multiple_of(2 * packing_w) {
-        let (layer0, layer1) =
-            first_two_digest_layers::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(&perm, &leaf, full_base_width);
-        let tree = symetric::merkle::MerkleTree::from_first_two_layers::<PFPacking<KoalaBear>, _, 16>(
-            &perm, layer0, layer1,
-        );
-        return WhirMerkleTree {
-            leaf,
-            tree,
-            full_leaf_base_width: full_base_width,
-        };
-    }
-
     let first_layer = if n_zero_suffix_rate_chunks >= 2 {
         let scalar_state = symetric::precompute_zero_suffix_state::<KoalaBear, _, 16, 8, DIGEST_ELEMS>(
             &perm,
@@ -306,68 +285,4 @@ where
         });
 
     digests
-}
-
-/// Compute Merkle level 0 (leaf digests) and level 1 (parent digests) in a single
-/// parallel pass. Each rayon task hashes 2*P::WIDTH leaves (in 2 packed sponge
-/// invocations) and immediately compresses 16 pairs into level-1 entries.
-/// Saves one rayon barrier vs the unfused (first_digest_layer + compress_layer)
-/// path, and keeps level-0 digests hot in cache during the level-1 compress.
-#[instrument(name = "first two digest layers", level = "debug", skip_all)]
-fn first_two_digest_layers<P, Perm, M, const DIGEST_ELEMS: usize, const WIDTH: usize, const RATE: usize>(
-    perm: &Perm,
-    matrix: &M,
-    full_width: usize,
-) -> (Vec<[P::Value; DIGEST_ELEMS]>, Vec<[P::Value; DIGEST_ELEMS]>)
-where
-    P: PackedValue + Default,
-    P::Value: Default + Copy,
-    Perm: Compression<[P::Value; WIDTH]> + Compression<[P; WIDTH]>,
-    M: Matrix<P::Value>,
-{
-    let width = P::WIDTH;
-    let height = matrix.height();
-    assert!(height.is_multiple_of(2 * width));
-    let matrix_width = matrix.width();
-    let n_trailing_zeros = full_width - matrix_width;
-
-    let mut layer0: Vec<[P::Value; DIGEST_ELEMS]> = unsafe { uninitialized_vec(height) };
-    let mut layer1: Vec<[P::Value; DIGEST_ELEMS]> = unsafe { uninitialized_vec(height / 2) };
-
-    layer0
-        .par_chunks_exact_mut(2 * width)
-        .zip(layer1.par_chunks_exact_mut(width))
-        .enumerate()
-        .for_each(|(i, (l0_chunk, l1_chunk))| {
-            let first_row_a = i * 2 * width;
-            let first_row_b = first_row_a + width;
-
-            // Hash first half: leaves [first_row_a .. first_row_a+width)
-            let rtl_iter_a = matrix.vertically_packed_row_rtl::<P>(first_row_a, matrix_width, n_trailing_zeros);
-            let packed_a: [P; DIGEST_ELEMS] =
-                symetric::hash_rtl_iter::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(perm, rtl_iter_a);
-            for (dst, src) in l0_chunk[..width].iter_mut().zip(unpack_array(packed_a)) {
-                *dst = src;
-            }
-
-            // Hash second half: leaves [first_row_b .. first_row_b+width)
-            let rtl_iter_b = matrix.vertically_packed_row_rtl::<P>(first_row_b, matrix_width, n_trailing_zeros);
-            let packed_b: [P; DIGEST_ELEMS] =
-                symetric::hash_rtl_iter::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(perm, rtl_iter_b);
-            for (dst, src) in l0_chunk[width..].iter_mut().zip(unpack_array(packed_b)) {
-                *dst = src;
-            }
-
-            // Compress 16 pairs of adjacent leaf digests from l0_chunk into l1_chunk.
-            // Strided gather mirrors compress_layer's pattern; the data is freshly
-            // written to memory and still hot in cache for these 32 digests.
-            let left: [P; DIGEST_ELEMS] = std::array::from_fn(|j| P::from_fn(|k| l0_chunk[2 * k][j]));
-            let right: [P; DIGEST_ELEMS] = std::array::from_fn(|j| P::from_fn(|k| l0_chunk[2 * k + 1][j]));
-            let packed_l1 = symetric::compress::<P, _, DIGEST_ELEMS, WIDTH>(perm, [left, right]);
-            for (dst, src) in l1_chunk.iter_mut().zip(unpack_array(packed_l1)) {
-                *dst = src;
-            }
-        });
-
-    (layer0, layer1)
 }
