@@ -1,5 +1,5 @@
 use clap::Parser;
-use rec_aggregation::{AggregationTopology, benchmark::run_aggregation_benchmark, biggest_leaf};
+use rec_aggregation::benchmark::{AggregationTopology, biggest_leaf, run_aggregation_benchmark};
 
 #[cfg(not(feature = "standard-alloc"))]
 #[global_allocator]
@@ -47,8 +47,12 @@ enum Cli {
 
 fn run_with_warmup(topology: &AggregationTopology, tracing: bool, json: bool) {
     let warmup = biggest_leaf(topology).unwrap();
-    eprintln!("warming up...");
+    eprint!("warming up... ");
     let _ = run_aggregation_benchmark(&warmup, false, true);
+    eprintln!(
+        "used {:.2} GiB",
+        system_info::peak_rss_bytes() as f64 / (1u64 << 30) as f64
+    );
     let report = run_aggregation_benchmark(topology, tracing && !json, json);
     if json {
         println!("{}", serde_json::to_string(&report).unwrap());
@@ -87,7 +91,7 @@ fn main() {
                 raw_xmss: 0,
                 children: vec![
                     AggregationTopology {
-                        raw_xmss: 700,
+                        raw_xmss: 775,
                         children: vec![],
                         log_inv_rate,
                         overlap: 0,
@@ -112,13 +116,13 @@ fn main() {
                                     raw_xmss: 0,
                                     children: vec![
                                         AggregationTopology {
-                                            raw_xmss: 1400,
+                                            raw_xmss: 1550,
                                             children: vec![],
                                             log_inv_rate: 1,
                                             overlap: 0,
                                         },
                                         AggregationTopology {
-                                            raw_xmss: 658,
+                                            raw_xmss: 508,
                                             children: vec![],
                                             log_inv_rate: 2,
                                             overlap: 0,
@@ -131,13 +135,13 @@ fn main() {
                                     raw_xmss: 0,
                                     children: vec![
                                         AggregationTopology {
-                                            raw_xmss: 1400,
+                                            raw_xmss: 1550,
                                             children: vec![],
                                             log_inv_rate: 2,
                                             overlap: 0,
                                         },
                                         AggregationTopology {
-                                            raw_xmss: 658,
+                                            raw_xmss: 508,
                                             children: vec![],
                                             log_inv_rate: 2,
                                             overlap: 0,
@@ -154,7 +158,7 @@ fn main() {
                             raw_xmss: 0,
                             children: vec![
                                 AggregationTopology {
-                                    raw_xmss: 700,
+                                    raw_xmss: 775,
                                     children: vec![],
                                     log_inv_rate: 2,
                                     overlap: 0,
