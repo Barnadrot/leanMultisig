@@ -563,17 +563,17 @@ where
             for (e, &scalar) in smt.values.iter().zip(&next_gamma_powers) {
                 combined_sum += e.value * scalar;
             }
-            // Avoid nested rayon: outer iterates sequentially over chunks (typically few),
-            // inner par_iter parallelizes the heavy scaled-add over inner_poly elements.
-            for (out_buff, &(origin_index, _)) in chunks_mut.iter_mut().zip(&indexed_smt_values) {
-                let scalar = next_gamma_powers[origin_index];
-                out_buff[..1 << shift]
-                    .par_iter_mut()
-                    .zip(&inner_poly)
-                    .for_each(|(out_elem, &poly_elem)| {
-                        *out_elem += poly_elem * scalar;
-                    });
-            }
+            chunks_mut
+                .into_par_iter()
+                .zip(&indexed_smt_values)
+                .for_each(|(out_buff, &(origin_index, _))| {
+                    out_buff[..1 << shift]
+                        .par_iter_mut()
+                        .zip(&inner_poly)
+                        .for_each(|(out_elem, &poly_elem)| {
+                            *out_elem += poly_elem * next_gamma_powers[origin_index];
+                        });
+                });
             gamma_pow = *next_gamma_powers.last().unwrap() * gamma;
         }
     }
