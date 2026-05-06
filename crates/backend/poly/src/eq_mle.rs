@@ -1022,7 +1022,7 @@ fn base_eval_eq_packed_with_packed_output<F, EF, const INITIALIZED: bool>(
 ///
 /// If the output buffer is already initialized, it adds the evaluations otherwise
 /// it copies the evaluations into the buffer directly.
-#[inline]
+#[inline(always)]
 fn add_or_set_f<F: Field, const INITIALIZED: bool>(out: &mut [F], evaluations: &[F]) {
     debug_assert_eq!(out.len(), evaluations.len());
     if INITIALIZED {
@@ -1032,7 +1032,7 @@ fn add_or_set_f<F: Field, const INITIALIZED: bool>(out: &mut [F], evaluations: &
     }
 }
 
-#[inline]
+#[inline(always)]
 fn add_or_set_pf<F: PrimeCharacteristicRing + Copy, const INITIALIZED: bool>(out: &mut [F], evaluations: &[F]) {
     debug_assert_eq!(out.len(), evaluations.len());
     if INITIALIZED {
@@ -1067,7 +1067,7 @@ fn scale_and_add<F: Field, EF: ExtensionField<F>, const INITIALIZED: bool>(
     }
 }
 
-#[inline]
+#[inline(always)]
 fn scale_and_add_pf<F: Field, EF: ExtensionField<F>, const INITIALIZED: bool>(
     out: &mut [EF::ExtensionPacking],
     base_vals: &[F::Packing],
