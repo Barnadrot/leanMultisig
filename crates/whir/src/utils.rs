@@ -138,23 +138,15 @@ fn prepare_evals_for_fft_unpacked<A: Copy + Send + Sync>(
     let log_block_size = log2_strict_usize(block_size);
     let out_len = block_size * dft_n_cols;
 
-    // Process output row-by-row. Each row is dft_n_cols (~110) elements,
-    // contiguous in memory. Threads work on disjoint chunks of consecutive
-    // rows — no false sharing on writes. Within a row, reads from `evals`
-    // are scattered across blocks (one cache line per block), but the L1
-    // working set (dft_n_cols * 64B ≈ 7KB) fits comfortably and gets reused
-    // across all rows processed by the same thread.
-    let mut out: Vec<A> = unsafe { uninitialized_vec(out_len) };
-    out.par_chunks_exact_mut(dft_n_cols)
-        .enumerate()
-        .for_each(|(row, out_row)| {
-            let offset_in_block = row;
-            for (col, slot) in out_row.iter_mut().enumerate() {
-                let src_index = ((col << log_block_size) + offset_in_block) >> log_inv_rate;
-                *slot = unsafe { *evals.get_unchecked(src_index) };
-            }
-        });
-    out
+    (0..out_len)
+        .into_par_iter()
+        .map(|i| {
+            let block_index = i % dft_n_cols;
+            let offset_in_block = i / dft_n_cols;
+            let src_index = ((block_index << log_block_size) + offset_in_block) >> log_inv_rate;
+            unsafe { *evals.get_unchecked(src_index) }
+        })
+        .collect()
 }
 
 fn prepare_evals_for_fft_packed_extension<EF: ExtensionField<PF<EF>>>(
