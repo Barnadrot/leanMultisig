@@ -197,23 +197,6 @@ pub(crate) fn global_dft<F: Field>() -> Arc<EvalsDft<F>> {
         .unwrap()
 }
 
-/// Initialize rayon's global thread pool to one worker per physical core
-/// (skipping SMT siblings). On Zen 4 8c/16t, 16 logical threads contending for
-/// 8 cores hurt compute-bound Poseidon throughput; pinning to 8 reduces
-/// inter-thread cache contention and worker idle/spin time. Best-effort: if
-/// rayon's pool is already initialized, this is a no-op.
-fn init_rayon_pool_physical_cores() {
-    use std::sync::Once;
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let logical = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-        // Heuristic: 2-way SMT on x86_64. Use logical/2 if ≥ 2.
-        let physical = if logical >= 2 { logical / 2 } else { logical };
-        let _ = rayon::ThreadPoolBuilder::new().num_threads(physical).build_global();
-    });
-}
-
 pub fn precompute_dft_twiddles<F: TwoAdicField>(n: usize) {
-    init_rayon_pool_physical_cores();
     global_dft::<F>().update_twiddles(n);
 }
