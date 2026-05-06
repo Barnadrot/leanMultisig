@@ -67,9 +67,21 @@ where
     N: PrimeCharacteristicRing + Copy,
     T: Algebra<N> + Algebra<T> + Copy,
 {
-    let (c0_den, c2_den) = sumcheck_quadratic(((&dl.0, &dl.1), (&dr.0, &dr.1)));
-    let (c0_a, c2_a) = sumcheck_quadratic(((&nl.0, &nl.1), (&dr.0, &dr.1)));
-    let (c0_b, c2_b) = sumcheck_quadratic(((&nr.0, &nr.1), (&dl.0, &dl.1)));
+    // Manual factoring: each `sumcheck_quadratic((a0,a1),(b0,b1))` computes
+    // `(b0*a0, (b1-b0)*(a1-a0))`. Across the three calls, `dl.1-dl.0` and
+    // `dr.1-dr.0` each appear twice. Compute all four deltas once.
+    let delta_dl = dl.1 - dl.0;
+    let delta_dr = dr.1 - dr.0;
+    let delta_nl = nl.1 - nl.0;
+    let delta_nr = nr.1 - nr.0;
+
+    let c0_den = dr.0 * dl.0;
+    let c2_den = delta_dl * delta_dr;
+    let c0_a = dr.0 * nl.0;
+    let c2_a = delta_nl * delta_dr;
+    let c0_b = dl.0 * nr.0;
+    let c2_b = delta_nr * delta_dl;
+
     RoundCoeffs {
         c0_den,
         c2_den,
