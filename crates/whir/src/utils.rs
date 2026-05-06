@@ -138,15 +138,26 @@ fn prepare_evals_for_fft_unpacked<A: Copy + Send + Sync>(
     let log_block_size = log2_strict_usize(block_size);
     let out_len = block_size * dft_n_cols;
 
-    (0..out_len)
-        .into_par_iter()
-        .map(|i| {
-            let block_index = i % dft_n_cols;
-            let offset_in_block = i / dft_n_cols;
-            let src_index = ((block_index << log_block_size) + offset_in_block) >> log_inv_rate;
-            unsafe { *evals.get_unchecked(src_index) }
-        })
-        .collect()
+    // Column-by-column population: each thread handles one block (column of
+    // the output matrix). Reads from `evals` are then a near-contiguous
+    // walk over the block's source range (only the rate-expansion factor
+    // breaks strict contiguity), letting the HW prefetcher work. Writes to
+    // `out` are strided by dft_n_cols. The original implementation flipped
+    // this — strided reads with contiguous writes — which loses prefetching
+    // and forces a cache-line miss per output element.
+    let mut out: Vec<A> = unsafe { uninitialized_vec(out_len) };
+    let out_ptr = out.as_mut_ptr() as usize;
+    (0..dft_n_cols).into_par_iter().for_each(|block_index| {
+        let src_base = block_index << log_block_size;
+        for offset_in_block in 0..block_size {
+            let src_index = (src_base + offset_in_block) >> log_inv_rate;
+            let out_idx = offset_in_block * dft_n_cols + block_index;
+            unsafe {
+                *(out_ptr as *mut A).add(out_idx) = *evals.get_unchecked(src_index);
+            }
+        }
+    });
+    out
 }
 
 fn prepare_evals_for_fft_packed_extension<EF: ExtensionField<PF<EF>>>(
