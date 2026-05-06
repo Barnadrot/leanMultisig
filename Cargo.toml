@@ -100,4 +100,5 @@ system-info.workspace = true
 
 
 [profile.release]
-lto = "thin"
+lto = "fat"
+codegen-units = 1
