@@ -7,7 +7,7 @@ use system_info::NUM_THREADS;
 
 const LOG_NUM_THREADS: usize = log2_ceil_usize(NUM_THREADS);
 const NUM_THREADS_PADDED: usize = 1 << LOG_NUM_THREADS;
-const LOG_BATCHED_TILE_SIZE: usize = 12;
+const LOG_BATCHED_TILE_SIZE: usize = 14;
 
 /// Given `evals` = (α_1, ..., α_n), returns a multilinear polynomial P in n variables,
 /// defined on the boolean hypercube by: ∀ (x_1, ..., x_n) ∈ {0, 1}^n,
