@@ -948,8 +948,7 @@ impl Poseidon1KoalaBear16 {
     ))]
     #[inline(always)]
     fn permute_simd(&self, state: &mut [PackedKB; 16]) {
-        use crate::{InternalLayer16, add_rc_and_sbox, sbox};
-        use core::mem::transmute;
+        use crate::{add_rc_and_sbox, sbox};
 
         let simd = &self.pre.simd;
         let lambda16 = &simd.packed_lambda_over_16;
@@ -988,38 +987,33 @@ impl Poseidon1KoalaBear16 {
             }
         }
 
-        // --- Partial rounds loop with latency hiding via InternalLayer16 split ---
+        // --- Partial rounds loop operating directly on state ---
         {
-            let mut split = InternalLayer16::from_packed_field_array(*state);
-
             for r in 0..POSEIDON1_PARTIAL_ROUNDS {
                 // PATH A (high latency): S-box on s0 only.
-                split.s0 = sbox::<FP, 3>(split.s0);
+                state[0] = sbox::<FP, 3>(state[0]);
 
                 // Add scalar round constant (except last round).
                 if r < POSEIDON1_PARTIAL_ROUNDS - 1 {
-                    split.s0 += simd.packed_round_constants[r];
+                    state[0] += simd.packed_round_constants[r];
                 }
 
                 // PATH B (can overlap with S-box): partial dot product on s_hi.
-                let s_hi: &[PackedKB; 15] = unsafe { transmute(&split.s_hi) };
+                let s_hi: &[PackedKB; 15] = unsafe { &*(state.as_ptr().add(1) as *const [PackedKB; 15]) };
                 let first_row = &simd.packed_sparse_first_row[r];
-                let first_row_hi: &[PackedKB; 15] = first_row[1..].try_into().unwrap();
+                let first_row_hi: &[PackedKB; 15] = unsafe { &*(first_row.as_ptr().add(1) as *const [PackedKB; 15]) };
                 let partial_dot = PackedKB::dot_product(s_hi, first_row_hi);
 
                 // SERIAL: complete s0 = first_row[0] * s0 + partial_dot.
-                let s0_val = split.s0;
-                split.s0 = s0_val * first_row[0] + partial_dot;
+                let s0_val = state[0];
+                state[0] = s0_val * first_row[0] + partial_dot;
 
                 // Rank-1 update: s_hi[j] += s0_old * v[j].
                 let v = &simd.packed_sparse_v[r];
-                let s_hi_mut: &mut [PackedKB; 15] = unsafe { transmute(&mut split.s_hi) };
                 for j in 0..15 {
-                    s_hi_mut[j] += s0_val * v[j];
+                    state[j + 1] += s0_val * v[j];
                 }
             }
-
-            *state = unsafe { split.to_packed_field_array() };
         }
 
         // --- Terminal full rounds ---
