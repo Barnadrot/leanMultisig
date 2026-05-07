@@ -108,3 +108,31 @@ where
     }
     state[..OUT].try_into().unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use koala_bear::{KoalaBear, default_koalabear_poseidon1_16};
+    use field::PrimeCharacteristicRing;
+
+    /// Verify hash_slice(D) == hash_rtl_iter(D.iter().rev()) for arbitrary D with valid length.
+    #[test]
+    fn hash_slice_matches_rtl_iter_rate12() {
+        let perm = default_koalabear_poseidon1_16();
+        // 100 = 16 + 12*7, compatible with WIDTH=16, RATE=12
+        let data: Vec<KoalaBear> = (0..100u32).map(|i| KoalaBear::from_u32(i)).collect();
+        let h_slice = hash_slice::<KoalaBear, _, 16, 12, 8>(&perm, &data);
+        let h_rtl = hash_rtl_iter::<KoalaBear, _, _, 16, 12, 8>(&perm, data.iter().rev().copied());
+        assert_eq!(h_slice, h_rtl, "hash_slice and hash_rtl_iter must agree on equivalent inputs");
+    }
+
+    /// Same as above but for the existing RATE=8 case.
+    #[test]
+    fn hash_slice_matches_rtl_iter_rate8() {
+        let perm = default_koalabear_poseidon1_16();
+        let data: Vec<KoalaBear> = (0..64u32).map(|i| KoalaBear::from_u32(i)).collect();
+        let h_slice = hash_slice::<KoalaBear, _, 16, 8, 8>(&perm, &data);
+        let h_rtl = hash_rtl_iter::<KoalaBear, _, _, 16, 8, 8>(&perm, data.iter().rev().copied());
+        assert_eq!(h_slice, h_rtl, "hash_slice and hash_rtl_iter must agree on equivalent inputs (RATE=8)");
+    }
+}

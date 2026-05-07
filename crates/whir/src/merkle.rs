@@ -8,6 +8,7 @@ use field::BasedVectorSpace;
 use field::ExtensionField;
 use field::Field;
 use field::PackedValue;
+use field::PrimeCharacteristicRing;
 use koala_bear::{KoalaBear, QuinticExtensionFieldKB, default_koalabear_poseidon1_16};
 use poly::*;
 
@@ -38,14 +39,14 @@ pub(crate) fn merkle_commit<F: Field, EF: ExtensionField<F>>(
         let effective_base_width = effective_n_cols * dim;
         let base_values = QuinticExtensionFieldKB::flatten_to_base(matrix.values);
         let base_matrix = DenseMatrix::<KoalaBear>::new(base_values, dft_base_width);
-        let tree = build_merkle_tree_koalabear(base_matrix, full_base_width, effective_base_width, dim);
+        let tree = build_merkle_tree_koalabear(base_matrix, full_base_width, effective_base_width);
         let root: [_; DIGEST_ELEMS] = tree.root();
         let root = unsafe { std::mem::transmute_copy::<_, [F; DIGEST_ELEMS]>(&root) };
         let tree = unsafe { std::mem::transmute::<_, RoundMerkleTree<F>>(tree) };
         (root, tree)
     } else if TypeId::of::<(F, EF)>() == TypeId::of::<(KoalaBear, KoalaBear)>() {
         let matrix = unsafe { std::mem::transmute::<_, DenseMatrix<KoalaBear>>(matrix) };
-        let tree = build_merkle_tree_koalabear(matrix, full_n_cols, effective_n_cols, 1);
+        let tree = build_merkle_tree_koalabear(matrix, full_n_cols, effective_n_cols);
         let root: [_; DIGEST_ELEMS] = tree.root();
         let root = unsafe { std::mem::transmute_copy::<_, [F; DIGEST_ELEMS]>(&root) };
         let tree = unsafe { std::mem::transmute::<_, RoundMerkleTree<F>>(tree) };
@@ -61,15 +62,13 @@ pub(crate) fn merkle_commit<F: Field, EF: ExtensionField<F>>(
 const SPONGE_RATE: usize = 12;
 const SPONGE_WIDTH: usize = 16;
 
-/// Pad full_base_width up so that (padded - WIDTH) is divisible by RATE
-/// AND padded is divisible by `dim` (preserving extension-field reconstitution).
+/// Pad up so that (padded - WIDTH) is divisible by RATE. Used only for sponge
+/// alignment; the protocol-visible leaf width stays unpadded.
 #[inline]
-fn padded_full_base_width(full_base_width: usize, dim: usize) -> usize {
-    debug_assert!(dim >= 1);
+fn padded_full_base_width(full_base_width: usize) -> usize {
     let mut padded = full_base_width.max(SPONGE_WIDTH);
-    padded = padded.div_ceil(dim) * dim;
     while !(padded - SPONGE_WIDTH).is_multiple_of(SPONGE_RATE) {
-        padded += dim;
+        padded += 1;
     }
     padded
 }
@@ -79,10 +78,10 @@ fn build_merkle_tree_koalabear(
     leaf: DenseMatrix<KoalaBear>,
     full_base_width: usize,
     effective_base_width: usize,
-    dim: usize,
 ) -> RoundMerkleTree<KoalaBear> {
     let perm = default_koalabear_poseidon1_16();
-    let padded_full_width = padded_full_base_width(full_base_width, dim);
+    // Internal padding for sponge alignment. NOT exposed to the protocol layer.
+    let padded_full_width = padded_full_base_width(full_base_width);
     let n_zero_suffix_rate_chunks = (padded_full_width - effective_base_width) / SPONGE_RATE;
     let first_layer = if n_zero_suffix_rate_chunks >= 2 {
         let scalar_state = symetric::precompute_zero_suffix_state::<KoalaBear, _, SPONGE_WIDTH, SPONGE_RATE, DIGEST_ELEMS>(
@@ -105,10 +104,11 @@ fn build_merkle_tree_koalabear(
         )
     };
     let tree = symetric::merkle::MerkleTree::from_first_layer::<PFPacking<KoalaBear>, _, SPONGE_WIDTH>(&perm, first_layer);
+    // Expose UNPADDED width to the protocol; padding is purely a sponge detail.
     WhirMerkleTree {
         leaf,
         tree,
-        full_leaf_base_width: padded_full_width,
+        full_leaf_base_width: full_base_width,
     }
 }
 
@@ -150,7 +150,10 @@ pub(crate) fn merkle_verify<F: Field, EF: ExtensionField<F>>(
         let merkle_root = unsafe { std::mem::transmute_copy::<_, [KoalaBear; DIGEST_ELEMS]>(&merkle_root) };
         let data = unsafe { std::mem::transmute::<_, Vec<QuinticExtensionFieldKB>>(data) };
         let proof = unsafe { std::mem::transmute::<_, &Vec<[KoalaBear; DIGEST_ELEMS]>>(proof) };
-        let base_data = QuinticExtensionFieldKB::flatten_to_base(data);
+        let mut base_data = QuinticExtensionFieldKB::flatten_to_base(data);
+        // Pad to the sponge-aligned width (matches the prover's internal padding).
+        let padded = padded_full_base_width(base_data.len());
+        base_data.resize(padded, KoalaBear::ZERO);
         symetric::merkle::merkle_verify::<_, _, DIGEST_ELEMS, SPONGE_WIDTH, SPONGE_RATE>(
             &perm,
             &merkle_root,
@@ -163,7 +166,9 @@ pub(crate) fn merkle_verify<F: Field, EF: ExtensionField<F>>(
         let merkle_root = unsafe { std::mem::transmute_copy::<_, [KoalaBear; DIGEST_ELEMS]>(&merkle_root) };
         let data = unsafe { std::mem::transmute::<_, Vec<KoalaBear>>(data) };
         let proof = unsafe { std::mem::transmute::<_, &Vec<[KoalaBear; DIGEST_ELEMS]>>(proof) };
-        let base_data = KoalaBear::flatten_to_base(data);
+        let mut base_data = KoalaBear::flatten_to_base(data);
+        let padded = padded_full_base_width(base_data.len());
+        base_data.resize(padded, KoalaBear::ZERO);
         symetric::merkle::merkle_verify::<_, _, DIGEST_ELEMS, SPONGE_WIDTH, SPONGE_RATE>(
             &perm,
             &merkle_root,
