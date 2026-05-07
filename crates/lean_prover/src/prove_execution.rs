@@ -87,26 +87,33 @@ pub fn prove_execution(
     table_log = table_log.trim_end_matches(" | ").to_string();
     tracing::info!("Trace tables sizes: {}", table_log.magenta());
 
-    // TODO parrallelize
-    let mut memory_acc = F::zero_vec(memory.len());
-    info_span!("Building memory access count").in_scope(|| {
-        for (table, trace) in &traces {
-            for lookup in table.lookups() {
-                for i in &trace.columns[lookup.index] {
-                    for j in 0..lookup.values.len() {
-                        memory_acc[i.to_usize() + j] += F::ONE;
+    // Two independent serial histograms: overlap via rayon::join to use 2 cores.
+    let memory_len = memory.len();
+    let bytecode_padded_size = bytecode.padded_size();
+    let traces_ref = &traces;
+    let (memory_acc, bytecode_acc) = info_span!("Building access counts").in_scope(|| {
+        rayon::join(
+            || {
+                let mut memory_acc = F::zero_vec(memory_len);
+                for (table, trace) in traces_ref {
+                    for lookup in table.lookups() {
+                        for i in &trace.columns[lookup.index] {
+                            for j in 0..lookup.values.len() {
+                                memory_acc[i.to_usize() + j] += F::ONE;
+                            }
+                        }
                     }
                 }
-            }
-        }
-    });
-
-    // // TODO parrallelize
-    let mut bytecode_acc = F::zero_vec(bytecode.padded_size());
-    info_span!("Building bytecode access count").in_scope(|| {
-        for pc in traces[&Table::execution()].columns[COL_PC].iter() {
-            bytecode_acc[pc.to_usize()] += F::ONE;
-        }
+                memory_acc
+            },
+            || {
+                let mut bytecode_acc = F::zero_vec(bytecode_padded_size);
+                for pc in traces_ref[&Table::execution()].columns[COL_PC].iter() {
+                    bytecode_acc[pc.to_usize()] += F::ONE;
+                }
+                bytecode_acc
+            },
+        )
     });
 
     // 1st Commitment
