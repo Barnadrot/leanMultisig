@@ -120,13 +120,13 @@ fn generate_2_full_round<F: Algebra<KoalaBear> + Copy>(
         *state_i += *const_i;
         *state_i = state_i.cube();
     }
-    mds_circ_16(state);
+    mds_fft_16(state);
 
     for (state_i, const_i) in state.iter_mut().zip(round_constants_2.iter()) {
         *state_i += *const_i;
         *state_i = state_i.cube();
     }
-    mds_circ_16(state);
+    mds_fft_16(state);
 
     post_full_round.iter_mut().zip(*state).for_each(|(post, x)| {
         **post = x;
@@ -145,13 +145,13 @@ fn generate_last_2_full_rounds<F: Algebra<KoalaBear> + Copy>(
         *state_i += *const_i;
         *state_i = state_i.cube();
     }
-    mds_circ_16(state);
+    mds_fft_16(state);
 
     for (state_i, const_i) in state.iter_mut().zip(round_constants_2.iter()) {
         *state_i += *const_i;
         *state_i = state_i.cube();
     }
-    mds_circ_16(state);
+    mds_fft_16(state);
 
     // Add inputs to outputs (compression)
     for ((output, state_i), &input_i) in outputs.iter_mut().zip(state).zip(inputs) {
