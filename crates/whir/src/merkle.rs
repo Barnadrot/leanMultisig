@@ -38,14 +38,14 @@ pub(crate) fn merkle_commit<F: Field, EF: ExtensionField<F>>(
         let effective_base_width = effective_n_cols * dim;
         let base_values = QuinticExtensionFieldKB::flatten_to_base(matrix.values);
         let base_matrix = DenseMatrix::<KoalaBear>::new(base_values, dft_base_width);
-        let tree = build_merkle_tree_koalabear(base_matrix, full_base_width, effective_base_width);
+        let tree = build_merkle_tree_koalabear(base_matrix, full_base_width, effective_base_width, dim);
         let root: [_; DIGEST_ELEMS] = tree.root();
         let root = unsafe { std::mem::transmute_copy::<_, [F; DIGEST_ELEMS]>(&root) };
         let tree = unsafe { std::mem::transmute::<_, RoundMerkleTree<F>>(tree) };
         (root, tree)
     } else if TypeId::of::<(F, EF)>() == TypeId::of::<(KoalaBear, KoalaBear)>() {
         let matrix = unsafe { std::mem::transmute::<_, DenseMatrix<KoalaBear>>(matrix) };
-        let tree = build_merkle_tree_koalabear(matrix, full_n_cols, effective_n_cols);
+        let tree = build_merkle_tree_koalabear(matrix, full_n_cols, effective_n_cols, 1);
         let root: [_; DIGEST_ELEMS] = tree.root();
         let root = unsafe { std::mem::transmute_copy::<_, [F; DIGEST_ELEMS]>(&root) };
         let tree = unsafe { std::mem::transmute::<_, RoundMerkleTree<F>>(tree) };
@@ -55,35 +55,60 @@ pub(crate) fn merkle_commit<F: Field, EF: ExtensionField<F>>(
     }
 }
 
+// Sponge rate for Merkle leaf hashing. WIDTH=16 (Poseidon1KoalaBear16) gives
+// capacity = WIDTH - RATE = 4 with RATE=12. See iter 29 WIP analysis for the
+// security tradeoff.
+const SPONGE_RATE: usize = 12;
+const SPONGE_WIDTH: usize = 16;
+
+/// Pad full_base_width up so that (padded - WIDTH) is divisible by RATE
+/// AND padded is divisible by `dim` (preserving extension-field reconstitution).
+#[inline]
+fn padded_full_base_width(full_base_width: usize, dim: usize) -> usize {
+    debug_assert!(dim >= 1);
+    let mut padded = full_base_width.max(SPONGE_WIDTH);
+    padded = padded.div_ceil(dim) * dim;
+    while !(padded - SPONGE_WIDTH).is_multiple_of(SPONGE_RATE) {
+        padded += dim;
+    }
+    padded
+}
+
 #[instrument(name = "build merkle tree", skip_all)]
 fn build_merkle_tree_koalabear(
     leaf: DenseMatrix<KoalaBear>,
     full_base_width: usize,
     effective_base_width: usize,
+    dim: usize,
 ) -> RoundMerkleTree<KoalaBear> {
     let perm = default_koalabear_poseidon1_16();
-    let n_zero_suffix_rate_chunks = (full_base_width - effective_base_width) / 8;
+    let padded_full_width = padded_full_base_width(full_base_width, dim);
+    let n_zero_suffix_rate_chunks = (padded_full_width - effective_base_width) / SPONGE_RATE;
     let first_layer = if n_zero_suffix_rate_chunks >= 2 {
-        let scalar_state = symetric::precompute_zero_suffix_state::<KoalaBear, _, 16, 8, DIGEST_ELEMS>(
+        let scalar_state = symetric::precompute_zero_suffix_state::<KoalaBear, _, SPONGE_WIDTH, SPONGE_RATE, DIGEST_ELEMS>(
             &perm,
             n_zero_suffix_rate_chunks,
         );
-        let packed_state: [PFPacking<KoalaBear>; 16] =
+        let packed_state: [PFPacking<KoalaBear>; SPONGE_WIDTH] =
             std::array::from_fn(|i| PFPacking::<KoalaBear>::from_fn(|_| scalar_state[i]));
-        first_digest_layer_with_initial_state::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(
+        first_digest_layer_with_initial_state::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, SPONGE_WIDTH, SPONGE_RATE>(
             &perm,
             &leaf,
             &packed_state,
             effective_base_width,
         )
     } else {
-        first_digest_layer::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(&perm, &leaf, full_base_width)
+        first_digest_layer::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, SPONGE_WIDTH, SPONGE_RATE>(
+            &perm,
+            &leaf,
+            padded_full_width,
+        )
     };
-    let tree = symetric::merkle::MerkleTree::from_first_layer::<PFPacking<KoalaBear>, _, 16>(&perm, first_layer);
+    let tree = symetric::merkle::MerkleTree::from_first_layer::<PFPacking<KoalaBear>, _, SPONGE_WIDTH>(&perm, first_layer);
     WhirMerkleTree {
         leaf,
         tree,
-        full_leaf_base_width: full_base_width,
+        full_leaf_base_width: padded_full_width,
     }
 }
 
@@ -126,7 +151,7 @@ pub(crate) fn merkle_verify<F: Field, EF: ExtensionField<F>>(
         let data = unsafe { std::mem::transmute::<_, Vec<QuinticExtensionFieldKB>>(data) };
         let proof = unsafe { std::mem::transmute::<_, &Vec<[KoalaBear; DIGEST_ELEMS]>>(proof) };
         let base_data = QuinticExtensionFieldKB::flatten_to_base(data);
-        symetric::merkle::merkle_verify::<_, _, DIGEST_ELEMS, 16, 8>(
+        symetric::merkle::merkle_verify::<_, _, DIGEST_ELEMS, SPONGE_WIDTH, SPONGE_RATE>(
             &perm,
             &merkle_root,
             log_max_height,
@@ -139,7 +164,7 @@ pub(crate) fn merkle_verify<F: Field, EF: ExtensionField<F>>(
         let data = unsafe { std::mem::transmute::<_, Vec<KoalaBear>>(data) };
         let proof = unsafe { std::mem::transmute::<_, &Vec<[KoalaBear; DIGEST_ELEMS]>>(proof) };
         let base_data = KoalaBear::flatten_to_base(data);
-        symetric::merkle::merkle_verify::<_, _, DIGEST_ELEMS, 16, 8>(
+        symetric::merkle::merkle_verify::<_, _, DIGEST_ELEMS, SPONGE_WIDTH, SPONGE_RATE>(
             &perm,
             &merkle_root,
             log_max_height,
