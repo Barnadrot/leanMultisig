@@ -211,11 +211,6 @@ impl<F: Clone + Copy + Default + Send + Sync, M: Matrix<F>, const DIGEST_ELEMS: 
     }
 }
 
-// Number of SIMD sponge absorptions to fuse into a single parallel task.
-// Per-task work scales linearly with BATCH; larger BATCH amortizes rayon
-// scheduling overhead when each individual sponge call is small.
-const FIRST_LAYER_BATCH: usize = 4;
-
 #[instrument(name = "first digest layer", level = "debug", skip_all)]
 fn first_digest_layer<P, Perm, M, const DIGEST_ELEMS: usize, const WIDTH: usize, const RATE: usize>(
     perm: &Perm,
@@ -236,48 +231,18 @@ where
 
     let mut digests = unsafe { uninitialized_vec(height) };
 
-    let big_chunk_size = width * FIRST_LAYER_BATCH;
-    let big_chunks_count = height / big_chunk_size;
-    let bulk_end = big_chunks_count * big_chunk_size;
-
-    if big_chunks_count > 0 {
-        digests[0..bulk_end]
-            .par_chunks_exact_mut(big_chunk_size)
-            .enumerate()
-            .for_each(|(big_i, big_chunk)| {
-                for sub in 0..FIRST_LAYER_BATCH {
-                    let i = big_i * FIRST_LAYER_BATCH + sub;
-                    let first_row = i * width;
-                    let rtl_iter = matrix
-                        .vertically_packed_row_rtl::<P>(first_row, matrix_width, n_trailing_zeros);
-                    let packed_digest: [P; DIGEST_ELEMS] =
-                        symetric::hash_rtl_iter::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
-                            perm, rtl_iter,
-                        );
-                    let sub_chunk = &mut big_chunk[sub * width..(sub + 1) * width];
-                    for (dst, src) in sub_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                        *dst = src;
-                    }
-                }
-            });
-    }
-
-    if bulk_end < height {
-        digests[bulk_end..]
-            .par_chunks_exact_mut(width)
-            .enumerate()
-            .for_each(|(rel_i, digests_chunk)| {
-                let i = big_chunks_count * FIRST_LAYER_BATCH + rel_i;
-                let first_row = i * width;
-                let rtl_iter =
-                    matrix.vertically_packed_row_rtl::<P>(first_row, matrix_width, n_trailing_zeros);
-                let packed_digest: [P; DIGEST_ELEMS] =
-                    symetric::hash_rtl_iter::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(perm, rtl_iter);
-                for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                    *dst = src;
-                }
-            });
-    }
+    digests
+        .par_chunks_exact_mut(width)
+        .enumerate()
+        .for_each(|(i, digests_chunk)| {
+            let first_row = i * width;
+            let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, matrix_width, n_trailing_zeros);
+            let packed_digest: [P; DIGEST_ELEMS] =
+                symetric::hash_rtl_iter::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(perm, rtl_iter);
+            for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
+                *dst = src;
+            }
+        });
 
     digests
 }
@@ -302,54 +267,22 @@ where
 
     let mut digests = unsafe { uninitialized_vec(height) };
 
-    let big_chunk_size = width * FIRST_LAYER_BATCH;
-    let big_chunks_count = height / big_chunk_size;
-    let bulk_end = big_chunks_count * big_chunk_size;
-
-    if big_chunks_count > 0 {
-        digests[0..bulk_end]
-            .par_chunks_exact_mut(big_chunk_size)
-            .enumerate()
-            .for_each(|(big_i, big_chunk)| {
-                for sub in 0..FIRST_LAYER_BATCH {
-                    let i = big_i * FIRST_LAYER_BATCH + sub;
-                    let first_row = i * width;
-                    let rtl_iter =
-                        matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
-                    let packed_digest: [P; DIGEST_ELEMS] =
-                        symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
-                            perm,
-                            rtl_iter,
-                            packed_initial_state,
-                        );
-                    let sub_chunk = &mut big_chunk[sub * width..(sub + 1) * width];
-                    for (dst, src) in sub_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                        *dst = src;
-                    }
-                }
-            });
-    }
-
-    if bulk_end < height {
-        digests[bulk_end..]
-            .par_chunks_exact_mut(width)
-            .enumerate()
-            .for_each(|(rel_i, digests_chunk)| {
-                let i = big_chunks_count * FIRST_LAYER_BATCH + rel_i;
-                let first_row = i * width;
-                let rtl_iter =
-                    matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
-                let packed_digest: [P; DIGEST_ELEMS] =
-                    symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
-                        perm,
-                        rtl_iter,
-                        packed_initial_state,
-                    );
-                for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                    *dst = src;
-                }
-            });
-    }
+    digests
+        .par_chunks_exact_mut(width)
+        .enumerate()
+        .for_each(|(i, digests_chunk)| {
+            let first_row = i * width;
+            let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
+            let packed_digest: [P; DIGEST_ELEMS] =
+                symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
+                    perm,
+                    rtl_iter,
+                    packed_initial_state,
+                );
+            for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
+                *dst = src;
+            }
+        });
 
     digests
 }
