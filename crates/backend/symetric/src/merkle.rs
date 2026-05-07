@@ -56,6 +56,11 @@ where
     P::Value: Default + Copy,
     Comp: Compression<[P::Value; WIDTH]> + Compression<[P; WIDTH]>,
 {
+    // Number of SIMD compresses to fuse into a single parallel task.
+    // Each SIMD compress is ~1.5K cycles; with BATCH=4 the per-task work is
+    // ~6K cycles, large enough to amortize rayon scheduling overhead.
+    const BATCH: usize = 4;
+
     let width = P::WIDTH;
     let next_len_padded = if prev_layer.len() == 2 {
         1
@@ -67,20 +72,50 @@ where
     let default_digest = [P::Value::default(); DIGEST_ELEMS];
     let mut next_digests = vec![default_digest; next_len_padded];
 
-    next_digests[0..next_len]
-        .par_chunks_exact_mut(width)
-        .enumerate()
-        .for_each(|(i, digests_chunk)| {
-            let first_row = i * width;
-            let left = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k)][j]));
-            let right = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k) + 1][j]));
-            let packed_digest = crate::compress(comp, [left, right]);
-            for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                *dst = src;
-            }
-        });
+    let big_chunk_size = width * BATCH;
+    let big_chunks_count = next_len / big_chunk_size;
+    let bulk_end = big_chunks_count * big_chunk_size;
+    let mid_end = next_len / width * width;
 
-    for i in (next_len / width * width)..next_len {
+    if big_chunks_count > 0 {
+        next_digests[0..bulk_end]
+            .par_chunks_exact_mut(big_chunk_size)
+            .enumerate()
+            .for_each(|(big_i, big_chunk)| {
+                for sub in 0..BATCH {
+                    let i = big_i * BATCH + sub;
+                    let first_row = i * width;
+                    let left =
+                        array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k)][j]));
+                    let right =
+                        array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k) + 1][j]));
+                    let packed_digest = crate::compress(comp, [left, right]);
+                    let sub_chunk = &mut big_chunk[sub * width..(sub + 1) * width];
+                    for (dst, src) in sub_chunk.iter_mut().zip(unpack_array(packed_digest)) {
+                        *dst = src;
+                    }
+                }
+            });
+    }
+
+    if mid_end > bulk_end {
+        next_digests[bulk_end..mid_end]
+            .par_chunks_exact_mut(width)
+            .enumerate()
+            .for_each(|(rel_i, digests_chunk)| {
+                let i = big_chunks_count * BATCH + rel_i;
+                let first_row = i * width;
+                let left = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k)][j]));
+                let right =
+                    array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k) + 1][j]));
+                let packed_digest = crate::compress(comp, [left, right]);
+                for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
+                    *dst = src;
+                }
+            });
+    }
+
+    for i in mid_end..next_len {
         let left = prev_layer[2 * i];
         let right = prev_layer[2 * i + 1];
         next_digests[i] = crate::compress(comp, [left, right]);
