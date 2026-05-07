@@ -82,7 +82,19 @@ fn build_merkle_tree_koalabear(
     let perm = default_koalabear_poseidon1_16();
     // Internal padding for sponge alignment. NOT exposed to the protocol layer.
     let padded_full_width = padded_full_base_width(full_base_width);
-    let n_zero_suffix_rate_chunks = (padded_full_width - effective_base_width) / SPONGE_RATE;
+    // n_zero_suffix_rate_chunks = number of "zero RATE-chunks" the precompute
+    // must cover so that the remaining iter (effective + n_pad elements,
+    // where n_pad rounds effective up to a multiple of RATE) takes the sponge
+    // exactly to padded_full_width. precompute(n) does n-1 compresses,
+    // absorbing 16 zeros initially + (n-2)*RATE more = WIDTH + (n-2)*RATE.
+    // Total: WIDTH + (n-2)*RATE + (effective + n_pad) = padded.
+    // Solving: n = 2 + (padded - WIDTH - effective - n_pad) / RATE.
+    let n_pad = (SPONGE_RATE - effective_base_width % SPONGE_RATE) % SPONGE_RATE;
+    let n_zero_suffix_rate_chunks = if padded_full_width >= SPONGE_WIDTH + effective_base_width + n_pad {
+        2 + (padded_full_width - SPONGE_WIDTH - effective_base_width - n_pad) / SPONGE_RATE
+    } else {
+        0
+    };
     let first_layer = if n_zero_suffix_rate_chunks >= 2 {
         let scalar_state = symetric::precompute_zero_suffix_state::<KoalaBear, _, SPONGE_WIDTH, SPONGE_RATE, DIGEST_ELEMS>(
             &perm,
