@@ -364,7 +364,8 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
     let mut state: [_; WIDTH] = local.inputs;
 
     let initial_constants = poseidon1_initial_constants();
-    for round in 0..HALF_INITIAL_FULL_ROUNDS {
+    // All initial full-round pairs except the last commit a post-MDS witness.
+    for round in 0..HALF_INITIAL_FULL_ROUNDS - 1 {
         eval_2_full_rounds_16(
             &mut state,
             &local.beginning_full_rounds[round],
@@ -373,17 +374,36 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
             builder,
         );
     }
+    // Last initial full-round pair: skip the final MDS so the witness column
+    // captures post-cube state. The skipped MDS, the partial-round add_first_rc,
+    // and the partial-round m_i multiply are folded into a single dense
+    // (m_i × MDS) × state + (m_i × first_rc) below — saves one MDS per row.
+    eval_2_full_rounds_16_no_final_mds(
+        &mut state,
+        &local.beginning_full_rounds[HALF_INITIAL_FULL_ROUNDS - 1],
+        &initial_constants[2 * (HALF_INITIAL_FULL_ROUNDS - 1)],
+        &initial_constants[2 * (HALF_INITIAL_FULL_ROUNDS - 1) + 1],
+        builder,
+    );
 
     // --- Sparse partial rounds ---
-    // Transition: add first-round constants, multiply by m_i
     builder.low_degree_block(&mut state, |b, state| {
         let state: &mut [AB::IF; WIDTH] = state.try_into().unwrap();
 
-        let frc = poseidon1_sparse_first_round_constants();
-        for (s, &c) in state.iter_mut().zip(frc.iter()) {
-            add_kb(s, c);
+        // Fused: state := (m_i × MDS) × state + (m_i × first_rc). Replaces
+        // the last initial MDS + add-first-rc + m_i triplet with a single
+        // dense multiply + bias add.
+        let fused = poseidon1_fused_mi_mds();
+        let bias = poseidon1_fused_bias();
+        let input = *state;
+        for i in 0..WIDTH {
+            let mut acc = AB::IF::ZERO;
+            for j in 0..WIDTH {
+                acc += mul_kb(input[j], fused[i][j]);
+            }
+            add_kb(&mut acc, bias[i]);
+            state[i] = acc;
         }
-        dense_mat_vec_air_16(poseidon1_sparse_m_i(), state);
 
         let first_rows = poseidon1_sparse_first_row();
         let v_vecs = poseidon1_sparse_v();
@@ -451,6 +471,34 @@ fn eval_2_full_rounds_16<AB: AirBuilder>(
         *s = s.cube();
     }
     mds_air_16(state);
+    for (state_i, post_i) in state.iter_mut().zip(post_full_round) {
+        builder.assert_eq(*state_i, *post_i);
+        *state_i = *post_i;
+    }
+}
+
+/// Same as [`eval_2_full_rounds_16`] but skips the final MDS multiply.
+/// Used for the last initial full-round pair so the committed witness captures
+/// post-cube state; the skipped MDS is folded into the partial-round transition
+/// via the precomputed `(m_i × MDS)` matrix.
+#[inline]
+fn eval_2_full_rounds_16_no_final_mds<AB: AirBuilder>(
+    state: &mut [AB::IF; WIDTH],
+    post_full_round: &[AB::IF; WIDTH],
+    round_constants_1: &[F; WIDTH],
+    round_constants_2: &[F; WIDTH],
+    builder: &mut AB,
+) {
+    for (s, r) in state.iter_mut().zip(round_constants_1.iter()) {
+        add_kb(s, *r);
+        *s = s.cube();
+    }
+    mds_air_16(state);
+    for (s, r) in state.iter_mut().zip(round_constants_2.iter()) {
+        add_kb(s, *r);
+        *s = s.cube();
+    }
+    // Final MDS intentionally omitted — see caller.
     for (state_i, post_i) in state.iter_mut().zip(post_full_round) {
         builder.assert_eq(*state_i, *post_i);
         *state_i = *post_i;

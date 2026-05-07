@@ -47,25 +47,38 @@ pub(super) fn generate_trace_rows_for_perm<F: Algebra<KoalaBear> + Copy>(perm: &
 
     // No initial linear layer for Poseidon1 (unlike Poseidon2)
 
+    // All initial full-round pairs except the last commit a post-MDS witness.
+    let n_initial = perm.beginning_full_rounds.len();
+    let init_pairs: Vec<_> = poseidon1_initial_constants().chunks_exact(2).collect();
     for (full_round, constants) in perm
         .beginning_full_rounds
         .iter_mut()
-        .zip(poseidon1_initial_constants().chunks_exact(2))
+        .take(n_initial - 1)
+        .zip(init_pairs.iter().take(n_initial - 1))
     {
         generate_2_full_round(&mut state, full_round, &constants[0], &constants[1]);
     }
+    // Last initial pair: skip the final MDS so the witness column captures
+    // post-cube state (matches the AIR's eval_2_full_rounds_16_no_final_mds).
+    {
+        let last = n_initial - 1;
+        let constants = init_pairs[last];
+        generate_2_full_round_no_final_mds(
+            &mut state,
+            &mut perm.beginning_full_rounds[last],
+            &constants[0],
+            &constants[1],
+        );
+    }
 
     // --- Sparse partial rounds ---
-    // Transition: add first-round constants, multiply by m_i
-    let frc = poseidon1_sparse_first_round_constants();
-    for (s, &c) in state.iter_mut().zip(frc.iter()) {
-        *s += c;
-    }
-    let m_i = poseidon1_sparse_m_i();
-    let input_for_mi = state;
+    // Transition: state := (m_i × MDS) × state + (m_i × first_rc).
+    let fused = poseidon1_fused_mi_mds();
+    let bias = poseidon1_fused_bias();
+    let input_for_fused = state;
     for i in 0..WIDTH {
-        let row: [F; WIDTH] = m_i[i].map(F::from);
-        state[i] = F::dot_product(&input_for_mi, &row);
+        let row: [F; WIDTH] = fused[i].map(F::from);
+        state[i] = F::dot_product(&input_for_fused, &row) + bias[i];
     }
 
     let first_rows = poseidon1_sparse_first_row();
@@ -127,6 +140,34 @@ fn generate_2_full_round<F: Algebra<KoalaBear> + Copy>(
         *state_i = state_i.cube();
     }
     mds_circ_16(state);
+
+    post_full_round.iter_mut().zip(*state).for_each(|(post, x)| {
+        **post = x;
+    });
+}
+
+/// Same as [`generate_2_full_round`] but skips the final MDS multiply.
+/// Used for the last initial full-round pair so the committed witness column
+/// captures post-cube state instead of post-MDS state. The skipped MDS is
+/// folded into the partial-round transition via `poseidon1_fused_mi_mds`.
+#[inline]
+fn generate_2_full_round_no_final_mds<F: Algebra<KoalaBear> + Copy>(
+    state: &mut [F; WIDTH],
+    post_full_round: &mut [&mut F; WIDTH],
+    round_constants_1: &[KoalaBear; WIDTH],
+    round_constants_2: &[KoalaBear; WIDTH],
+) {
+    for (state_i, const_i) in state.iter_mut().zip(round_constants_1) {
+        *state_i += *const_i;
+        *state_i = state_i.cube();
+    }
+    mds_circ_16(state);
+
+    for (state_i, const_i) in state.iter_mut().zip(round_constants_2.iter()) {
+        *state_i += *const_i;
+        *state_i = state_i.cube();
+    }
+    // Final MDS intentionally omitted — see caller.
 
     post_full_round.iter_mut().zip(*state).for_each(|(post, x)| {
         **post = x;
