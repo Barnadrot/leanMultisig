@@ -67,23 +67,9 @@ where
     N: PrimeCharacteristicRing + Copy,
     T: Algebra<N> + Algebra<T> + Copy,
 {
-    // Each `sumcheck_quadratic((a0,a1),(b0,b1))` computes `(b0*a0, (b1-b0)*(a1-a0))`.
-    // Across the three calls the deltas dl.1-dl.0 and dr.1-dr.0 each appear twice.
-    // The compiler does not CSE across the three inline expansions of
-    // `sumcheck_quadratic`, so factor by hand. T*N is supported via Algebra<N> on T;
-    // N*T is not, hence the multiplication ordering below.
-    let delta_dl = dl.1 - dl.0;
-    let delta_dr = dr.1 - dr.0;
-    let delta_nl = nl.1 - nl.0;
-    let delta_nr = nr.1 - nr.0;
-
-    let c0_den = dr.0 * dl.0;
-    let c2_den = delta_dr * delta_dl;
-    let c0_a = dr.0 * nl.0;
-    let c2_a = delta_dr * delta_nl;
-    let c0_b = dl.0 * nr.0;
-    let c2_b = delta_dl * delta_nr;
-
+    let (c0_den, c2_den) = sumcheck_quadratic(((&dl.0, &dl.1), (&dr.0, &dr.1)));
+    let (c0_a, c2_a) = sumcheck_quadratic(((&nl.0, &nl.1), (&dr.0, &dr.1)));
+    let (c0_b, c2_b) = sumcheck_quadratic(((&nr.0, &nr.1), (&dl.0, &dl.1)));
     RoundCoeffs {
         c0_den,
         c2_den,
@@ -458,32 +444,20 @@ where
             let eq_o: EF = eq_outer.get(c).copied().unwrap_or(EF::ONE);
             let mut local = RoundCoeffs::<EFPacking<EF>>::zero();
             for i in 0..in_eighth {
-                // Compute the four (side, c) folded values into locals so
-                // pair_coeffs reads them from registers — sidestepping the
-                // store/reload through nn_c/nd_c that the compiler cannot
-                // elide through &mut [EFPacking].
-                let mut nn_local: [EFPacking<EF>; 4] = [EFPacking::<EF>::ZERO; 4];
-                let mut nd_local: [EFPacking<EF>; 4] = [EFPacking::<EF>::ZERO; 4];
-                let mut k = 0;
                 for side in 0..2 {
                     for c in 0..2 {
                         let lo = i + side * in_half + c * in_eighth;
                         let hi = lo + in_quarter;
                         let out = i + side * out_half + c * out_quarter;
-                        let nn_val = prev_r_packed * (n_c[hi] - n_c[lo]) + n_c[lo];
-                        let nd_val = d_c[lo] + (d_c[hi] - d_c[lo]) * prev_r;
-                        nn_c[out] = nn_val;
-                        nd_c[out] = nd_val;
-                        nn_local[k] = nn_val;
-                        nd_local[k] = nd_val;
-                        k += 1;
+                        nn_c[out] = prev_r_packed * (n_c[hi] - n_c[lo]) + n_c[lo];
+                        nd_c[out] = d_c[lo] + (d_c[hi] - d_c[lo]) * prev_r;
                     }
                 }
                 let round = pair_coeffs::<EFPacking<EF>, EFPacking<EF>>(
-                    (nn_local[0], nn_local[1]),
-                    (nn_local[2], nn_local[3]),
-                    (nd_local[0], nd_local[1]),
-                    (nd_local[2], nd_local[3]),
+                    (nn_c[i], nn_c[i + out_quarter]),
+                    (nn_c[i + out_half], nn_c[i + out_half + out_quarter]),
+                    (nd_c[i], nd_c[i + out_quarter]),
+                    (nd_c[i + out_half], nd_c[i + out_half + out_quarter]),
                 );
                 local += round * eq_within[i];
             }
