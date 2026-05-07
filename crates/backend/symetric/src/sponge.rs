@@ -2,22 +2,21 @@
 
 use crate::Compression;
 
-// IV should have been added to data when necessary (typically: when the length of the data beeing hashed is not constant).
-// Sponge construction with capacity = WIDTH - RATE.
-// Constraint: data.len() >= WIDTH and (data.len() - WIDTH) is a multiple of RATE.
+// IV should have been added to data when necessary (typically: when the length of the data beeing hashed is not constant). Maybe we should re-add IV all the time for simplicity?
+// assumes data length is a multiple of RATE (= 8 in practice).
 pub fn hash_slice<T, Comp, const WIDTH: usize, const RATE: usize, const OUT: usize>(comp: &Comp, data: &[T]) -> [T; OUT]
 where
     T: Default + Copy,
     Comp: Compression<[T; WIDTH]>,
 {
-    debug_assert!(OUT <= WIDTH);
-    debug_assert!(RATE <= WIDTH);
-    debug_assert!(data.len() >= WIDTH);
-    debug_assert!((data.len() - WIDTH).is_multiple_of(RATE));
+    debug_assert!(RATE == OUT);
+    debug_assert!(WIDTH == OUT + RATE);
+    debug_assert!(data.len().is_multiple_of(RATE));
+    let n_chunks = data.len() / RATE;
+    debug_assert!(n_chunks >= 2);
     let mut state: [T; WIDTH] = data[data.len() - WIDTH..].try_into().unwrap();
     comp.compress_mut(&mut state);
-    let n_remaining_chunks = (data.len() - WIDTH) / RATE;
-    for chunk_idx in (0..n_remaining_chunks).rev() {
+    for chunk_idx in (0..n_chunks - 2).rev() {
         let offset = chunk_idx * RATE;
         state[WIDTH - RATE..].copy_from_slice(&data[offset..offset + RATE]);
         comp.compress_mut(&mut state);
@@ -25,8 +24,7 @@ where
     state[..OUT].try_into().unwrap()
 }
 
-/// Precompute sponge state after `n_zero_chunks - 1` zero compresses
-/// (1 for initial WIDTH zeros + (n-2) RATE-zero absorbs).
+/// Precompute sponge state after absorbing `n_zero_chunks` all-zero RATE-chunks.
 pub fn precompute_zero_suffix_state<T, Comp, const WIDTH: usize, const RATE: usize, const OUT: usize>(
     comp: &Comp,
     n_zero_chunks: usize,
@@ -35,8 +33,8 @@ where
     T: Default + Copy,
     Comp: Compression<[T; WIDTH]>,
 {
-    debug_assert!(OUT <= WIDTH);
-    debug_assert!(RATE <= WIDTH);
+    debug_assert!(RATE == OUT);
+    debug_assert!(WIDTH == OUT + RATE);
     debug_assert!(n_zero_chunks >= 2);
     let mut state = [T::default(); WIDTH];
     comp.compress_mut(&mut state);
@@ -60,8 +58,8 @@ where
     Comp: Compression<[T; WIDTH]>,
     I: IntoIterator<Item = T>,
 {
-    debug_assert!(OUT <= WIDTH);
-    debug_assert!(RATE <= WIDTH);
+    debug_assert!(RATE == OUT);
+    debug_assert!(WIDTH == OUT + RATE);
     let mut state = [T::default(); WIDTH];
     let mut iter = rtl_iter.into_iter();
     for pos in (0..WIDTH).rev() {
