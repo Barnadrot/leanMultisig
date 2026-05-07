@@ -54,7 +54,6 @@ def batch_hash_slice_rtl_const(num_queries, all_data_to_hash, all_resulting_hash
     return
 
 
-@inline
 def slice_hash_rtl(data, num_chunks):
     """RATE=12 sponge over data of length num_chunks * 8 base elements.
     Pads internally so that the absorbed length is 16 + 12*k (sponge-aligned),
