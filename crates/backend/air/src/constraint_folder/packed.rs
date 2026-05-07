@@ -3,7 +3,7 @@ use field::*;
 use poly::*;
 
 #[derive(Debug)]
-pub struct ConstraintFolderPacked<'a, IF, EF: ExtensionField<PF<EF>>, ExtraData: AlphaPowers<EF>> {
+pub struct ConstraintFolderPacked<'a, IF, EF: ExtensionField<PF<EF>>, ExtraData: AlphaPowers<EF> + AlphaPowersPacked<EF>> {
     pub up: &'a [IF],
     pub down: &'a [IF],
     pub extra_data: &'a ExtraData,
@@ -19,7 +19,7 @@ impl<'a, IF, EF, ExtraData> ConstraintFolderPacked<'a, IF, EF, ExtraData>
 where
     EF: ExtensionField<PF<EF>>,
     EFPacking<EF>: PrimeCharacteristicRing,
-    ExtraData: AlphaPowers<EF>,
+    ExtraData: AlphaPowers<EF> + AlphaPowersPacked<EF>,
 {
     pub fn new(up: &'a [IF], down: &'a [IF], extra_data: &'a ExtraData) -> Self {
         Self {
@@ -41,7 +41,7 @@ where
     IF: Algebra<PFPacking<EF>> + 'static,
     EF: Field + ExtensionField<PF<EF>>,
     EFPacking<EF>: PrimeCharacteristicRing + Mul<IF, Output = EFPacking<EF>> + Add<IF, Output = EFPacking<EF>>,
-    ExtraData: AlphaPowers<EF>,
+    ExtraData: AlphaPowers<EF> + AlphaPowersPacked<EF>,
 {
     type F = PFPacking<EF>;
     type IF = IF;
@@ -59,22 +59,22 @@ where
 
     #[inline]
     fn assert_zero(&mut self, x: IF) {
-        let alpha_power = self.extra_data.alpha_powers()[self.constraint_index];
-        self.accumulator += EFPacking::<EF>::from(alpha_power) * x;
+        let alpha_power_packed = self.extra_data.alpha_powers_packed()[self.constraint_index];
+        self.accumulator += alpha_power_packed * x;
         self.constraint_index += 1;
     }
 
     #[inline]
     fn assert_zero_ef(&mut self, x: EFPacking<EF>) {
-        let alpha_power = self.extra_data.alpha_powers()[self.constraint_index];
-        self.accumulator += EFPacking::<EF>::from(alpha_power) * x;
+        let alpha_power_packed = self.extra_data.alpha_powers_packed()[self.constraint_index];
+        self.accumulator += alpha_power_packed * x;
         self.constraint_index += 1;
     }
 
     #[inline]
     fn assert_eq_low(&mut self, x: IF, y: IF) {
-        let alpha_power = self.extra_data.alpha_powers()[self.constraint_index];
-        let contrib = EFPacking::<EF>::from(alpha_power) * (x - y);
+        let alpha_power_packed = self.extra_data.alpha_powers_packed()[self.constraint_index];
+        let contrib = alpha_power_packed * (x - y);
         self.accumulator += contrib;
         self.accumulator_low += contrib;
         self.constraint_index += 1;
