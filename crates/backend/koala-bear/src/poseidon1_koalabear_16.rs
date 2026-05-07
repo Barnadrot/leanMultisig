@@ -500,15 +500,6 @@ struct Precomputed {
     /// Used by `mds_fft_16` to compute the circulant MDS via FFT.
     lambda_over_16: [KoalaBear; 16],
 
-    // --- Fused (m_i × MDS) for the last initial full round + partial transition ---
-    /// `fused_mi_mds = m_i × MDS`. Lets AIR / trace-gen replace the last
-    /// initial full round's MDS plus the partial-round transition's m_i with a
-    /// single dense multiply.
-    fused_mi_mds: [[KoalaBear; 16]; 16],
-    /// `fused_bias = m_i × first_round_constants`. Replaces the explicit
-    /// `state += first_round_constants` step before the partial transition.
-    fused_bias: [KoalaBear; 16],
-
     // --- SIMD pre-packed constants (NEON / AVX2 / AVX512) ---
     #[cfg(any(
         all(target_arch = "aarch64", target_feature = "neon"),
@@ -610,12 +601,6 @@ fn precomputed() -> &'static Precomputed {
             lambda_br.map(|l| l * inv16)
         };
 
-        // --- Fused (m_i × MDS) and (m_i × first_round_constants) ---
-        // Lets AIR / trace gen merge the last initial-full-round MDS with the
-        // partial-round transition into a single dense multiply + bias add.
-        let fused_mi_mds = matrix_mul_16(&m_i, &mds);
-        let fused_bias = matrix_vec_mul_16(&m_i, &first_round_constants);
-
         // --- SIMD pre-packed constants (same layout for NEON / AVX2 / AVX512) ---
         #[cfg(any(
             all(target_arch = "aarch64", target_feature = "neon"),
@@ -648,9 +633,12 @@ fn precomputed() -> &'static Precomputed {
             let packed_round_constants: [PackedKB; POSEIDON1_PARTIAL_ROUNDS - 1] =
                 core::array::from_fn(|r| pack(scalar_round_constants[r]));
 
-            // Fused matrix and bias are computed once at the top level (above)
-            // and reused here as packed forms.
+            // Fused matrix: (m_i * MDS), replaces last initial FFT MDS + add first_rc + m_i.
+            let fused_mi_mds = matrix_mul_16(&m_i, &mds);
             let packed_fused_mi_mds: [[PackedKB; 16]; 16] = core::array::from_fn(|i| fused_mi_mds[i].map(pack));
+
+            // Fused bias: m_i * first_round_constants.
+            let fused_bias = matrix_vec_mul_16(&m_i, &first_round_constants);
             let packed_fused_bias: [PackedKB; 16] = fused_bias.map(pack);
 
             // Pre-packed eigenvalues * INV16 (absorbs /16 into eigenvalues).
@@ -677,8 +665,6 @@ fn precomputed() -> &'static Precomputed {
             sparse_v,
             sparse_round_constants: scalar_round_constants,
             lambda_over_16,
-            fused_mi_mds,
-            fused_bias,
             #[cfg(any(
                 all(target_arch = "aarch64", target_feature = "neon"),
                 all(target_arch = "x86_64", target_feature = "avx2")
@@ -686,20 +672,6 @@ fn precomputed() -> &'static Precomputed {
             simd,
         }
     })
-}
-
-/// `m_i × MDS`: fused dense matrix used by AIR / trace gen to combine the last
-/// initial-full-round MDS with the partial-round-transition `m_i` multiply.
-#[inline(always)]
-pub fn poseidon1_fused_mi_mds() -> &'static [[KoalaBear; 16]; 16] {
-    &precomputed().fused_mi_mds
-}
-
-/// `m_i × first_round_constants`: fused bias used in tandem with
-/// [`poseidon1_fused_mi_mds`].
-#[inline(always)]
-pub fn poseidon1_fused_bias() -> &'static [KoalaBear; 16] {
-    &precomputed().fused_bias
 }
 
 /// Eigenvalues of the circulant MDS matrix, divided by 16 (the unnormalized
