@@ -383,19 +383,7 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
         for (s, &c) in state.iter_mut().zip(frc.iter()) {
             add_kb(s, c);
         }
-        // m_i is identity-like at the (0,*) row and (*,0) column:
-        //   m_i[0]    = [1, 0, ..., 0]      → state[0] is unchanged
-        //   m_i[i][0] = 0   for i >= 1      → skip j=0 in the dot products
-        // Save 16 (row 0) + 15 (col 0) = 31 mults vs the generic 16x16 dense (256).
-        let m_i = poseidon1_sparse_m_i();
-        let input = *state;
-        for i in 1..WIDTH {
-            let mut acc = AB::IF::ZERO;
-            for j in 1..WIDTH {
-                acc += mul_kb(input[j], m_i[i][j]);
-            }
-            state[i] = acc;
-        }
+        dense_mat_vec_air_16(poseidon1_sparse_m_i(), state);
 
         let first_rows = poseidon1_sparse_first_row();
         let v_vecs = poseidon1_sparse_v();
