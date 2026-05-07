@@ -87,18 +87,27 @@ pub fn prove_execution(
     table_log = table_log.trim_end_matches(" | ").to_string();
     tracing::info!("Trace tables sizes: {}", table_log.magenta());
 
-    // TODO parrallelize
-    let mut memory_acc = F::zero_vec(memory.len());
-    info_span!("Building memory access count").in_scope(|| {
+    let memory_acc = info_span!("Building memory access count").in_scope(|| {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let counts = vec![0u32; memory.len()];
+        // SAFETY: AtomicU32 is repr(transparent) over u32 with the same layout/alignment.
+        // The &[AtomicU32] view aliases the Vec<u32> for the duration of the parallel block;
+        // after the block the Vec<u32> is consumed, so no outstanding references remain.
+        let counts_atomic: &[AtomicU32] =
+            unsafe { std::slice::from_raw_parts(counts.as_ptr() as *const AtomicU32, counts.len()) };
         for (table, trace) in &traces {
             for lookup in table.lookups() {
-                for i in &trace.columns[lookup.index] {
-                    for j in 0..lookup.values.len() {
-                        memory_acc[i.to_usize() + j] += F::ONE;
+                let n_values = lookup.values.len();
+                let col = &trace.columns[lookup.index];
+                col.par_iter().for_each(|i| {
+                    let base = i.to_usize();
+                    for j in 0..n_values {
+                        counts_atomic[base + j].fetch_add(1, Ordering::Relaxed);
                     }
-                }
+                });
             }
         }
+        counts.into_par_iter().map(|c| F::from_usize(c as usize)).collect::<Vec<F>>()
     });
 
     // // TODO parrallelize
