@@ -29,7 +29,7 @@ impl<EF, A> SumcheckComputation<EF> for A
 where
     EF: ExtensionField<PF<EF>>,
     A: Send + Sync + Air,
-    A::ExtraData: AlphaPowers<EF> + AlphaPowersPacked<EF>,
+    A::ExtraData: AlphaPowers<EF>,
 {
     type ExtraData = A::ExtraData;
 

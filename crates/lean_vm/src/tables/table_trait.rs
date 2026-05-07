@@ -77,22 +77,16 @@ pub struct ExtraDataForBuses<EF: ExtensionField<PF<EF>>> {
     pub bus_beta: EF,
     pub bus_beta_packed: EFPacking<EF>,
     pub alpha_powers: Vec<EF>,
-    /// Pre-broadcast packed alpha powers, in lockstep with `alpha_powers`.
-    /// Lets `ConstraintFolderPacked::assert_zero` skip the per-call
-    /// `EFPacking::from(scalar)` conversion (5 `vpbroadcastd`).
-    pub alpha_powers_packed: Vec<EFPacking<EF>>,
 }
 impl<EF: ExtensionField<PF<EF>>> ExtraDataForBuses<EF> {
     pub fn new(logup_alphas_eq_poly: Vec<EF>, bus_beta: EF, alpha_powers: Vec<EF>) -> Self {
         let logup_alphas_eq_poly_packed = logup_alphas_eq_poly.iter().map(|a| EFPacking::<EF>::from(*a)).collect();
-        let alpha_powers_packed = alpha_powers.iter().map(|a| EFPacking::<EF>::from(*a)).collect();
         Self {
             logup_alphas_eq_poly,
             logup_alphas_eq_poly_packed,
             bus_beta,
             bus_beta_packed: EFPacking::<EF>::from(bus_beta),
             alpha_powers,
-            alpha_powers_packed,
         }
     }
 }
@@ -106,12 +100,6 @@ impl AlphaPowersMut<EF> for ExtraDataForBuses<EF> {
 impl AlphaPowers<EF> for ExtraDataForBuses<EF> {
     fn alpha_powers(&self) -> &[EF] {
         &self.alpha_powers
-    }
-}
-
-impl AlphaPowersPacked<EF> for ExtraDataForBuses<EF> {
-    fn alpha_powers_packed(&self) -> &[EFPacking<EF>] {
-        &self.alpha_powers_packed
     }
 }
 

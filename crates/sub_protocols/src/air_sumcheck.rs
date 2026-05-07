@@ -44,7 +44,7 @@ pub trait OuterSumcheckSession<EF: ExtensionField<PF<EF>>>: Debug {
 #[derive(Debug)]
 pub struct AirSumcheckSession<'a, EF: ExtensionField<PF<EF>>, A: Air>
 where
-    A::ExtraData: AlphaPowers<EF> + AlphaPowersPacked<EF>,
+    A::ExtraData: AlphaPowers<EF>,
 {
     multilinears: MleGroup<'a, EF>,
     eq_factor: Vec<EF>, // The last element is removed at each round
@@ -62,7 +62,7 @@ where
 
 impl<'a, EF: ExtensionField<PF<EF>>, A: Air> AirSumcheckSession<'a, EF, A>
 where
-    A::ExtraData: AlphaPowers<EF> + AlphaPowersMut<EF> + AlphaPowersPacked<EF>,
+    A::ExtraData: AlphaPowers<EF> + AlphaPowersMut<EF>,
 {
     pub fn new(
         packed_multilinears: MleGroup<'a, EF>,
@@ -129,7 +129,7 @@ impl<'a, EF, A> AirSumcheckSession<'a, EF, A>
 where
     EF: ExtensionField<PF<EF>>,
     A: Air + 'static,
-    A::ExtraData: AlphaPowers<EF> + AlphaPowersPacked<EF>,
+    A::ExtraData: AlphaPowers<EF>,
 {
     fn pivot(&self) -> usize {
         ENDIANNESS_PIVOT_AIR.min(self.initial_n_vars)
@@ -204,7 +204,7 @@ impl<'a, EF, A> OuterSumcheckSession<EF> for AirSumcheckSession<'a, EF, A>
 where
     EF: ExtensionField<PF<EF>>,
     A: Air + Debug + 'static,
-    A::ExtraData: AlphaPowers<EF> + AlphaPowersMut<EF> + AlphaPowersPacked<EF> + Debug,
+    A::ExtraData: AlphaPowers<EF> + AlphaPowersMut<EF> + Debug,
 {
     fn initial_n_vars(&self) -> usize {
         self.initial_n_vars
@@ -319,7 +319,7 @@ fn compute_raw_poly<'a, EF, A>(
 where
     EF: ExtensionField<PF<EF>>,
     A: Air + 'static,
-    A::ExtraData: AlphaPowers<EF> + AlphaPowersPacked<EF>,
+    A::ExtraData: AlphaPowers<EF>,
 {
     let unpack_sum_packed = |s: EFPacking<EF>| -> EF { EFPacking::<EF>::to_ext_iter([s]).sum::<EF>() };
 
@@ -414,7 +414,7 @@ fn compute_raw_poly_degree_split<EF, A, IF, GetEq, UnpackSum>(
 where
     EF: ExtensionField<PF<EF>>,
     A: Air + 'static,
-    A::ExtraData: AlphaPowers<EF> + AlphaPowersPacked<EF>,
+    A::ExtraData: AlphaPowers<EF>,
     IF: Algebra<PFPacking<EF>> + Copy + Send + Sync + Sub<Output = IF> + AddAssign + PrimeCharacteristicRing + 'static,
     EFPacking<EF>: PrimeCharacteristicRing
         + Mul<IF, Output = EFPacking<EF>>
@@ -570,7 +570,7 @@ fn compute_raw_poly_impl<EF, A, IF, EFT, GetEq, UnpackSum>(
 where
     EF: ExtensionField<PF<EF>>,
     A: Air + 'static,
-    A::ExtraData: AlphaPowers<EF> + AlphaPowersPacked<EF>,
+    A::ExtraData: AlphaPowers<EF>,
     IF: Copy + Send + Sync + Sub<Output = IF> + AddAssign + PrimeCharacteristicRing,
     EFT: Copy + Send + Sync + Add<Output = EFT> + AddAssign + Mul<Output = EFT> + PrimeCharacteristicRing,
     GetEq: Fn(usize) -> EFT + Sync + Send,
