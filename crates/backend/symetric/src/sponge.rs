@@ -1,5 +1,7 @@
 // Credits: Plonky3 (https://github.com/Plonky3/Plonky3) (MIT and Apache-2.0 licenses).
 
+use field::PrimeCharacteristicRing;
+
 use crate::Compression;
 
 // IV should have been added to data when necessary (typically: when the length of the data beeing hashed is not constant).
@@ -109,6 +111,155 @@ where
     state[..OUT].try_into().unwrap()
 }
 
+// =============================================================================
+// MMO-mode (Davies-Meyer / Matyas-Meyer-Oseas) feedforward sponge
+// =============================================================================
+//
+// Standard PaddingFreeSponge ("oSponge") collision security is c·log2(p)/2 bits
+// because of the inner-state birthday attack on the capacity portion. With
+// (WIDTH=16, RATE=12, capacity=4) over KoalaBear (p ~= 2^31), that bound is
+// 4*31/2 = 62 bits — short of the 124-bit target.
+//
+// This MMO variant treats each absorb step as the Matyas-Meyer-Oseas
+// compression F(state, M) = state + perm(state + (M, 0_cap)), i.e. message is
+// ADDED into the rate positions (not overwritten) and the full pre-perm state
+// is fed forward. The chaining variable is then the FULL 16-element state
+// (496 bits), not the 4-element capacity, so generic compression collision is
+// 2^{b/2} = 2^248 in the random-permutation model, and after truncation to
+// OUT=8 elements the digest birthday gives 2^{output_bits/2} = 2^124.
+//
+// Convention matches the existing hash_slice: the first 16 elements of data
+// are loaded directly into the state and permuted (zero IV implicit, no
+// feedforward on the first step — perm being a bijection means this step
+// contributes no collision opportunity). Subsequent RATE-sized blocks are
+// absorbed with ADD + feedforward.
+
+/// MMO-mode (feedforward) variant of `hash_slice`. Same input format and
+/// alignment requirements; collision security is bounded by the digest size
+/// rather than the capacity.
+pub fn mmo_hash_slice<T, Comp, const WIDTH: usize, const RATE: usize, const OUT: usize>(comp: &Comp, data: &[T]) -> [T; OUT]
+where
+    T: PrimeCharacteristicRing,
+    Comp: Compression<[T; WIDTH]>,
+{
+    debug_assert!(OUT <= WIDTH);
+    debug_assert!(RATE <= WIDTH);
+    debug_assert!(data.len() >= WIDTH);
+    debug_assert!((data.len() - WIDTH).is_multiple_of(RATE));
+    let mut state: [T; WIDTH] = data[data.len() - WIDTH..].try_into().unwrap();
+    comp.compress_mut(&mut state);
+    let n_remaining_chunks = (data.len() - WIDTH) / RATE;
+    for chunk_idx in (0..n_remaining_chunks).rev() {
+        let offset = chunk_idx * RATE;
+        // ADD message into rate positions (not overwrite).
+        for i in 0..RATE {
+            state[WIDTH - RATE + i] += data[offset + i];
+        }
+        let prev = state;
+        comp.compress_mut(&mut state);
+        // Full-state feedforward.
+        for i in 0..WIDTH {
+            state[i] += prev[i];
+        }
+    }
+    state[..OUT].try_into().unwrap()
+}
+
+/// MMO-mode variant of `precompute_zero_suffix_state`. Mirrors the existing
+/// precompute (n_zero_chunks - 1 perm calls total) but the post-first-block
+/// iterations include the feedforward addition.
+pub fn mmo_precompute_zero_suffix_state<T, Comp, const WIDTH: usize, const RATE: usize, const OUT: usize>(
+    comp: &Comp,
+    n_zero_chunks: usize,
+) -> [T; WIDTH]
+where
+    T: PrimeCharacteristicRing,
+    Comp: Compression<[T; WIDTH]>,
+{
+    debug_assert!(OUT <= WIDTH);
+    debug_assert!(RATE <= WIDTH);
+    debug_assert!(n_zero_chunks >= 2);
+    let mut state = [T::ZERO; WIDTH];
+    // First absorb (16 zeros): perm only, no feedforward (matches hash_slice).
+    comp.compress_mut(&mut state);
+    // Subsequent (n_zero_chunks - 2) absorbs of zero RATE-chunks. ADD 0 is a
+    // no-op, so each iteration is just `state = state + perm(state)`.
+    for _ in 0..n_zero_chunks - 2 {
+        let prev = state;
+        comp.compress_mut(&mut state);
+        for i in 0..WIDTH {
+            state[i] += prev[i];
+        }
+    }
+    state
+}
+
+/// RTL = Right-to-left. MMO-mode counterpart of `hash_rtl_iter`.
+#[inline(always)]
+pub fn mmo_hash_rtl_iter<T, Comp, I, const WIDTH: usize, const RATE: usize, const OUT: usize>(
+    comp: &Comp,
+    rtl_iter: I,
+) -> [T; OUT]
+where
+    T: PrimeCharacteristicRing,
+    Comp: Compression<[T; WIDTH]>,
+    I: IntoIterator<Item = T>,
+{
+    debug_assert!(OUT <= WIDTH);
+    debug_assert!(RATE <= WIDTH);
+    let mut state = [T::ZERO; WIDTH];
+    let mut iter = rtl_iter.into_iter();
+    for pos in (0..WIDTH).rev() {
+        state[pos] = iter.next().unwrap();
+    }
+    comp.compress_mut(&mut state);
+    mmo_absorb_rtl_chunks::<T, Comp, _, WIDTH, RATE, OUT>(comp, &mut state, &mut iter)
+}
+
+/// RTL = Right-to-left. MMO-mode counterpart of `hash_rtl_iter_with_initial_state`.
+#[inline(always)]
+pub fn mmo_hash_rtl_iter_with_initial_state<T, Comp, I, const WIDTH: usize, const RATE: usize, const OUT: usize>(
+    comp: &Comp,
+    mut iter: I,
+    initial_state: &[T; WIDTH],
+) -> [T; OUT]
+where
+    T: PrimeCharacteristicRing,
+    Comp: Compression<[T; WIDTH]>,
+    I: Iterator<Item = T>,
+{
+    let mut state = *initial_state;
+    mmo_absorb_rtl_chunks::<T, Comp, _, WIDTH, RATE, OUT>(comp, &mut state, &mut iter)
+}
+
+/// RTL = Right-to-left. MMO-mode chunk absorption: ADD message + feedforward.
+#[inline(always)]
+fn mmo_absorb_rtl_chunks<T, Comp, I, const WIDTH: usize, const RATE: usize, const OUT: usize>(
+    comp: &Comp,
+    state: &mut [T; WIDTH],
+    iter: &mut I,
+) -> [T; OUT]
+where
+    T: PrimeCharacteristicRing,
+    Comp: Compression<[T; WIDTH]>,
+    I: Iterator<Item = T>,
+{
+    while let Some(elem) = iter.next() {
+        // ADD into rate positions (last RATE elements), reading the iterator
+        // from right to left.
+        state[WIDTH - 1] += elem;
+        for pos in (WIDTH - RATE..WIDTH - 1).rev() {
+            state[pos] += iter.next().unwrap();
+        }
+        let prev = *state;
+        comp.compress_mut(state);
+        for i in 0..WIDTH {
+            state[i] += prev[i];
+        }
+    }
+    state[..OUT].try_into().unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +285,53 @@ mod tests {
         let h_slice = hash_slice::<KoalaBear, _, 16, 8, 8>(&perm, &data);
         let h_rtl = hash_rtl_iter::<KoalaBear, _, _, 16, 8, 8>(&perm, data.iter().rev().copied());
         assert_eq!(h_slice, h_rtl, "hash_slice and hash_rtl_iter must agree on equivalent inputs (RATE=8)");
+    }
+
+    /// MMO-mode counterpart of hash_slice_matches_rtl_iter_rate12.
+    #[test]
+    fn mmo_hash_slice_matches_rtl_iter_rate12() {
+        let perm = default_koalabear_poseidon1_16();
+        let data: Vec<KoalaBear> = (0..100u32).map(|i| KoalaBear::from_u32(i)).collect();
+        let h_slice = mmo_hash_slice::<KoalaBear, _, 16, 12, 8>(&perm, &data);
+        let h_rtl = mmo_hash_rtl_iter::<KoalaBear, _, _, 16, 12, 8>(&perm, data.iter().rev().copied());
+        assert_eq!(h_slice, h_rtl, "mmo_hash_slice and mmo_hash_rtl_iter must agree on equivalent inputs");
+    }
+
+    /// MMO-mode is structurally distinct from oSponge — verify they produce
+    /// different digests on the same input (sanity check that we are not
+    /// accidentally falling back to the standard sponge).
+    #[test]
+    fn mmo_differs_from_standard_sponge() {
+        let perm = default_koalabear_poseidon1_16();
+        let data: Vec<KoalaBear> = (0..28u32).map(|i| KoalaBear::from_u32(i)).collect(); // 16 + 12, two-block input
+        let h_std = hash_slice::<KoalaBear, _, 16, 12, 8>(&perm, &data);
+        let h_mmo = mmo_hash_slice::<KoalaBear, _, 16, 12, 8>(&perm, &data);
+        assert_ne!(h_std, h_mmo, "MMO must differ from standard sponge for multi-block inputs");
+    }
+
+    /// Verify the MMO precompute is consistent with directly hashing zeros.
+    #[test]
+    fn mmo_precompute_zero_suffix_matches_full_zero_hash() {
+        let perm = default_koalabear_poseidon1_16();
+        let n_zero_chunks: usize = 4; // WIDTH absorb + 3 RATE absorbs of zero
+        let zeros: Vec<KoalaBear> =
+            std::iter::repeat_n(KoalaBear::ZERO, 16 + 12 * (n_zero_chunks - 1)).collect();
+        let direct = mmo_hash_slice::<KoalaBear, _, 16, 12, 8>(&perm, &zeros);
+        let pre = mmo_precompute_zero_suffix_state::<KoalaBear, _, 16, 12, 8>(&perm, n_zero_chunks);
+        // The precompute leaves the state right after `n_zero_chunks - 1` total
+        // perm calls. To finalize we need ONE MORE absorb of zeros (the missing
+        // (n_zero_chunks)th block), then truncate. Mirror that here.
+        // mmo_hash_slice has performed n_zero_chunks total perm calls for an
+        // input of 16 + (n_zero_chunks - 1) * 12 zeros, so we need to advance
+        // the precomputed state by one more iteration (ADD zero rate, perm,
+        // feedforward) and compare.
+        let mut state = pre;
+        let prev = state;
+        perm.compress_mut(&mut state);
+        for i in 0..16 {
+            state[i] += prev[i];
+        }
+        let advanced: [KoalaBear; 8] = state[..8].try_into().unwrap();
+        assert_eq!(advanced, direct);
     }
 }
