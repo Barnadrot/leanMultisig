@@ -128,11 +128,16 @@ where
 // 2^{b/2} = 2^248 in the random-permutation model, and after truncation to
 // OUT=8 elements the digest birthday gives 2^{output_bits/2} = 2^124.
 //
+// IMPORTANT: `Compression::compress_mut` for Poseidon-16 in this codebase ALREADY
+// computes `output = perm(input) + input` (matching the AIR's `eval_last_2_full_rounds_16`
+// which adds initial state to post-perm state — see lean_vm/src/tables/poseidon_16/mod.rs).
+// So a single `compress_mut` call IS one MMO step; we must NOT add `prev` again
+// after, or we'd double-feedforward and disagree with the zk-DSL precompile.
+//
 // Convention matches the existing hash_slice: the first 16 elements of data
-// are loaded directly into the state and permuted (zero IV implicit, no
-// feedforward on the first step — perm being a bijection means this step
-// contributes no collision opportunity). Subsequent RATE-sized blocks are
-// absorbed with ADD + feedforward.
+// are loaded directly into the state and the precompile is invoked once
+// (zero IV implicit). Subsequent RATE-sized blocks are absorbed with ADD into
+// rate positions, then a single compression invocation gives the next state.
 
 /// MMO-mode (feedforward) variant of `hash_slice`. Same input format and
 /// alignment requirements; collision security is bounded by the digest size
@@ -147,6 +152,7 @@ where
     debug_assert!(data.len() >= WIDTH);
     debug_assert!((data.len() - WIDTH).is_multiple_of(RATE));
     let mut state: [T; WIDTH] = data[data.len() - WIDTH..].try_into().unwrap();
+    // First MMO compression: state ← perm(state) + state (compress_mut already does this).
     comp.compress_mut(&mut state);
     let n_remaining_chunks = (data.len() - WIDTH) / RATE;
     for chunk_idx in (0..n_remaining_chunks).rev() {
@@ -155,19 +161,15 @@ where
         for i in 0..RATE {
             state[WIDTH - RATE + i] += data[offset + i];
         }
-        let prev = state;
+        // One MMO compression: state ← perm(state) + state. compress_mut already
+        // performs the full-state feedforward.
         comp.compress_mut(&mut state);
-        // Full-state feedforward.
-        for i in 0..WIDTH {
-            state[i] += prev[i];
-        }
     }
     state[..OUT].try_into().unwrap()
 }
 
-/// MMO-mode variant of `precompute_zero_suffix_state`. Mirrors the existing
-/// precompute (n_zero_chunks - 1 perm calls total) but the post-first-block
-/// iterations include the feedforward addition.
+/// MMO-mode variant of `precompute_zero_suffix_state`. Same number of perm
+/// calls as the standard variant (n_zero_chunks - 1 total).
 pub fn mmo_precompute_zero_suffix_state<T, Comp, const WIDTH: usize, const RATE: usize, const OUT: usize>(
     comp: &Comp,
     n_zero_chunks: usize,
@@ -180,16 +182,12 @@ where
     debug_assert!(RATE <= WIDTH);
     debug_assert!(n_zero_chunks >= 2);
     let mut state = [T::ZERO; WIDTH];
-    // First absorb (16 zeros): perm only, no feedforward (matches hash_slice).
+    // First absorb (16 zeros). compress_mut applies one MMO compression.
     comp.compress_mut(&mut state);
     // Subsequent (n_zero_chunks - 2) absorbs of zero RATE-chunks. ADD 0 is a
-    // no-op, so each iteration is just `state = state + perm(state)`.
+    // no-op, so each iteration is just one MMO compression.
     for _ in 0..n_zero_chunks - 2 {
-        let prev = state;
         comp.compress_mut(&mut state);
-        for i in 0..WIDTH {
-            state[i] += prev[i];
-        }
     }
     state
 }
@@ -232,7 +230,8 @@ where
     mmo_absorb_rtl_chunks::<T, Comp, _, WIDTH, RATE, OUT>(comp, &mut state, &mut iter)
 }
 
-/// RTL = Right-to-left. MMO-mode chunk absorption: ADD message + feedforward.
+/// RTL = Right-to-left. MMO-mode chunk absorption: ADD message into rate, then
+/// one MMO compression (compress_mut already does perm + input feedforward).
 #[inline(always)]
 fn mmo_absorb_rtl_chunks<T, Comp, I, const WIDTH: usize, const RATE: usize, const OUT: usize>(
     comp: &Comp,
@@ -251,11 +250,7 @@ where
         for pos in (WIDTH - RATE..WIDTH - 1).rev() {
             state[pos] += iter.next().unwrap();
         }
-        let prev = *state;
         comp.compress_mut(state);
-        for i in 0..WIDTH {
-            state[i] += prev[i];
-        }
     }
     state[..OUT].try_into().unwrap()
 }
@@ -318,19 +313,11 @@ mod tests {
             std::iter::repeat_n(KoalaBear::ZERO, 16 + 12 * (n_zero_chunks - 1)).collect();
         let direct = mmo_hash_slice::<KoalaBear, _, 16, 12, 8>(&perm, &zeros);
         let pre = mmo_precompute_zero_suffix_state::<KoalaBear, _, 16, 12, 8>(&perm, n_zero_chunks);
-        // The precompute leaves the state right after `n_zero_chunks - 1` total
-        // perm calls. To finalize we need ONE MORE absorb of zeros (the missing
-        // (n_zero_chunks)th block), then truncate. Mirror that here.
-        // mmo_hash_slice has performed n_zero_chunks total perm calls for an
-        // input of 16 + (n_zero_chunks - 1) * 12 zeros, so we need to advance
-        // the precomputed state by one more iteration (ADD zero rate, perm,
-        // feedforward) and compare.
+        // The precompute does (n_zero_chunks - 1) MMO compressions; mmo_hash_slice
+        // does n_zero_chunks total. To finalize we need ONE MORE compression
+        // (ADDing zero rate is a no-op).
         let mut state = pre;
-        let prev = state;
         perm.compress_mut(&mut state);
-        for i in 0..16 {
-            state[i] += prev[i];
-        }
         let advanced: [KoalaBear; 8] = state[..8].try_into().unwrap();
         assert_eq!(advanced, direct);
     }
