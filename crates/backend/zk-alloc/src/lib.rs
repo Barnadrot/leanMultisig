@@ -193,7 +193,13 @@ unsafe impl GlobalAlloc for ZkAllocator {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let addr = ptr as usize;
         let base = REGION_BASE.load(Ordering::Relaxed);
-        if base != 0 && addr >= base && addr < base + REGION_SIZE {
+        // wrapping_sub turns the three-step "base != 0 && addr >= base && addr <
+        // base + REGION_SIZE" check into a single comparison. When base == 0
+        // (arena not yet mmap'd), addr.wrapping_sub(0) == addr, which is
+        // guaranteed >= REGION_SIZE for any real heap pointer. When addr < base
+        // it underflows to a huge value, also failing the check. One branch on
+        // the hot dealloc path instead of three.
+        if addr.wrapping_sub(base) < REGION_SIZE {
             return; // arena-owned pointer — free is a no-op
         }
         unsafe { std::alloc::System.dealloc(ptr, layout) };
@@ -211,7 +217,7 @@ unsafe impl GlobalAlloc for ZkAllocator {
         // and become subject to phase recycling.
         let addr = ptr as usize;
         let base = REGION_BASE.load(Ordering::Relaxed);
-        let in_arena = base != 0 && addr >= base && addr < base + REGION_SIZE;
+        let in_arena = addr.wrapping_sub(base) < REGION_SIZE;
         if !in_arena {
             return unsafe { std::alloc::System.realloc(ptr, layout, new_size) };
         }
