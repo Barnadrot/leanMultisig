@@ -26,11 +26,7 @@ use system_info::NUM_THREADS;
 mod syscall;
 
 const SLAB_SIZE: usize = 8 << 30; // 8GB
-// Iter 13 (SLACK=2) regressed by +0.87pp (p=0.02), suggesting some threads at
-// the existing 14-slab cap already overflow into ARENA_NO_SLAB and miss out on
-// the THP-backed arena. Test the opposite direction: SLACK=6 (MAX_THREADS=16)
-// gives 2 extra slabs of headroom for any helper threads we missed.
-const SLACK: usize = 6;
+const SLACK: usize = 4; // SLACK absorbs the main thread and any non-rayon helpers.
 const MAX_THREADS: usize = NUM_THREADS + SLACK;
 const REGION_SIZE: usize = SLAB_SIZE * MAX_THREADS;
 
