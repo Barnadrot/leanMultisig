@@ -86,44 +86,14 @@ thread_local! {
 /// Returns the base address of the mmap'd region, mapping it on the first call.
 fn ensure_region() -> usize {
     REGION_INIT.call_once(|| {
-        // On aarch64 Linux (M2/Asahi: 16 KiB base pages, 32 MiB THP) we want
-        // the slab region 32 MiB-aligned so khugepaged can collapse runs of
-        // base pages into 32 MiB hugepages. mmap returns a 16 KiB-aligned
-        // pointer; over-allocate by THP_SIZE and round up. With MAP_NORESERVE
-        // the leading and trailing slack costs nothing physical. iter 1 set
-        // MADV_HUGEPAGE on the un-aligned 16 KiB-aligned base and saw no
-        // signal; this iter pairs the hint with the alignment khugepaged
-        // actually needs.
-        #[cfg(target_arch = "aarch64")]
-        const THP_SIZE: usize = 32 << 20; // 32 MiB on M2 Asahi
-        #[cfg(not(target_arch = "aarch64"))]
-        const THP_SIZE: usize = 0;
-
-        let mmap_size = REGION_SIZE + THP_SIZE;
         // SAFETY: mmap_anonymous returns a page-aligned pointer or null. MAP_NORESERVE
         // means no physical memory is committed until pages are touched.
-        let raw = unsafe { syscall::mmap_anonymous(mmap_size) };
-        if raw.is_null() {
+        let ptr = unsafe { syscall::mmap_anonymous(REGION_SIZE) };
+        if ptr.is_null() {
             std::process::abort();
         }
-
-        let aligned_base = if THP_SIZE > 0 {
-            (raw as usize).next_multiple_of(THP_SIZE)
-        } else {
-            raw as usize
-        };
-
-        // On aarch64, ask khugepaged to use THP for the slab region. On other
-        // platforms (x86_64 with 4 KiB pages + 2 MiB THP) preserve the
-        // historical NOHUGEPAGE hint — 2 MiB THP can fragment slab release
-        // and the original code documented that defensive choice.
-        #[cfg(target_arch = "aarch64")]
-        let advice = syscall::MADV_HUGEPAGE;
-        #[cfg(not(target_arch = "aarch64"))]
-        let advice = syscall::MADV_NOHUGEPAGE;
-        unsafe { syscall::madvise(aligned_base as *mut u8, REGION_SIZE, advice) };
-
-        REGION_BASE.store(aligned_base, Ordering::Release);
+        unsafe { syscall::madvise(ptr, REGION_SIZE, syscall::MADV_NOHUGEPAGE) };
+        REGION_BASE.store(ptr as usize, Ordering::Release);
     });
     REGION_BASE.load(Ordering::Acquire)
 }
