@@ -175,25 +175,13 @@ pub fn begin_phase() {
 
 /// Deactivates the arena. New allocations go to the system allocator; existing arena
 /// pointers stay valid until the next `begin_phase()` resets the slabs.
-///
-/// Bumps `GENERATION` as well as clearing `ARENA_ACTIVE`. The bump invalidates
-/// every thread's `ARENA_GEN` cache, so the next allocation enters the cold
-/// path and sees `ARENA_ACTIVE = false`, routing to System. This lets `alloc()`
-/// drop its `ARENA_ACTIVE` check (the gen-cache mismatch alone gates the bump
-/// body).
 pub fn end_phase() {
     ARENA_ACTIVE.store(false, Ordering::Release);
-    GENERATION.fetch_add(1, Ordering::Release);
 }
 
 #[cold]
 #[inline(never)]
 unsafe fn arena_alloc_cold(size: usize, align: usize) -> *mut u8 {
-    // Out-of-phase alloc: the fast path now arrives here (gen-cache mismatch)
-    // when no phase is active. Route to System.
-    if !ARENA_ACTIVE.load(Ordering::Relaxed) {
-        return unsafe { std::alloc::System.alloc(Layout::from_size_align_unchecked(size, align)) };
-    }
     let generation = GENERATION.load(Ordering::Relaxed);
     if !ARENA_NO_SLAB.get() && ARENA_GEN.get() != generation {
         let mut base = ARENA_BASE.get();
@@ -228,27 +216,29 @@ unsafe fn arena_alloc_cold(size: usize, align: usize) -> *mut u8 {
 unsafe impl GlobalAlloc for ZkAllocator {
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // Small allocs bypass arena. Done before any phase check: routing is
-        // System either way (in-phase: phase-crossing safety; out-of-phase:
-        // System is the default).
-        if layout.size() < MIN_ARENA_BYTES {
-            return unsafe { std::alloc::System.alloc(layout) };
-        }
-        // Single hot-path gate: in-phase + slab-claimed iff cached gen matches
-        // global. begin_phase()/end_phase() each bump GENERATION, so a mismatch
-        // means either no phase is active or this thread hasn't claimed its
-        // slab in the current phase. Cold path handles both.
-        let generation = GENERATION.load(Ordering::Relaxed);
-        if ARENA_GEN.get() == generation {
-            let align = layout.align();
-            let aligned = (ARENA_PTR.get() + align - 1) & !(align - 1);
-            let new_ptr = aligned + layout.size();
-            if new_ptr <= ARENA_END.get() {
-                ARENA_PTR.set(new_ptr);
-                return aligned as *mut u8;
+        if ARENA_ACTIVE.load(Ordering::Relaxed) {
+            // Small allocs bypass arena: registry slots / HashMap entries /
+            // injector-block-sized allocations from rayon/tracing libraries
+            // commonly outlive a phase. Routing them to System keeps them
+            // safe across begin_phase()/end_phase() boundaries.
+            //
+            // TODO is there a cleaner way?
+            if layout.size() < MIN_ARENA_BYTES {
+                return unsafe { std::alloc::System.alloc(layout) };
             }
+            let generation = GENERATION.load(Ordering::Relaxed);
+            if ARENA_GEN.get() == generation {
+                let align = layout.align();
+                let aligned = (ARENA_PTR.get() + align - 1) & !(align - 1);
+                let new_ptr = aligned + layout.size();
+                if new_ptr <= ARENA_END.get() {
+                    ARENA_PTR.set(new_ptr);
+                    return aligned as *mut u8;
+                }
+            }
+            return unsafe { arena_alloc_cold(layout.size(), layout.align()) };
         }
-        unsafe { arena_alloc_cold(layout.size(), layout.align()) }
+        unsafe { std::alloc::System.alloc(layout) }
     }
 
     #[inline(always)]
