@@ -26,13 +26,7 @@ use system_info::NUM_THREADS;
 mod syscall;
 
 const SLAB_SIZE: usize = 8 << 30; // 8GB
-// SLACK absorbs the main thread and non-rayon helpers; reduced from 4 to 2 on
-// M2 Asahi (10 cores, NUM_THREADS = 10). Profile shows only ~10 active workers
-// + main thread ≈ 11 threads claim slabs. SLACK=2 still covers main + 1
-// helper. Reduces MAX_THREADS 14->12, REGION_SIZE 112->96 GiB virtual, and
-// the eager-pre-touch loop runs over fewer slabs (12 GiB physical commit
-// instead of 14 GiB) — measurable RSS relief on the 16 GiB box.
-const SLACK: usize = 2;
+const SLACK: usize = 4; // SLACK absorbs the main thread and any non-rayon helpers.
 const MAX_THREADS: usize = NUM_THREADS + SLACK;
 const REGION_SIZE: usize = SLAB_SIZE * MAX_THREADS;
 
