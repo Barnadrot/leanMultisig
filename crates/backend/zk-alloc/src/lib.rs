@@ -25,7 +25,12 @@ use system_info::NUM_THREADS;
 
 mod syscall;
 
-const SLAB_SIZE: usize = 8 << 30; // 8GB
+// 4 GiB per thread on this M2 / Asahi tuning: profile shows ~0.73 GiB
+// touched per slab on the 1550-sig leaf workload (10.18 GiB pre-touch / 14
+// slabs), so 4 GiB leaves >5× headroom while halving REGION_SIZE from 112
+// GiB to 56 GiB virtual. Smaller region = fewer kernel VMA pages, cheaper
+// dealloc range check (constant fits 32-bit immediate range better).
+const SLAB_SIZE: usize = 4 << 30; // 4GB
 const SLACK: usize = 4; // SLACK absorbs the main thread and any non-rayon helpers.
 const MAX_THREADS: usize = NUM_THREADS + SLACK;
 const REGION_SIZE: usize = SLAB_SIZE * MAX_THREADS;
