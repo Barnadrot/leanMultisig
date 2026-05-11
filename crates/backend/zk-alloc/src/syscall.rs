@@ -86,11 +86,6 @@ mod imp {
 
     pub const MADV_HUGEPAGE: usize = 14;
     pub const MADV_NOHUGEPAGE: usize = 15;
-    /// Linux 5.14+ — synchronously populate the range with backing pages
-    /// (faulting in kernel space rather than via user-space write loops).
-    /// Combined with MADV_HUGEPAGE on a THP-aligned region, the kernel
-    /// can populate with hugepages without us touching every offset.
-    pub const MADV_POPULATE_WRITE: usize = 23;
 
     #[inline]
     unsafe fn syscall6(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize, a6: usize) -> isize {
@@ -168,8 +163,8 @@ mod imp {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+pub use imp::MADV_HUGEPAGE;
 #[cfg(not(target_arch = "aarch64"))]
 pub use imp::MADV_NOHUGEPAGE;
-#[cfg(target_arch = "aarch64")]
-pub use imp::{MADV_HUGEPAGE, MADV_POPULATE_WRITE};
 pub use imp::{madvise, mmap_anonymous};

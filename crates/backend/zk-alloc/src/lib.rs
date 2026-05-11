@@ -131,24 +131,26 @@ fn ensure_region() -> usize {
         let advice = syscall::MADV_NOHUGEPAGE;
         unsafe { syscall::madvise(aligned_base as *mut u8, REGION_SIZE, advice) };
 
-        // Eager pre-touch on aarch64 via MADV_POPULATE_WRITE (Linux 5.14+):
-        // ask the kernel to fault in PRETOUCH_BYTES of each per-thread slab.
-        // Combined with the earlier MADV_HUGEPAGE hint on the THP-aligned
-        // region, the kernel populates with 32 MiB hugepages without us
-        // touching every offset from user space. Same physical commit
-        // (~14 GiB at PRETOUCH=1 GiB × MAX_THREADS=14) as the previous
-        // manual write loop, but: (a) one syscall per slab vs ~32 stores,
-        // (b) the kernel can batch THP allocation rather than reacting to
-        // individual write faults. Outside any timed proof window.
+        // Eager pre-touch on aarch64: write one byte per 32 MiB hugepage across
+        // the first PRETOUCH_BYTES of every per-thread slab (sized to cover the
+        // ~0.73 GiB observed actual touch + 50% headroom). Each write triggers a
+        // page fault that the kernel resolves into a 32 MiB THP given our
+        // earlier MADV_HUGEPAGE hint and the 32 MiB-aligned base. This makes
+        // the THP win deterministic instead of khugepaged-async-dependent.
+        // Runs in REGION_INIT.call_once, well before any timed proof window.
         #[cfg(target_arch = "aarch64")]
         {
             const PRETOUCH_BYTES: usize = 1 << 30; // 1 GiB per slab
             for slab_idx in 0..MAX_THREADS {
                 let slab_base = aligned_base + slab_idx * SLAB_SIZE;
-                // SAFETY: slab_base..slab_base+PRETOUCH_BYTES is inside the
-                // anonymous mmap reservation we just made.
-                unsafe {
-                    syscall::madvise(slab_base as *mut u8, PRETOUCH_BYTES, syscall::MADV_POPULATE_WRITE);
+                let mut off = 0;
+                while off < PRETOUCH_BYTES {
+                    // SAFETY: aligned_base..aligned_base+REGION_SIZE is a valid
+                    // anonymous mmap reservation; we only touch within slab.
+                    unsafe {
+                        std::ptr::write_volatile((slab_base + off) as *mut u8, 0);
+                    }
+                    off += THP_SIZE;
                 }
             }
         }
