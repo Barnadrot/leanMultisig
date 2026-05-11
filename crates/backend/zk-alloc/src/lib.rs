@@ -53,35 +53,19 @@ const MIN_ARENA_BYTES: usize = 256;
 #[derive(Debug)]
 pub struct ZkAllocator;
 
-/// Cache-line-pad a static atomic so that writes by the main thread (in
-/// `begin_phase`/`end_phase`) don't invalidate cache lines that worker threads
-/// are reading on every alloc/dealloc. Apple Silicon cache lines are 128 bytes
-/// (vs 64 on x86); pad to that.
-#[repr(align(128))]
-struct CachePad<T>(T);
-
-impl<T> std::ops::Deref for CachePad<T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        &self.0
-    }
-}
-
 /// Incremented by `begin_phase()`. Every thread caches the last value it saw in
 /// `ARENA_GEN`; when they differ, the thread resets its allocation cursor to the start
 /// of its slab on the next allocation. This is how a single store on the main thread
 /// "resets" every other thread's slab without any cross-thread synchronization.
-static GENERATION: CachePad<AtomicUsize> = CachePad(AtomicUsize::new(0));
+static GENERATION: AtomicUsize = AtomicUsize::new(0);
 
 /// Master switch for the arena. `true` (set by `begin_phase`) routes allocations
 /// through the arena; `false` (set by `end_phase`) routes them to the system allocator.
-static ARENA_ACTIVE: CachePad<AtomicBool> = CachePad(AtomicBool::new(false));
+static ARENA_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Base address of the mmap'd region, or `0` before `ensure_region` runs. Read on
-/// every `dealloc` to test whether a pointer belongs to us. Padded onto its own
-/// cache line so begin/end-phase writes to GENERATION/ARENA_ACTIVE don't
-/// invalidate the dealloc-read line on worker threads.
-static REGION_BASE: CachePad<AtomicUsize> = CachePad(AtomicUsize::new(0));
+/// every `dealloc` to test whether a pointer belongs to us.
+static REGION_BASE: AtomicUsize = AtomicUsize::new(0);
 
 /// Synchronizes the one-time mmap so concurrent first-allocators don't race.
 static REGION_INIT: Once = Once::new();
