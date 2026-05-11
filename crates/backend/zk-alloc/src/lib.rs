@@ -37,20 +37,8 @@ const REGION_SIZE: usize = SLAB_SIZE * MAX_THREADS;
 /// blocks (~1.5 KB), tracing-subscriber Registry slot data (sub-KB), hashbrown
 /// HashMap entries (sub-KB), rayon-core job stack frames (sub-KB).
 ///
-/// Lowered from 4096 to 1024 on M2: profile shows libc::*_malloc + cfree +
-/// malloc helpers eat 1.30% of cycles, all of which are sub-4096-byte allocs
-/// in the active-phase window. Lower threshold pulls the 1024..4095-byte band
-/// back into the arena bump path. Phase-crossing safety still covered by:
-/// (a) the named ~1.5 KB Injector blocks land in the routed-to-System band
-///     [0, 1024) — keep them out by keeping the floor non-zero;
-/// (b) sticky-System realloc keeps grown Vecs in System if their first alloc
-///     was in System;
-/// (c) a Vec allocated 4096 bytes within an active phase under the old
-///     threshold landed in the arena anyway, so the safety profile in the
-///     1024..4095 band is no worse than the existing 4096+ band.
-///
 /// TODO is there a cleaner way?
-const MIN_ARENA_BYTES: usize = 1024;
+const MIN_ARENA_BYTES: usize = 4096;
 
 #[derive(Debug)]
 pub struct ZkAllocator;
