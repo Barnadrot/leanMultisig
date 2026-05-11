@@ -140,7 +140,7 @@ fn ensure_region() -> usize {
         // Runs in REGION_INIT.call_once, well before any timed proof window.
         #[cfg(target_arch = "aarch64")]
         {
-            const PRETOUCH_BYTES: usize = (5 << 30) / 4; // 1.25 GiB per slab
+            const PRETOUCH_BYTES: usize = 1 << 30; // 1 GiB per slab
             for slab_idx in 0..MAX_THREADS {
                 let slab_base = aligned_base + slab_idx * SLAB_SIZE;
                 let mut off = 0;
