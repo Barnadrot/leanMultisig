@@ -92,7 +92,20 @@ fn ensure_region() -> usize {
         if ptr.is_null() {
             std::process::abort();
         }
-        unsafe { syscall::madvise(ptr, REGION_SIZE, syscall::MADV_NOHUGEPAGE) };
+        // On aarch64 Linux (M-series Asahi: 16 KiB base pages, 32 MiB THP), the
+        // kernel runs `transparent_hugepage=[madvise]` by default — anonymous
+        // mappings are NOT promoted unless we ask. The historical NOHUGEPAGE
+        // hint is therefore vestigial here. Actively requesting HUGEPAGE lets
+        // khugepaged collapse arena slab pages into 32 MiB THP, amortising
+        // dTLB coverage of the ~10 GiB working set 2048× (656k base pages →
+        // ~330 hugepages). On x86_64 the original NOHUGEPAGE behaviour is
+        // preserved (4 KiB base pages + 2 MiB THP would otherwise fragment
+        // slab release).
+        #[cfg(target_arch = "aarch64")]
+        let advice = syscall::MADV_HUGEPAGE;
+        #[cfg(not(target_arch = "aarch64"))]
+        let advice = syscall::MADV_NOHUGEPAGE;
+        unsafe { syscall::madvise(ptr, REGION_SIZE, advice) };
         REGION_BASE.store(ptr as usize, Ordering::Release);
     });
     REGION_BASE.load(Ordering::Acquire)
