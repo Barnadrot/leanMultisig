@@ -25,15 +25,7 @@ use system_info::NUM_THREADS;
 
 mod syscall;
 
-// Larger slab spacing on M2: iter 2 showed shrinking SLAB_SIZE 8→4 GiB
-// regressed warm-prove time +5.4%, three rounds consistent (p=0.000). The
-// likely mechanism is dTLB conflict pressure — Apple's L1 dTLB is small
-// (~256 entries with 16 KiB pages = 4 MiB direct coverage), and per-thread
-// slab base addresses spaced 4 GiB apart fall on the same TLB sets more
-// often than 8 GiB spacing. Doubling to 16 GiB pushes the bases further
-// apart, in theory cutting set conflicts further. MAP_NORESERVE keeps the
-// 16 GiB × 14 = 224 GiB reservation cost-free until pages are touched.
-const SLAB_SIZE: usize = 16 << 30; // 16 GiB
+const SLAB_SIZE: usize = 8 << 30; // 8GB
 const SLACK: usize = 4; // SLACK absorbs the main thread and any non-rayon helpers.
 const MAX_THREADS: usize = NUM_THREADS + SLACK;
 const REGION_SIZE: usize = SLAB_SIZE * MAX_THREADS;
