@@ -932,23 +932,23 @@ impl Poseidon1KoalaBear16 {
     ))]
     #[inline(always)]
     fn permute_simd(&self, state: &mut [PackedKB; 16]) {
+        self.permute_simd_inner(state, None);
+    }
+
+    /// Inner implementation of `permute_simd` plus an optional compress-add.
+    /// When `compress_initial` is Some(&initial), the terminal-round scalar outputs
+    /// are added to `initial[i]` before write-back (pw4-19 fusion).
+    #[cfg(any(
+        all(target_arch = "aarch64", target_feature = "neon"),
+        all(target_arch = "x86_64", target_feature = "avx2")
+    ))]
+    #[inline(always)]
+    fn permute_simd_inner(&self, state: &mut [PackedKB; 16], compress_initial: Option<&[PackedKB; 16]>) {
         use crate::{InternalLayer16, add_rc_and_sbox, sbox};
         use core::mem::transmute;
 
         let simd = &self.pre.simd;
         let lambda16 = &simd.packed_lambda_over_16;
-
-        /// FFT MDS: state = C * state.
-        /// Uses lambda/16 eigenvalues so no separate /16 step needed.
-        /// C * x = DIT_FFT((lambda/16) ⊙ DIF_IFFT(x))
-        #[inline(always)]
-        fn mds_fft(state: &mut [PackedKB; 16], lambda16: &[PackedKB; 16]) {
-            dif_ifft_16_mut(state);
-            for i in 0..16 {
-                state[i] *= lambda16[i];
-            }
-            dit_fft_16_mut(state);
-        }
 
         // --- Initial full rounds (first 3 of 4) ---
         //
@@ -1233,13 +1233,150 @@ impl Poseidon1KoalaBear16 {
             *state = unsafe { split.to_packed_field_array() };
         }
 
-        // --- Terminal full rounds ---
-        for round_constants in &simd.packed_terminal_rc {
-            for (s, &rc) in state.iter_mut().zip(round_constants.iter()) {
-                add_rc_and_sbox::<FP, 3>(s, rc);
-            }
-            mds_fft(state, lambda16);
+        // --- Terminal full rounds with scalar-bound state + optional compress add ---
+        //
+        // pw4-19: re-apply pw4-16 (scalar-bind state across 4 terminal rounds, inline
+        // mds_fft butterflies) AND fuse compress_in_place's final `state += initial`
+        // add via a function parameter. When the caller is compress_in_place_simd, the
+        // `initial` is supplied and the add happens inline with the terminal scalars,
+        // avoiding the post-permute state-array read+write round-trip.
+        self.permute_simd_terminal_and_optional_add(state, compress_initial);
+    }
+
+    /// Helper that performs the terminal 4 full rounds with scalar-bound state and an
+    /// optional element-wise add of `initial[i]` to each output scalar before write-back.
+    ///
+    /// Split out so that compress_in_place_simd can supply Some(&initial) to fuse the
+    /// compression-add into the same register chain that holds the terminal-round result,
+    /// eliminating one full state-array round-trip per Poseidon compression call.
+    #[cfg(any(
+        all(target_arch = "aarch64", target_feature = "neon"),
+        all(target_arch = "x86_64", target_feature = "avx2")
+    ))]
+    #[inline(always)]
+    fn permute_simd_terminal_and_optional_add(
+        &self,
+        state: &mut [PackedKB; 16],
+        compress_initial: Option<&[PackedKB; 16]>,
+    ) {
+        use crate::add_rc_and_sbox;
+        let simd = &self.pre.simd;
+        let lambda16 = &simd.packed_lambda_over_16;
+
+        macro_rules! bt_s {
+            ($a:ident, $b:ident) => {{
+                let lo = $a; let hi = $b;
+                $a = lo + hi;
+                $b = lo - hi;
+            }};
         }
+        macro_rules! neg_dif_s {
+            ($a:ident, $b:ident, $t:expr) => {{
+                let lo = $a; let hi = $b;
+                $a = lo + hi;
+                $b = (hi - lo) * $t;
+            }};
+        }
+        macro_rules! dit_s {
+            ($a:ident, $b:ident, $t:expr) => {{
+                let lo = $a; let tb = $b * $t;
+                $a = lo + tb;
+                $b = lo - tb;
+            }};
+        }
+
+        let mut s_0 = state[0];
+        let mut s_1 = state[1];
+        let mut s_2 = state[2];
+        let mut s_3 = state[3];
+        let mut s_4 = state[4];
+        let mut s_5 = state[5];
+        let mut s_6 = state[6];
+        let mut s_7 = state[7];
+        let mut s_8 = state[8];
+        let mut s_9 = state[9];
+        let mut s_10 = state[10];
+        let mut s_11 = state[11];
+        let mut s_12 = state[12];
+        let mut s_13 = state[13];
+        let mut s_14 = state[14];
+        let mut s_15 = state[15];
+
+        for round_constants in &simd.packed_terminal_rc {
+            add_rc_and_sbox::<FP, 3>(&mut s_0, round_constants[0]);
+            add_rc_and_sbox::<FP, 3>(&mut s_1, round_constants[1]);
+            add_rc_and_sbox::<FP, 3>(&mut s_2, round_constants[2]);
+            add_rc_and_sbox::<FP, 3>(&mut s_3, round_constants[3]);
+            add_rc_and_sbox::<FP, 3>(&mut s_4, round_constants[4]);
+            add_rc_and_sbox::<FP, 3>(&mut s_5, round_constants[5]);
+            add_rc_and_sbox::<FP, 3>(&mut s_6, round_constants[6]);
+            add_rc_and_sbox::<FP, 3>(&mut s_7, round_constants[7]);
+            add_rc_and_sbox::<FP, 3>(&mut s_8, round_constants[8]);
+            add_rc_and_sbox::<FP, 3>(&mut s_9, round_constants[9]);
+            add_rc_and_sbox::<FP, 3>(&mut s_10, round_constants[10]);
+            add_rc_and_sbox::<FP, 3>(&mut s_11, round_constants[11]);
+            add_rc_and_sbox::<FP, 3>(&mut s_12, round_constants[12]);
+            add_rc_and_sbox::<FP, 3>(&mut s_13, round_constants[13]);
+            add_rc_and_sbox::<FP, 3>(&mut s_14, round_constants[14]);
+            add_rc_and_sbox::<FP, 3>(&mut s_15, round_constants[15]);
+
+            bt_s!(s_0, s_8); neg_dif_s!(s_1, s_9, W7); neg_dif_s!(s_2, s_10, W6);
+            neg_dif_s!(s_3, s_11, W5); neg_dif_s!(s_4, s_12, W4); neg_dif_s!(s_5, s_13, W3);
+            neg_dif_s!(s_6, s_14, W2); neg_dif_s!(s_7, s_15, W1);
+            bt_s!(s_0, s_4); neg_dif_s!(s_1, s_5, W6); neg_dif_s!(s_2, s_6, W4); neg_dif_s!(s_3, s_7, W2);
+            bt_s!(s_8, s_12); neg_dif_s!(s_9, s_13, W6); neg_dif_s!(s_10, s_14, W4); neg_dif_s!(s_11, s_15, W2);
+            bt_s!(s_0, s_2); neg_dif_s!(s_1, s_3, W4);
+            bt_s!(s_4, s_6); neg_dif_s!(s_5, s_7, W4);
+            bt_s!(s_8, s_10); neg_dif_s!(s_9, s_11, W4);
+            bt_s!(s_12, s_14); neg_dif_s!(s_13, s_15, W4);
+            bt_s!(s_0, s_1); bt_s!(s_2, s_3); bt_s!(s_4, s_5); bt_s!(s_6, s_7);
+            bt_s!(s_8, s_9); bt_s!(s_10, s_11); bt_s!(s_12, s_13); bt_s!(s_14, s_15);
+
+            s_0 *= lambda16[0]; s_1 *= lambda16[1]; s_2 *= lambda16[2]; s_3 *= lambda16[3];
+            s_4 *= lambda16[4]; s_5 *= lambda16[5]; s_6 *= lambda16[6]; s_7 *= lambda16[7];
+            s_8 *= lambda16[8]; s_9 *= lambda16[9]; s_10 *= lambda16[10]; s_11 *= lambda16[11];
+            s_12 *= lambda16[12]; s_13 *= lambda16[13]; s_14 *= lambda16[14]; s_15 *= lambda16[15];
+
+            bt_s!(s_0, s_1); bt_s!(s_2, s_3); bt_s!(s_4, s_5); bt_s!(s_6, s_7);
+            bt_s!(s_8, s_9); bt_s!(s_10, s_11); bt_s!(s_12, s_13); bt_s!(s_14, s_15);
+            bt_s!(s_0, s_2); dit_s!(s_1, s_3, W4);
+            bt_s!(s_4, s_6); dit_s!(s_5, s_7, W4);
+            bt_s!(s_8, s_10); dit_s!(s_9, s_11, W4);
+            bt_s!(s_12, s_14); dit_s!(s_13, s_15, W4);
+            bt_s!(s_0, s_4); dit_s!(s_1, s_5, W2); dit_s!(s_2, s_6, W4); dit_s!(s_3, s_7, W6);
+            bt_s!(s_8, s_12); dit_s!(s_9, s_13, W2); dit_s!(s_10, s_14, W4); dit_s!(s_11, s_15, W6);
+            bt_s!(s_0, s_8); dit_s!(s_1, s_9, W1); dit_s!(s_2, s_10, W2); dit_s!(s_3, s_11, W3);
+            dit_s!(s_4, s_12, W4); dit_s!(s_5, s_13, W5); dit_s!(s_6, s_14, W6); dit_s!(s_7, s_15, W7);
+        }
+
+        // pw4-19: optional compress-add. When supplied, the initial scalars are added
+        // to the terminal-round outputs BEFORE writing back to state, keeping the chain
+        // register-resident.
+        if let Some(init) = compress_initial {
+            s_0 += init[0]; s_1 += init[1]; s_2 += init[2]; s_3 += init[3];
+            s_4 += init[4]; s_5 += init[5]; s_6 += init[6]; s_7 += init[7];
+            s_8 += init[8]; s_9 += init[9]; s_10 += init[10]; s_11 += init[11];
+            s_12 += init[12]; s_13 += init[13]; s_14 += init[14]; s_15 += init[15];
+        }
+
+        state[0] = s_0; state[1] = s_1; state[2] = s_2; state[3] = s_3;
+        state[4] = s_4; state[5] = s_5; state[6] = s_6; state[7] = s_7;
+        state[8] = s_8; state[9] = s_9; state[10] = s_10; state[11] = s_11;
+        state[12] = s_12; state[13] = s_13; state[14] = s_14; state[15] = s_15;
+    }
+
+    /// SIMD-fast compress: output = permute(input) + input, with the final add fused
+    /// into the terminal-rounds scalar chain (pw4-19). The fusion eliminates the
+    /// post-permute state-array read+write round-trip that compress_in_place's
+    /// generic loop would otherwise perform.
+    #[cfg(any(
+        all(target_arch = "aarch64", target_feature = "neon"),
+        all(target_arch = "x86_64", target_feature = "avx2")
+    ))]
+    #[inline(always)]
+    fn compress_in_place_simd(&self, state: &mut [PackedKB; 16]) {
+        let initial = *state;
+        self.permute_simd_inner(state, Some(&initial));
     }
 
     /// Compression mode: output = permute(input) + input.
@@ -1248,8 +1385,22 @@ impl Poseidon1KoalaBear16 {
         &self,
         state: &mut [R; 16],
     ) {
+        // pw4-19: on SIMD targets, dispatch to compress_in_place_simd which fuses the
+        // final `state += initial` add into the terminal-rounds scalar chain. Saves
+        // the post-permute state-array round-trip.
+        #[cfg(any(
+            all(target_arch = "aarch64", target_feature = "neon"),
+            all(target_arch = "x86_64", target_feature = "avx2")
+        ))]
+        {
+            if std::any::TypeId::of::<R>() == std::any::TypeId::of::<PackedKB>() {
+                let simd_state: &mut [PackedKB; 16] = unsafe { &mut *(state as *mut [R; 16] as *mut [PackedKB; 16]) };
+                self.compress_in_place_simd(simd_state);
+                return;
+            }
+        }
+        // Generic fallback for scalar / symbolic R.
         let initial = *state;
-        // Use permute_mut so the SIMD fast path is dispatched when applicable.
         Permutation::permute_mut(self, state);
         for (s, init) in state.iter_mut().zip(initial) {
             *s += init;
