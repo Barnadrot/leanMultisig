@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 use crate::*;
 use lean_vm::*;
@@ -17,7 +18,43 @@ pub struct ExecutionProof {
     pub metadata: Option<ExecutionMetadata>,
 }
 
+/// M4-specific tuned rayon pool for the leanMultisig prover.
+///
+/// Default rayon uses one worker per logical CPU. On Apple M4 (4 P-core +
+/// 6 E-core, heterogeneous, no SMT), the 10-thread default leaves P-cores
+/// waiting on E-cores at every parallel barrier — profiling.md anchors
+/// this at 18.54% self-time on `__psynch_cvwait`. P-cores are ≈1.62× the
+/// E-core throughput, so the heterogeneity tax (theoretical 30%, effective
+/// 45% per the profile) dominates parallelism efficiency.
+///
+/// Reducing the pool to 8 threads (matching ≈4P + 4E) trades raw thread
+/// count for less heterogeneity skew: P-units lost ≈16%, but cvwait
+/// fraction should drop near-proportionally. Net win iff the cvwait
+/// reduction outweighs the lost P-units.
+const LEAN_RAYON_THREADS: usize = 8;
+
+fn get_lean_pool() -> &'static rayon::ThreadPool {
+    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(LEAN_RAYON_THREADS)
+            .thread_name(|i| format!("lean-rayon-{i}"))
+            .build()
+            .expect("failed to build lean rayon pool")
+    })
+}
+
 pub fn prove_execution(
+    bytecode: &Bytecode,
+    public_input: &[F],
+    witness: &ExecutionWitness,
+    whir_config: &WhirConfigBuilder,
+    vm_profiler: bool,
+) -> Result<ExecutionProof, ProverError> {
+    get_lean_pool().install(move || prove_execution_inner(bytecode, public_input, witness, whir_config, vm_profiler))
+}
+
+fn prove_execution_inner(
     bytecode: &Bytecode,
     public_input: &[F],
     witness: &ExecutionWitness,
