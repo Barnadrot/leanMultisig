@@ -57,6 +57,7 @@ where
     Comp: Compression<[P::Value; WIDTH]> + Compression<[P; WIDTH]>,
 {
     let width = P::WIDTH;
+    let stride = 2 * width;
     let next_len_padded = if prev_layer.len() == 2 {
         1
     } else {
@@ -67,19 +68,50 @@ where
     let default_digest = [P::Value::default(); DIGEST_ELEMS];
     let mut next_digests = vec![default_digest; next_len_padded];
 
-    next_digests[0..next_len]
-        .par_chunks_exact_mut(width)
+    // x2-batched packed path: each closure invocation processes 2*width
+    // leaf-pairs via one compress_x2 call, exposing cross-permutation ILP.
+    let n_x2 = next_len / stride;
+    next_digests[0..n_x2 * stride]
+        .par_chunks_exact_mut(stride)
         .enumerate()
         .for_each(|(i, digests_chunk)| {
-            let first_row = i * width;
-            let left = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k)][j]));
-            let right = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k) + 1][j]));
-            let packed_digest = crate::compress(comp, [left, right]);
-            for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
+            let first_row_a = i * stride;
+            let first_row_b = first_row_a + width;
+            let left_a = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row_a + k)][j]));
+            let right_a =
+                array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row_a + k) + 1][j]));
+            let left_b = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row_b + k)][j]));
+            let right_b =
+                array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row_b + k) + 1][j]));
+            let [packed_a, packed_b] = crate::compress_x2(comp, [left_a, right_a], [left_b, right_b]);
+            let (dst_a, dst_b) = digests_chunk.split_at_mut(width);
+            for (dst, src) in dst_a.iter_mut().zip(unpack_array(packed_a)) {
+                *dst = src;
+            }
+            for (dst, src) in dst_b.iter_mut().zip(unpack_array(packed_b)) {
                 *dst = src;
             }
         });
 
+    // Single packed batch for the remaining [n_x2*stride, next_len/width*width) range
+    // (at most one width-sized chunk left since stride = 2*width).
+    let x1_start = n_x2 * stride;
+    let x1_end = next_len / width * width;
+    if x1_end > x1_start {
+        debug_assert_eq!(x1_end - x1_start, width);
+        let first_row = x1_start;
+        let left = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k)][j]));
+        let right = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k) + 1][j]));
+        let packed_digest = crate::compress(comp, [left, right]);
+        for (dst, src) in next_digests[first_row..first_row + width]
+            .iter_mut()
+            .zip(unpack_array(packed_digest))
+        {
+            *dst = src;
+        }
+    }
+
+    // Scalar tail for [next_len/width*width, next_len).
     for i in (next_len / width * width)..next_len {
         let left = prev_layer[2 * i];
         let right = prev_layer[2 * i + 1];
