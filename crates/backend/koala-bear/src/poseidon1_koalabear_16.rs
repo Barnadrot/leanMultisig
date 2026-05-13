@@ -1028,68 +1028,6 @@ impl Poseidon1KoalaBear16 {
             *s += init;
         }
     }
-
-    /// x2 batched SIMD permutation: two independent packed states, processed
-    /// back-to-back inside one inlined function body. The intent is to expose
-    /// cross-permutation ILP to the OoO scheduler — particularly for filling
-    /// idle slots during MDS_FFT cross-stage butterfly chains and partial-round
-    /// serial points.
-    ///
-    /// Attempt 1: trusts the inliner+scheduler to interleave. If disassembly
-    /// shows two strictly sequential bodies, attempt 2 will manually interleave.
-    #[cfg(any(
-        all(target_arch = "aarch64", target_feature = "neon"),
-        all(target_arch = "x86_64", target_feature = "avx2")
-    ))]
-    #[inline(always)]
-    fn permute_simd_x2(&self, a: &mut [PackedKB; 16], b: &mut [PackedKB; 16]) {
-        self.permute_simd(a);
-        self.permute_simd(b);
-    }
-
-    /// x2 batched permute_mut with TypeId-based SIMD dispatch (mirrors permute_mut).
-    #[inline(always)]
-    fn permute_mut_x2<R: Algebra<KoalaBear> + InjectiveMonomial<3> + Send + Sync + 'static>(
-        &self,
-        a: &mut [R; 16],
-        b: &mut [R; 16],
-    ) {
-        #[cfg(any(
-            all(target_arch = "aarch64", target_feature = "neon"),
-            all(target_arch = "x86_64", target_feature = "avx2")
-        ))]
-        {
-            if std::any::TypeId::of::<R>() == std::any::TypeId::of::<PackedKB>() {
-                // SAFETY: TypeId confirms R == PackedKB; PackedKB is repr(transparent).
-                let a_simd: &mut [PackedKB; 16] =
-                    unsafe { &mut *(a as *mut [R; 16] as *mut [PackedKB; 16]) };
-                let b_simd: &mut [PackedKB; 16] =
-                    unsafe { &mut *(b as *mut [R; 16] as *mut [PackedKB; 16]) };
-                self.permute_simd_x2(a_simd, b_simd);
-                return;
-            }
-        }
-        self.permute_generic(a);
-        self.permute_generic(b);
-    }
-
-    /// x2 batched compression mode: two independent (output = permute(input) + input).
-    #[inline(always)]
-    pub fn compress_in_place_x2<R: Algebra<KoalaBear> + InjectiveMonomial<3> + Send + Sync + 'static>(
-        &self,
-        a: &mut [R; 16],
-        b: &mut [R; 16],
-    ) {
-        let initial_a = *a;
-        let initial_b = *b;
-        self.permute_mut_x2(a, b);
-        for (s, init) in a.iter_mut().zip(initial_a) {
-            *s += init;
-        }
-        for (s, init) in b.iter_mut().zip(initial_b) {
-            *s += init;
-        }
-    }
 }
 
 impl<R: Algebra<KoalaBear> + InjectiveMonomial<3> + Send + Sync + 'static> Permutation<[R; 16]>
