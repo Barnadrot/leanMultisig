@@ -398,9 +398,23 @@ pub fn compute_eval_eq_base_packed_batched<F, EF>(
     }
 
     let n_prefix_levels = n - k;
-    let tile_packed_size = 1 << (k - log_packing_width);
+    let middle_len = k - log_packing_width;
+    let middle_size = 1usize << middle_len;
+    let tile_packed_size = middle_size;
 
-    let per_query: Vec<_> = evals
+    // Per-query precompute: build eq_prefix (extension-field, prefix-indexed)
+    // AND eq_middle (base-field packed, full middle expansion with eq_suffix
+    // already folded in). The tile loop then becomes a single scale_and_add_pf
+    // per (tile, query), instead of re-expanding the middle 2^(n-k) times.
+    //
+    // Cost trade: build eq_middle once per query (2^middle_len packed values)
+    // vs lazy expansion which redoes that work 2^(n-k) times per query. Net
+    // saving: ≈ (2^(n-k) − 1) × O(2^middle_len) muls per query, at the cost
+    // of 2^middle_len × sizeof(F::Packing) bytes per query.
+    //
+    // On M4 base (8 MB SLC), middle_size up to 2^12 (≈ 16 KB per query for
+    // KoalaBear base) fits per-thread caches comfortably.
+    let per_query: Vec<(Vec<EF>, Vec<F::Packing>)> = evals
         .iter()
         .zip(scalars)
         .map(|(eval, &scalar)| {
@@ -408,25 +422,52 @@ pub fn compute_eval_eq_base_packed_batched<F, EF>(
             let eq_suffix = packed_eq_poly::<F, F>(&eval[n - log_packing_width..], F::ONE);
             let mut eq_prefix: Vec<EF> = unsafe { uninitialized_vec(1 << n_prefix_levels) };
             eval_eq_basic::<F, F, EF, false>(&eval[..n_prefix_levels], &mut eq_prefix, scalar);
-            (eq_prefix, middle, eq_suffix)
+
+            let mut eq_middle: Vec<F::Packing> = unsafe { uninitialized_vec(middle_size) };
+            build_eq_middle_base_packed::<F>(middle, &mut eq_middle, eq_suffix);
+
+            (eq_prefix, eq_middle)
         })
         .collect();
 
     out.par_chunks_exact_mut(tile_packed_size)
         .enumerate()
         .for_each(|(tile_idx, out_tile)| {
-            for (eq_prefix, middle, eq_suffix) in &per_query {
-                // Here e could precompute the eq poly, trading some memory for less computation
-                // (2x faster on M4 max, but 2x slower on machines with smaller caches.
-                // TODO implement both and choose based on cache size?)
-                base_eval_eq_packed_with_packed_output::<F, EF, true>(
-                    middle,
-                    out_tile,
-                    *eq_suffix,
-                    EF::ExtensionPacking::from(eq_prefix[tile_idx]),
-                );
+            for (eq_prefix, eq_middle) in &per_query {
+                let packed_scalar = EF::ExtensionPacking::from(eq_prefix[tile_idx]);
+                scale_and_add_pf::<F, EF, true>(out_tile, eq_middle, packed_scalar);
             }
         });
+}
+
+/// Build the eq-poly expansion for `eval_points` into `out`, with the leaf
+/// scalar `eq_evals` already folded in. Mirrors the recursive structure of
+/// `base_eval_eq_packed_with_packed_output` but writes into `F::Packing`
+/// (no extension-field scaling). Used by the batched eq path to precompute
+/// each query's middle once instead of re-expanding per tile.
+fn build_eq_middle_base_packed<F: Field>(
+    eval_points: &[F],
+    out: &mut [F::Packing],
+    eq_evals: F::Packing,
+) {
+    debug_assert_eq!(out.len(), 1 << eval_points.len());
+    match eval_points.len() {
+        0 => {
+            debug_assert_eq!(F::Packing::WIDTH, 1);
+            out[0] = eq_evals;
+        }
+        1 => out.copy_from_slice(&eval_eq_1(eval_points, eq_evals)),
+        2 => out.copy_from_slice(&eval_eq_2(eval_points, eq_evals)),
+        3 => out.copy_from_slice(&eval_eq_3(eval_points, eq_evals)),
+        _ => {
+            let (&x, tail) = eval_points.split_first().unwrap();
+            let (low, high) = out.split_at_mut(out.len() / 2);
+            let s1 = eq_evals * x;
+            let s0 = eq_evals - s1;
+            build_eq_middle_base_packed::<F>(tail, low, s0);
+            build_eq_middle_base_packed::<F>(tail, high, s1);
+        }
+    }
 }
 
 /// Fills the `buffer` with evaluations of the equality polynomial
