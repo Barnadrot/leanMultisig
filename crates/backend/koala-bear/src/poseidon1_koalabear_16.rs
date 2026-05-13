@@ -941,13 +941,63 @@ impl Poseidon1KoalaBear16 {
         /// FFT MDS: state = C * state.
         /// Uses lambda/16 eigenvalues so no separate /16 step needed.
         /// C * x = DIT_FFT((lambda/16) ⊙ DIF_IFFT(x))
+        ///
+        /// Lambda-fused variant: the 16 free-standing `state[i] *= lambda[i]`
+        /// muls are absorbed into the first layer of DIT_FFT (which is 8 zero-mul
+        /// butterflies). This removes the dep-chain edge between the lambda step
+        /// and the bt outputs, letting muls and add/sub schedule in parallel
+        /// (vs. sequentially as separate phases).
         #[inline(always)]
         fn mds_fft(state: &mut [PackedKB; 16], lambda16: &[PackedKB; 16]) {
             dif_ifft_16_mut(state);
-            for i in 0..16 {
-                state[i] *= lambda16[i];
+            // --- Lambda-fused dit_fft_16 ---
+            // Layer 1: 8 lambda-fused butterflies (replaces:
+            //   `state[i] *= lambda[i]` then `bt(state, lo, hi)`).
+            // For each (lo, hi) pair: a = state[lo] * lambda[lo],
+            //                        b = state[hi] * lambda[hi],
+            //                        state[lo] = a + b,
+            //                        state[hi] = a - b.
+            macro_rules! bt_lam {
+                ($lo:expr, $hi:expr) => {{
+                    let a = state[$lo] * lambda16[$lo];
+                    let b = state[$hi] * lambda16[$hi];
+                    state[$lo] = a + b;
+                    state[$hi] = a - b;
+                }};
             }
-            dit_fft_16_mut(state);
+            bt_lam!(0, 1);
+            bt_lam!(2, 3);
+            bt_lam!(4, 5);
+            bt_lam!(6, 7);
+            bt_lam!(8, 9);
+            bt_lam!(10, 11);
+            bt_lam!(12, 13);
+            bt_lam!(14, 15);
+            // Layers 2-4: standard dit_fft (twiddles are KoalaBear scalars).
+            bt(state, 0, 2);
+            dit(state, 1, 3, W4);
+            bt(state, 4, 6);
+            dit(state, 5, 7, W4);
+            bt(state, 8, 10);
+            dit(state, 9, 11, W4);
+            bt(state, 12, 14);
+            dit(state, 13, 15, W4);
+            bt(state, 0, 4);
+            dit(state, 1, 5, W2);
+            dit(state, 2, 6, W4);
+            dit(state, 3, 7, W6);
+            bt(state, 8, 12);
+            dit(state, 9, 13, W2);
+            dit(state, 10, 14, W4);
+            dit(state, 11, 15, W6);
+            bt(state, 0, 8);
+            dit(state, 1, 9, W1);
+            dit(state, 2, 10, W2);
+            dit(state, 3, 11, W3);
+            dit(state, 4, 12, W4);
+            dit(state, 5, 13, W5);
+            dit(state, 6, 14, W6);
+            dit(state, 7, 15, W7);
         }
 
         // --- Initial full rounds (first 3 of 4) ---
