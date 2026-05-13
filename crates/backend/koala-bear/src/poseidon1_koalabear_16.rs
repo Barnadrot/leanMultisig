@@ -972,36 +972,102 @@ impl Poseidon1KoalaBear16 {
             }
         }
 
-        // --- Partial rounds loop with latency hiding via InternalLayer16 split ---
+        // --- Partial rounds loop with explicit s_hi register-resident scalars (Tier 1 #3) ---
+        //
+        // Rationale: profile baseline pinpointed `vmovdqa64 %zmm3, 0x780(%rsp,%rsi,1)` at
+        // 2.22% as the hottest line in compress_mut. Disassembly confirms this is the
+        // rank-1 update WRITE to split.s_hi[j] — the per-iteration store of the updated
+        // s_hi value back to the InternalLayer16 stack slot. Because the compiler treats
+        // `split.s_hi: [__m512i; 15]` as a memory-backed array, every rank-1 update and
+        // every dot_product read of an s_hi[j] hits memory rather than a register.
+        //
+        // Rewrite the partial-round loop to bind the 15 s_hi values to scalar locals,
+        // so the compiler can keep them resident in zmm registers across the 20 rounds.
+        // Each round still loads `simd.packed_sparse_first_row[r][1..]` and
+        // `simd.packed_sparse_v[r][..15]` from memory (these are read-only constants;
+        // L1 prefetch handles them).
+        //
+        // Also includes pw4-7's identity-mul drop: first_row[0] = mds[0][0] = 1, so
+        // `s0_val * first_row[0]` is identity and we use `s0_val + partial_dot` directly.
         {
             let mut split = InternalLayer16::from_packed_field_array(*state);
+            let mut s0 = split.s0;
+            let mut s_hi_arr: [PackedKB; 15] = unsafe { transmute(split.s_hi) };
+            let [
+                mut s_hi_0, mut s_hi_1, mut s_hi_2, mut s_hi_3, mut s_hi_4,
+                mut s_hi_5, mut s_hi_6, mut s_hi_7, mut s_hi_8, mut s_hi_9,
+                mut s_hi_10, mut s_hi_11, mut s_hi_12, mut s_hi_13, mut s_hi_14,
+            ] = s_hi_arr;
+            // `s_hi_arr` keeps a fallback path open if the local-binding pattern
+            // doesn't survive LTO; assign back at the end before re-binding into split.
+            let _ = &mut s_hi_arr;
 
             for r in 0..POSEIDON1_PARTIAL_ROUNDS {
-                // PATH A (high latency): S-box on s0 only.
-                split.s0 = sbox::<FP, 3>(split.s0);
-
-                // Add scalar round constant (except last round).
+                s0 = sbox::<FP, 3>(s0);
                 if r < POSEIDON1_PARTIAL_ROUNDS - 1 {
-                    split.s0 += simd.packed_round_constants[r];
+                    s0 += simd.packed_round_constants[r];
                 }
 
-                // PATH B (can overlap with S-box): partial dot product on s_hi.
-                let s_hi: &[PackedKB; 15] = unsafe { transmute(&split.s_hi) };
-                let first_row = &simd.packed_sparse_first_row[r];
-                let first_row_hi: &[PackedKB; 15] = first_row[1..].try_into().unwrap();
-                let partial_dot = PackedKB::dot_product(s_hi, first_row_hi);
+                let first_row_hi = &simd.packed_sparse_first_row[r];
+                // Manual dot product over 15 scalars + 15 constants; the function call
+                // is removed so the compiler sees all s_hi locals live in registers.
+                let w1 = first_row_hi[1];
+                let w2 = first_row_hi[2];
+                let w3 = first_row_hi[3];
+                let w4 = first_row_hi[4];
+                let w5 = first_row_hi[5];
+                let w6 = first_row_hi[6];
+                let w7 = first_row_hi[7];
+                let w8 = first_row_hi[8];
+                let w9 = first_row_hi[9];
+                let w10 = first_row_hi[10];
+                let w11 = first_row_hi[11];
+                let w12 = first_row_hi[12];
+                let w13 = first_row_hi[13];
+                let w14 = first_row_hi[14];
+                let w15 = first_row_hi[15];
+                // Use the dot_product primitive on a stack-built array; the explicit
+                // 15-arg form makes each s_hi_* read explicit at the call site.
+                let dot_lhs: [PackedKB; 15] = [
+                    s_hi_0, s_hi_1, s_hi_2, s_hi_3, s_hi_4, s_hi_5, s_hi_6, s_hi_7,
+                    s_hi_8, s_hi_9, s_hi_10, s_hi_11, s_hi_12, s_hi_13, s_hi_14,
+                ];
+                let dot_rhs: [PackedKB; 15] = [w1, w2, w3, w4, w5, w6, w7, w8, w9, w10, w11, w12, w13, w14, w15];
+                let partial_dot = PackedKB::dot_product(&dot_lhs, &dot_rhs);
 
-                // SERIAL: complete s0 = first_row[0] * s0 + partial_dot.
-                let s0_val = split.s0;
-                split.s0 = s0_val * first_row[0] + partial_dot;
+                // pw4-7 identity-mul drop: s0_val * first_row[0] = s0_val * 1 = s0_val.
+                let s0_val = s0;
+                s0 = s0_val + partial_dot;
 
-                // Rank-1 update: s_hi[j] += s0_old * v[j].
                 let v = &simd.packed_sparse_v[r];
-                let s_hi_mut: &mut [PackedKB; 15] = unsafe { transmute(&mut split.s_hi) };
-                for j in 0..15 {
-                    s_hi_mut[j] += s0_val * v[j];
-                }
+                let v0 = v[0]; let v1 = v[1]; let v2 = v[2]; let v3 = v[3]; let v4 = v[4];
+                let v5 = v[5]; let v6 = v[6]; let v7 = v[7]; let v8 = v[8]; let v9 = v[9];
+                let v10 = v[10]; let v11 = v[11]; let v12 = v[12]; let v13 = v[13]; let v14 = v[14];
+
+                s_hi_0 += s0_val * v0;
+                s_hi_1 += s0_val * v1;
+                s_hi_2 += s0_val * v2;
+                s_hi_3 += s0_val * v3;
+                s_hi_4 += s0_val * v4;
+                s_hi_5 += s0_val * v5;
+                s_hi_6 += s0_val * v6;
+                s_hi_7 += s0_val * v7;
+                s_hi_8 += s0_val * v8;
+                s_hi_9 += s0_val * v9;
+                s_hi_10 += s0_val * v10;
+                s_hi_11 += s0_val * v11;
+                s_hi_12 += s0_val * v12;
+                s_hi_13 += s0_val * v13;
+                s_hi_14 += s0_val * v14;
             }
+
+            // Write back into split.
+            split.s0 = s0;
+            let out_arr: [PackedKB; 15] = [
+                s_hi_0, s_hi_1, s_hi_2, s_hi_3, s_hi_4, s_hi_5, s_hi_6, s_hi_7,
+                s_hi_8, s_hi_9, s_hi_10, s_hi_11, s_hi_12, s_hi_13, s_hi_14,
+            ];
+            split.s_hi = unsafe { transmute(out_arr) };
 
             *state = unsafe { split.to_packed_field_array() };
         }
@@ -1053,6 +1119,9 @@ impl<R: Algebra<KoalaBear> + InjectiveMonomial<3> + Send + Sync + 'static> Permu
 }
 
 pub fn default_koalabear_poseidon1_16() -> Poseidon1KoalaBear16 {
+    // SIMD partial-round inner loop drops `s0_val * sparse_first_row[r][0]` because
+    // that constant is structurally 1 (pw4-7). Catch any future MDS_CIRC_COL change.
+    debug_assert_eq!(MDS_CIRC_COL[0], KoalaBear::new(1));
     Poseidon1KoalaBear16 { pre: precomputed() }
 }
 
