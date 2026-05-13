@@ -197,6 +197,27 @@ pub(crate) fn global_dft<F: Field>() -> Arc<EvalsDft<F>> {
         .unwrap()
 }
 
+/// M4-specific tuned rayon thread count. See lean_prover::prove_execution
+/// for rationale; in short, on M4 4P+6E heterogeneous cores the default
+/// 10-thread rayon pool leaves P-cores waiting on E-cores at every barrier
+/// (cvwait 18.54% self-time). Pinning the global pool to 8 threads trades
+/// raw thread count for less P/E skew. Set BEFORE update_twiddles so the
+/// pool is established early enough to register its workers with zkalloc.
+const LEAN_RAYON_THREADS: usize = 8;
+
+fn ensure_lean_rayon_pool() {
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        // Ignore the Result: if some upstream caller already initialized rayon
+        // (e.g. from a non-leanMultisig consumer of this crate), we accept that.
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(LEAN_RAYON_THREADS)
+            .thread_name(|i| format!("lean-rayon-{i}"))
+            .build_global();
+    });
+}
+
 pub fn precompute_dft_twiddles<F: TwoAdicField>(n: usize) {
+    ensure_lean_rayon_pool();
     global_dft::<F>().update_twiddles(n);
 }
