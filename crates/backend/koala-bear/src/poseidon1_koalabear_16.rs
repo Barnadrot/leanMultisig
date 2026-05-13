@@ -951,12 +951,173 @@ impl Poseidon1KoalaBear16 {
         }
 
         // --- Initial full rounds (first 3 of 4) ---
-        for round_constants in &simd.packed_initial_rc {
-            for (s, &rc) in state.iter_mut().zip(round_constants.iter()) {
-                add_rc_and_sbox::<FP, 3>(s, rc);
-            }
-            mds_fft(state, lambda16);
+        //
+        // pw4-15: scalar-bind state across the initial full rounds and inline mds_fft
+        // butterflies over the named locals. Same pattern as pw4-13 for partial rounds:
+        // `state: [PackedKB; 16]` is memory-backed when passed by `&mut` to mds_fft, so
+        // butterflies (32 adds, 16 muls, 32 more adds per call × 3 rounds) hit memory.
+        // Naming s_0..s_15 lets the compiler keep them register-resident.
+        macro_rules! bt_s {
+            ($a:ident, $b:ident) => {{
+                let lo = $a; let hi = $b;
+                $a = lo + hi;
+                $b = lo - hi;
+            }};
         }
+        macro_rules! neg_dif_s {
+            ($a:ident, $b:ident, $t:expr) => {{
+                let lo = $a; let hi = $b;
+                $a = lo + hi;
+                $b = (hi - lo) * $t;
+            }};
+        }
+        macro_rules! dit_s {
+            ($a:ident, $b:ident, $t:expr) => {{
+                let lo = $a; let tb = $b * $t;
+                $a = lo + tb;
+                $b = lo - tb;
+            }};
+        }
+
+        let mut s_0 = state[0];
+        let mut s_1 = state[1];
+        let mut s_2 = state[2];
+        let mut s_3 = state[3];
+        let mut s_4 = state[4];
+        let mut s_5 = state[5];
+        let mut s_6 = state[6];
+        let mut s_7 = state[7];
+        let mut s_8 = state[8];
+        let mut s_9 = state[9];
+        let mut s_10 = state[10];
+        let mut s_11 = state[11];
+        let mut s_12 = state[12];
+        let mut s_13 = state[13];
+        let mut s_14 = state[14];
+        let mut s_15 = state[15];
+
+        for round_constants in &simd.packed_initial_rc {
+            add_rc_and_sbox::<FP, 3>(&mut s_0, round_constants[0]);
+            add_rc_and_sbox::<FP, 3>(&mut s_1, round_constants[1]);
+            add_rc_and_sbox::<FP, 3>(&mut s_2, round_constants[2]);
+            add_rc_and_sbox::<FP, 3>(&mut s_3, round_constants[3]);
+            add_rc_and_sbox::<FP, 3>(&mut s_4, round_constants[4]);
+            add_rc_and_sbox::<FP, 3>(&mut s_5, round_constants[5]);
+            add_rc_and_sbox::<FP, 3>(&mut s_6, round_constants[6]);
+            add_rc_and_sbox::<FP, 3>(&mut s_7, round_constants[7]);
+            add_rc_and_sbox::<FP, 3>(&mut s_8, round_constants[8]);
+            add_rc_and_sbox::<FP, 3>(&mut s_9, round_constants[9]);
+            add_rc_and_sbox::<FP, 3>(&mut s_10, round_constants[10]);
+            add_rc_and_sbox::<FP, 3>(&mut s_11, round_constants[11]);
+            add_rc_and_sbox::<FP, 3>(&mut s_12, round_constants[12]);
+            add_rc_and_sbox::<FP, 3>(&mut s_13, round_constants[13]);
+            add_rc_and_sbox::<FP, 3>(&mut s_14, round_constants[14]);
+            add_rc_and_sbox::<FP, 3>(&mut s_15, round_constants[15]);
+
+            // DIF-IFFT inlined with scalar locals (32 butterflies).
+            bt_s!(s_0, s_8);
+            neg_dif_s!(s_1, s_9, W7);
+            neg_dif_s!(s_2, s_10, W6);
+            neg_dif_s!(s_3, s_11, W5);
+            neg_dif_s!(s_4, s_12, W4);
+            neg_dif_s!(s_5, s_13, W3);
+            neg_dif_s!(s_6, s_14, W2);
+            neg_dif_s!(s_7, s_15, W1);
+            bt_s!(s_0, s_4);
+            neg_dif_s!(s_1, s_5, W6);
+            neg_dif_s!(s_2, s_6, W4);
+            neg_dif_s!(s_3, s_7, W2);
+            bt_s!(s_8, s_12);
+            neg_dif_s!(s_9, s_13, W6);
+            neg_dif_s!(s_10, s_14, W4);
+            neg_dif_s!(s_11, s_15, W2);
+            bt_s!(s_0, s_2);
+            neg_dif_s!(s_1, s_3, W4);
+            bt_s!(s_4, s_6);
+            neg_dif_s!(s_5, s_7, W4);
+            bt_s!(s_8, s_10);
+            neg_dif_s!(s_9, s_11, W4);
+            bt_s!(s_12, s_14);
+            neg_dif_s!(s_13, s_15, W4);
+            bt_s!(s_0, s_1);
+            bt_s!(s_2, s_3);
+            bt_s!(s_4, s_5);
+            bt_s!(s_6, s_7);
+            bt_s!(s_8, s_9);
+            bt_s!(s_10, s_11);
+            bt_s!(s_12, s_13);
+            bt_s!(s_14, s_15);
+
+            // Lambda multiply (eigenvalues * inv16).
+            s_0 *= lambda16[0];
+            s_1 *= lambda16[1];
+            s_2 *= lambda16[2];
+            s_3 *= lambda16[3];
+            s_4 *= lambda16[4];
+            s_5 *= lambda16[5];
+            s_6 *= lambda16[6];
+            s_7 *= lambda16[7];
+            s_8 *= lambda16[8];
+            s_9 *= lambda16[9];
+            s_10 *= lambda16[10];
+            s_11 *= lambda16[11];
+            s_12 *= lambda16[12];
+            s_13 *= lambda16[13];
+            s_14 *= lambda16[14];
+            s_15 *= lambda16[15];
+
+            // DIT-FFT inlined with scalar locals (32 butterflies).
+            bt_s!(s_0, s_1);
+            bt_s!(s_2, s_3);
+            bt_s!(s_4, s_5);
+            bt_s!(s_6, s_7);
+            bt_s!(s_8, s_9);
+            bt_s!(s_10, s_11);
+            bt_s!(s_12, s_13);
+            bt_s!(s_14, s_15);
+            bt_s!(s_0, s_2);
+            dit_s!(s_1, s_3, W4);
+            bt_s!(s_4, s_6);
+            dit_s!(s_5, s_7, W4);
+            bt_s!(s_8, s_10);
+            dit_s!(s_9, s_11, W4);
+            bt_s!(s_12, s_14);
+            dit_s!(s_13, s_15, W4);
+            bt_s!(s_0, s_4);
+            dit_s!(s_1, s_5, W2);
+            dit_s!(s_2, s_6, W4);
+            dit_s!(s_3, s_7, W6);
+            bt_s!(s_8, s_12);
+            dit_s!(s_9, s_13, W2);
+            dit_s!(s_10, s_14, W4);
+            dit_s!(s_11, s_15, W6);
+            bt_s!(s_0, s_8);
+            dit_s!(s_1, s_9, W1);
+            dit_s!(s_2, s_10, W2);
+            dit_s!(s_3, s_11, W3);
+            dit_s!(s_4, s_12, W4);
+            dit_s!(s_5, s_13, W5);
+            dit_s!(s_6, s_14, W6);
+            dit_s!(s_7, s_15, W7);
+        }
+
+        // Write back into state array for the fused-mi-mds last initial round.
+        state[0] = s_0;
+        state[1] = s_1;
+        state[2] = s_2;
+        state[3] = s_3;
+        state[4] = s_4;
+        state[5] = s_5;
+        state[6] = s_6;
+        state[7] = s_7;
+        state[8] = s_8;
+        state[9] = s_9;
+        state[10] = s_10;
+        state[11] = s_11;
+        state[12] = s_12;
+        state[13] = s_13;
+        state[14] = s_14;
+        state[15] = s_15;
 
         // --- Last initial full round: AddRC + S-box, then fused (m_i * MDS) ---
         // Fuses: MDS(state) + first_rc → m_i * (MDS(state) + first_rc)
