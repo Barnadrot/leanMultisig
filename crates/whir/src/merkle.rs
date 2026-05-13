@@ -231,42 +231,6 @@ where
 
     let mut digests = unsafe { uninitialized_vec(height) };
 
-    // Target C.1 fast-path: when full_width == WIDTH (the sponge would do
-    // exactly one compress) AND matrix_width ≤ RATE (= DIGEST_ELEMS in the
-    // leanMultisig configuration; leaf fits in the upper-half "rate" slot
-    // of state), bypass hash_rtl_iter's iterator-machinery + 16-position
-    // state-fill loop and call compress directly with [leaf_padded, zeros].
-    //
-    // Equivalence: hash_rtl_iter for these parameters produces
-    //   state[c] = P::from_fn(|k| rows[k][c]) for c in 0..matrix_width
-    //   state[c] = 0                          for c in matrix_width..WIDTH
-    // then one compress; compress(perm, [hi, lo]) with hi[c<matrix_width] =
-    // packed col c, hi[c≥matrix_width] = 0, and lo = zeros produces the
-    // same state and same compress.
-    if full_width == WIDTH && matrix_width <= DIGEST_ELEMS {
-        digests
-            .par_chunks_exact_mut(width)
-            .enumerate()
-            .for_each(|(i, digests_chunk)| {
-                let first_row = i * width;
-                let rows = matrix.wrapping_row_slices(first_row, width);
-                let hi: [P; DIGEST_ELEMS] = std::array::from_fn(|c| {
-                    if c < matrix_width {
-                        P::from_fn(|k| rows[k][c])
-                    } else {
-                        P::default()
-                    }
-                });
-                let lo = [P::default(); DIGEST_ELEMS];
-                let packed_digest: [P; DIGEST_ELEMS] =
-                    symetric::compress::<P, Perm, DIGEST_ELEMS, WIDTH>(perm, [hi, lo]);
-                for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                    *dst = src;
-                }
-            });
-        return digests;
-    }
-
     digests
         .par_chunks_exact_mut(width)
         .enumerate()
