@@ -67,51 +67,11 @@ where
     let default_digest = [P::Value::default(); DIGEST_ELEMS];
     let mut next_digests = vec![default_digest; next_len_padded];
 
-    // x2 path: process two SIMD chunks per rayon task so the underlying
-    // permutation can interleave them (Poseidon1KoalaBear16 on AVX-512 does
-    // this; other Compression impls fall back to two sequential compresses).
-    let pair_width = 2 * width;
-    let n_pairs = next_len / pair_width;
-
-    next_digests[0..n_pairs * pair_width]
-        .par_chunks_exact_mut(pair_width)
-        .enumerate()
-        .for_each(|(pair_idx, digests_pair_chunk)| {
-            let first_row_a = (2 * pair_idx) * width;
-            let first_row_b = (2 * pair_idx + 1) * width;
-            let mut state_a: [P; WIDTH] = array::from_fn(|j| {
-                if j < DIGEST_ELEMS {
-                    P::from_fn(|k| prev_layer[2 * (first_row_a + k)][j])
-                } else {
-                    P::from_fn(|k| prev_layer[2 * (first_row_a + k) + 1][j - DIGEST_ELEMS])
-                }
-            });
-            let mut state_b: [P; WIDTH] = array::from_fn(|j| {
-                if j < DIGEST_ELEMS {
-                    P::from_fn(|k| prev_layer[2 * (first_row_b + k)][j])
-                } else {
-                    P::from_fn(|k| prev_layer[2 * (first_row_b + k) + 1][j - DIGEST_ELEMS])
-                }
-            });
-            comp.compress_mut_x2(&mut state_a, &mut state_b);
-            let packed_a: [P; DIGEST_ELEMS] = state_a[..DIGEST_ELEMS].try_into().unwrap();
-            let packed_b: [P; DIGEST_ELEMS] = state_b[..DIGEST_ELEMS].try_into().unwrap();
-            let (left_half, right_half) = digests_pair_chunk.split_at_mut(width);
-            for (dst, src) in left_half.iter_mut().zip(unpack_array(packed_a)) {
-                *dst = src;
-            }
-            for (dst, src) in right_half.iter_mut().zip(unpack_array(packed_b)) {
-                *dst = src;
-            }
-        });
-
-    // Tail: any remaining SIMD-width-aligned chunk after the pairs.
-    let n_simd_done = n_pairs * pair_width;
-    next_digests[n_simd_done..(next_len / width * width)]
+    next_digests[0..next_len]
         .par_chunks_exact_mut(width)
         .enumerate()
         .for_each(|(i, digests_chunk)| {
-            let first_row = n_simd_done + i * width;
+            let first_row = i * width;
             let left = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k)][j]));
             let right = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k) + 1][j]));
             let packed_digest = crate::compress(comp, [left, right]);
@@ -120,7 +80,6 @@ where
             }
         });
 
-    // Scalar tail for any non-SIMD-aligned remainder.
     for i in (next_len / width * width)..next_len {
         let left = prev_layer[2 * i];
         let right = prev_layer[2 * i + 1];
