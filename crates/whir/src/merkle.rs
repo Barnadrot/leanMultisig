@@ -264,9 +264,63 @@ where
     let height = matrix.height();
     assert!(height.is_multiple_of(width));
     let n_pad = (RATE - effective_base_width % RATE) % RATE;
+    let total_iter_len = effective_base_width + n_pad;
+    debug_assert_eq!(total_iter_len % RATE, 0);
+    let n_compresses = total_iter_len / RATE;
 
     let mut digests = unsafe { uninitialized_vec(height) };
 
+    // h14 attempt 2: tiled per-chunk hashing with concrete &[T] slice types.
+    //
+    // Per chunk, load each row's full width into a concrete &[T] (no Vec alloc,
+    // no impl Deref indirection), then assemble state from a small stack scratch
+    // buffer for each compress chunk. This lets LLVM see explicit bounds and
+    // unroll the position loops.
+    if width == 4 {
+        let row_w = matrix.width();
+        digests
+            .par_chunks_exact_mut(width)
+            .enumerate()
+            .for_each(|(chunk_i, digests_chunk)| {
+                let first_row = chunk_i * width;
+                let r0_d = unsafe { matrix.row_subslice_unchecked(first_row, 0, row_w) };
+                let r1_d = unsafe { matrix.row_subslice_unchecked((first_row + 1) % height, 0, row_w) };
+                let r2_d = unsafe { matrix.row_subslice_unchecked((first_row + 2) % height, 0, row_w) };
+                let r3_d = unsafe { matrix.row_subslice_unchecked((first_row + 3) % height, 0, row_w) };
+                let r0: &[P::Value] = &*r0_d;
+                let r1: &[P::Value] = &*r1_d;
+                let r2: &[P::Value] = &*r2_d;
+                let r3: &[P::Value] = &*r3_d;
+
+                let mut state = *packed_initial_state;
+
+                for c_idx in 0..n_compresses {
+                    let mut scratch: [[P::Value; RATE]; 4] = [[P::Value::default(); RATE]; 4];
+                    for pos in 0..RATE {
+                        let iter_pos = c_idx * RATE + pos;
+                        if iter_pos >= n_pad {
+                            let col = effective_base_width - 1 - (iter_pos - n_pad);
+                            scratch[0][pos] = r0[col];
+                            scratch[1][pos] = r1[col];
+                            scratch[2][pos] = r2[col];
+                            scratch[3][pos] = r3[col];
+                        }
+                    }
+                    for pos in 0..RATE {
+                        state[WIDTH - 1 - pos] = P::from_fn(|i| scratch[i][pos]);
+                    }
+                    perm.compress_mut(&mut state);
+                }
+
+                let packed_digest: [P; DIGEST_ELEMS] = state[..DIGEST_ELEMS].try_into().unwrap();
+                for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
+                    *dst = src;
+                }
+            });
+        return digests;
+    }
+
+    // Fallback for non-4 widths.
     digests
         .par_chunks_exact_mut(width)
         .enumerate()
