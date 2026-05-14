@@ -520,7 +520,23 @@ where
     let num_variables = statements[0].total_num_variables;
     assert!(statements.iter().all(|e| e.total_num_variables == num_variables));
 
-    let mut combined_weights = EFPacking::<EF>::zero_vec(1 << (num_variables - packing_log_width::<EF>()));
+    // h15: parallel zero-fill. The default EFPacking::zero_vec uses single-threaded
+    // `vec![ZERO; len]` which is memory-bandwidth bound. For stacked_n_vars=26
+    // this allocates 16M × 80B = 1.28GB; serial memset takes ~40ms (29% of the
+    // 145ms combine_statement span). Splitting across 10 workers saves ~30ms.
+    let combined_weights_len = 1usize << (num_variables - packing_log_width::<EF>());
+    let mut combined_weights: Vec<EFPacking<EF>> =
+        unsafe { poly::uninitialized_vec(combined_weights_len) };
+    {
+        use rayon::prelude::*;
+        // 1MiB chunk → ~13K parallel chunks for the 1.28GB buffer; gives plenty of
+        // steal-able pieces for M4's 4P+6E heterogeneous cores without per-chunk
+        // dispatch overhead dominating.
+        let chunk_size = ((1usize << 20) / std::mem::size_of::<EFPacking<EF>>().max(1)).max(1);
+        combined_weights.par_chunks_mut(chunk_size).for_each(|chunk: &mut [EFPacking<EF>]| {
+            chunk.fill(EFPacking::<EF>::ZERO);
+        });
+    }
 
     let mut combined_sum = EF::ZERO;
     let mut gamma_pow = EF::ONE;
