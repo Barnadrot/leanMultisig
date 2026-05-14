@@ -192,9 +192,16 @@ where
         // The middle elements are the ones which will be computed in parallel.
         // The last log_packing_width elements are the ones which will be packed.
 
-        // We make a buffer of elements of size `NUM_THREADS`.
-        let mut parallel_buffer = EF::ExtensionPacking::zero_vec(NUM_THREADS_PADDED);
-        let out_chunk_size = out.len() / NUM_THREADS_PADDED;
+        // M4-tuned: 2x finer parallelism (NUM_THREADS_PADDED * 2 chunks vs
+        // NUM_THREADS_PADDED) to give P-cores work to steal when E-cores
+        // lag at the par_iter barrier. With 16 base chunks across 10 workers,
+        // 6 worker slots sit idle until the imbalance resolves; 32 chunks
+        // expose more steal-able pieces.
+        const PARALLEL_OVERSUB_FACTOR: usize = 2;
+        let total_chunks = NUM_THREADS_PADDED * PARALLEL_OVERSUB_FACTOR;
+        let mut parallel_buffer = EF::ExtensionPacking::zero_vec(total_chunks);
+        let out_chunk_size = out.len() / total_chunks;
+        let log_total_chunks = LOG_NUM_THREADS + 1; // log2(2x)
 
         // Compute the equality polynomial corresponding to the last log_packing_width elements
         // and pack these.
@@ -202,14 +209,14 @@ where
 
         // Update the buffer so it contains the evaluations of the equality polynomial
         // with respect to parts one and three.
-        fill_buffer(eval[..LOG_NUM_THREADS].iter().rev(), &mut parallel_buffer);
+        fill_buffer(eval[..log_total_chunks].iter().rev(), &mut parallel_buffer);
 
         // Finally do all computations involving the middle elements in parallel.
         out.par_chunks_exact_mut(out_chunk_size)
             .zip(parallel_buffer.par_iter())
             .for_each(|(out_chunk, buffer_val)| {
                 eval_eq_with_packed_output::<_, _, INITIALIZED>(
-                    &eval[LOG_NUM_THREADS..(eval.len() - log_packing_width)],
+                    &eval[log_total_chunks..(eval.len() - log_packing_width)],
                     out_chunk,
                     *buffer_val,
                 );
