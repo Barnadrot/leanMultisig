@@ -931,12 +931,19 @@ impl Poseidon1KoalaBear16 {
         all(target_arch = "x86_64", target_feature = "avx2")
     ))]
     #[inline(always)]
-    fn permute_simd(&self, state: &mut [PackedKB; 16]) {
+    fn permute_simd(&self, state_out: &mut [PackedKB; 16]) {
         use crate::{InternalLayer16, add_rc_and_sbox, sbox};
         use core::mem::transmute;
 
         let simd = &self.pre.simd;
         let lambda16 = &simd.packed_lambda_over_16;
+
+        // Hoist state into a local SSA array. LLVM was emitting load/store
+        // traffic through `*state_out` between full rounds (the 16-iter
+        // add_rc/sbox loop body at 0x483430 in h5 binary reads state[i]
+        // from (%rsi,%rdx) and writes back every iteration). With a local
+        // array, LLVM tracks state[i] as SSA values resident in 16 ZMMs.
+        let mut state: [PackedKB; 16] = *state_out;
 
         /// FFT MDS: state = C * state.
         /// Uses lambda/16 eigenvalues so no separate /16 step needed.
@@ -955,7 +962,7 @@ impl Poseidon1KoalaBear16 {
             for (s, &rc) in state.iter_mut().zip(round_constants.iter()) {
                 add_rc_and_sbox::<FP, 3>(s, rc);
             }
-            mds_fft(state, lambda16);
+            mds_fft(&mut state, lambda16);
         }
 
         // --- Last initial full round: AddRC + S-box, then fused (m_i * MDS) ---
@@ -966,7 +973,7 @@ impl Poseidon1KoalaBear16 {
             for (s, &rc) in state.iter_mut().zip(simd.packed_last_initial_rc.iter()) {
                 add_rc_and_sbox::<FP, 3>(s, rc);
             }
-            let input = *state;
+            let input = state;
             for (i, state_i) in state.iter_mut().enumerate() {
                 *state_i = PackedKB::dot_product(&input, &simd.packed_fused_mi_mds[i]) + simd.packed_fused_bias[i];
             }
@@ -974,7 +981,7 @@ impl Poseidon1KoalaBear16 {
 
         // --- Partial rounds loop with latency hiding via InternalLayer16 split ---
         {
-            let mut split = InternalLayer16::from_packed_field_array(*state);
+            let mut split = InternalLayer16::from_packed_field_array(state);
 
             for r in 0..POSEIDON1_PARTIAL_ROUNDS {
                 // PATH A (high latency): S-box on s0 only.
@@ -1021,7 +1028,7 @@ impl Poseidon1KoalaBear16 {
                 s_hi_mut[14] += s0_val * v[14];
             }
 
-            *state = unsafe { split.to_packed_field_array() };
+            state = unsafe { split.to_packed_field_array() };
         }
 
         // --- Terminal full rounds ---
@@ -1029,8 +1036,11 @@ impl Poseidon1KoalaBear16 {
             for (s, &rc) in state.iter_mut().zip(round_constants.iter()) {
                 add_rc_and_sbox::<FP, 3>(s, rc);
             }
-            mds_fft(state, lambda16);
+            mds_fft(&mut state, lambda16);
         }
+
+        // Write the SSA-tracked local back to caller.
+        *state_out = state;
     }
 
     /// Compression mode: output = permute(input) + input.
