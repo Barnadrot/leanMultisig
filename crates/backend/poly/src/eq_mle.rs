@@ -121,9 +121,15 @@ where
     // The middle elements are the ones which will be computed in parallel.
     // The last log_packing_width elements are the ones which will be packed.
 
-    // We make a buffer of elements of size `NUM_THREADS`.
-    let mut parallel_buffer = EF::ExtensionPacking::zero_vec(NUM_THREADS_PADDED);
-    let out_chunk_size = out.len() / NUM_THREADS_PADDED;
+    // M4-tuned oversubscription (matches compute_eval_eq_packed's h11 pattern):
+    // doubling chunks to NUM_THREADS_PADDED * 2 gives P-cores work to steal
+    // when E-cores lag at the par_iter barrier. Compatible bundle with h11
+    // (same file, different par_iter call site, same mechanism).
+    const PARALLEL_OVERSUB_FACTOR: usize = 2;
+    let total_chunks = NUM_THREADS_PADDED * PARALLEL_OVERSUB_FACTOR;
+    let mut parallel_buffer = EF::ExtensionPacking::zero_vec(total_chunks);
+    let out_chunk_size = out.len() / total_chunks;
+    let log_total_chunks = LOG_NUM_THREADS + 1;
 
     // Compute the equality polynomial corresponding to the last log_packing_width elements
     // and pack these.
@@ -131,14 +137,14 @@ where
 
     // Update the buffer so it contains the evaluations of the equality polynomial
     // with respect to parts one and three.
-    fill_buffer(eval[..LOG_NUM_THREADS].iter().rev(), &mut parallel_buffer);
+    fill_buffer(eval[..log_total_chunks].iter().rev(), &mut parallel_buffer);
 
     // Finally do all computations involving the middle elements in parallel.
     out.par_chunks_exact_mut(out_chunk_size)
         .zip(parallel_buffer.par_iter())
         .for_each(|(out_chunk, buffer_val)| {
             eval_eq_with_packed_scalar::<_, _, INITIALIZED>(
-                &eval[LOG_NUM_THREADS..(eval.len() - log_packing_width)],
+                &eval[log_total_chunks..(eval.len() - log_packing_width)],
                 out_chunk,
                 *buffer_val,
             );
@@ -276,8 +282,14 @@ where
     // Note that this is a slightly different strategy to `eval_eq` which instead
     // uses PackedExtensionField elements. Whilst this involves slightly more mathematical
     // operations, it seems to be faster in practice due to less data moving around.
-    let mut parallel_buffer = F::Packing::zero_vec(NUM_THREADS_PADDED);
-    let out_chunk_size = out.len() / NUM_THREADS_PADDED;
+    //
+    // M4-tuned oversubscription (matches h11's pattern): doubling chunks to
+    // NUM_THREADS_PADDED * 2 gives P-cores work to steal when E-cores lag.
+    const PARALLEL_OVERSUB_FACTOR: usize = 2;
+    let total_chunks = NUM_THREADS_PADDED * PARALLEL_OVERSUB_FACTOR;
+    let mut parallel_buffer = F::Packing::zero_vec(total_chunks);
+    let out_chunk_size = out.len() / total_chunks;
+    let log_total_chunks = LOG_NUM_THREADS + 1;
 
     // Compute the equality polynomial corresponding to the last log_packing_width elements
     // and pack these.
@@ -285,14 +297,14 @@ where
 
     // Update the buffer so it contains the evaluations of the equality polynomial
     // with respect to parts one and three.
-    fill_buffer(eval[..LOG_NUM_THREADS].iter().rev(), &mut parallel_buffer);
+    fill_buffer(eval[..log_total_chunks].iter().rev(), &mut parallel_buffer);
 
     // Finally do all computations involving the middle elements in parallel.
     out.par_chunks_exact_mut(out_chunk_size)
         .zip(parallel_buffer.par_iter())
         .for_each(|(out_chunk, buffer_val)| {
             base_eval_eq_packed::<_, _, INITIALIZED>(
-                &eval[LOG_NUM_THREADS..(eval.len() - log_packing_width)],
+                &eval[log_total_chunks..(eval.len() - log_packing_width)],
                 out_chunk,
                 *buffer_val,
                 scalar,
