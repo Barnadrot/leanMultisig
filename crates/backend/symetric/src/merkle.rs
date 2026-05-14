@@ -67,11 +67,47 @@ where
     let default_digest = [P::Value::default(); DIGEST_ELEMS];
     let mut next_digests = vec![default_digest; next_len_padded];
 
-    next_digests[0..next_len]
+    // Pair adjacent SIMD chunks per rayon task — halves the task count and
+    // therefore halves rayon::bridge_producer_consumer overhead.
+    // Sequential compress x2 per task; back-to-back calls also benefit from
+    // L1 reuse of round constants between the two compresses.
+    let pair_width = 2 * width;
+    let n_pairs = next_len / pair_width;
+
+    next_digests[0..n_pairs * pair_width]
+        .par_chunks_exact_mut(pair_width)
+        .enumerate()
+        .for_each(|(pair_idx, digests_pair_chunk)| {
+            let (chunk_a, chunk_b) = digests_pair_chunk.split_at_mut(width);
+            // Sub-chunk A
+            {
+                let first_row = (2 * pair_idx) * width;
+                let left = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k)][j]));
+                let right = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k) + 1][j]));
+                let packed_digest = crate::compress(comp, [left, right]);
+                for (dst, src) in chunk_a.iter_mut().zip(unpack_array(packed_digest)) {
+                    *dst = src;
+                }
+            }
+            // Sub-chunk B
+            {
+                let first_row = (2 * pair_idx + 1) * width;
+                let left = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k)][j]));
+                let right = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k) + 1][j]));
+                let packed_digest = crate::compress(comp, [left, right]);
+                for (dst, src) in chunk_b.iter_mut().zip(unpack_array(packed_digest)) {
+                    *dst = src;
+                }
+            }
+        });
+
+    // Remaining width-aligned chunks (if next_len not aligned to pair_width).
+    let n_simd_done = n_pairs * pair_width;
+    next_digests[n_simd_done..(next_len / width * width)]
         .par_chunks_exact_mut(width)
         .enumerate()
         .for_each(|(i, digests_chunk)| {
-            let first_row = i * width;
+            let first_row = n_simd_done + i * width;
             let left = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k)][j]));
             let right = array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (first_row + k) + 1][j]));
             let packed_digest = crate::compress(comp, [left, right]);
@@ -80,6 +116,7 @@ where
             }
         });
 
+    // Scalar tail.
     for i in (next_len / width * width)..next_len {
         let left = prev_layer[2 * i];
         let right = prev_layer[2 * i + 1];
