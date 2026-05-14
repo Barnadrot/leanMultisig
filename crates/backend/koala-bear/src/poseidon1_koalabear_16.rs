@@ -941,12 +941,29 @@ impl Poseidon1KoalaBear16 {
         /// FFT MDS: state = C * state.
         /// Uses lambda/16 eigenvalues so no separate /16 step needed.
         /// C * x = DIT_FFT((lambda/16) ⊙ DIF_IFFT(x))
+        ///
+        /// Lambda multiply unrolled — same h5 mechanism. The 16-iter loop
+        /// at 0x4841c0 in h5 binary was reading state[i] from (%rsi,%rdx)
+        /// and writing back every iteration.
         #[inline(always)]
         fn mds_fft(state: &mut [PackedKB; 16], lambda16: &[PackedKB; 16]) {
             dif_ifft_16_mut(state);
-            for i in 0..16 {
-                state[i] *= lambda16[i];
-            }
+            state[0] *= lambda16[0];
+            state[1] *= lambda16[1];
+            state[2] *= lambda16[2];
+            state[3] *= lambda16[3];
+            state[4] *= lambda16[4];
+            state[5] *= lambda16[5];
+            state[6] *= lambda16[6];
+            state[7] *= lambda16[7];
+            state[8] *= lambda16[8];
+            state[9] *= lambda16[9];
+            state[10] *= lambda16[10];
+            state[11] *= lambda16[11];
+            state[12] *= lambda16[12];
+            state[13] *= lambda16[13];
+            state[14] *= lambda16[14];
+            state[15] *= lambda16[15];
             dit_fft_16_mut(state);
         }
 
