@@ -264,21 +264,79 @@ where
     let height = matrix.height();
     assert!(height.is_multiple_of(width));
     let n_pad = (RATE - effective_base_width % RATE) % RATE;
+    let total_iter_len = effective_base_width + n_pad;
+    debug_assert_eq!(total_iter_len % RATE, 0);
+    let n_compresses = total_iter_len / RATE;
 
     let mut digests = unsafe { uninitialized_vec(height) };
 
+    // h14: inline the hot path to eliminate two non-essential overheads visible
+    // per chunk in the original iter-based code path:
+    //  1. matrix.vertically_packed_row_rtl + .chain() + Option::next() per pull
+    //     (~112 next() calls × 150K chunks = 17M dyn-iter consumes per call)
+    //  2. matrix.wrapping_row_slices was previously called inside the iter; here
+    //     we use row_subslice_unchecked directly (returns a borrowed slice, no
+    //     Vec allocation per chunk; saves ~150K heap allocs per call)
+    //
+    // Equivalence: the iter pattern yields n_pad zero PackedValues, then for c
+    // in (effective_base_width-1)..=0 yields P::from_fn(|i| rows[i][c]). The
+    // sponge fills state[WIDTH-1..WIDTH-RATE] in reverse position order with the
+    // next RATE iter elements per round, then compresses. We reproduce the same
+    // fill order via explicit position-driven loops so LLVM can unroll and the
+    // compiler avoids the iterator-state machinery.
     digests
         .par_chunks_exact_mut(width)
         .enumerate()
-        .for_each(|(i, digests_chunk)| {
-            let first_row = i * width;
-            let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
-            let packed_digest: [P; DIGEST_ELEMS] =
-                symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
-                    perm,
-                    rtl_iter,
-                    packed_initial_state,
-                );
+        .for_each(|(chunk_i, digests_chunk)| {
+            let first_row = chunk_i * width;
+            // Direct row slices — no Vec::collect.
+            let row_w = matrix.width();
+            // We assume P::WIDTH == width == 4 (NEON KoalaBear packing). For other
+            // packing widths this falls back to the slower path; code below uses
+            // a fixed 4-wide gather, gated on the runtime check.
+            let mut state = *packed_initial_state;
+
+            if width == 4 {
+                let r0 = unsafe { matrix.row_subslice_unchecked(first_row, 0, row_w) };
+                let r1 = unsafe { matrix.row_subslice_unchecked((first_row + 1) % height, 0, row_w) };
+                let r2 = unsafe { matrix.row_subslice_unchecked((first_row + 2) % height, 0, row_w) };
+                let r3 = unsafe { matrix.row_subslice_unchecked((first_row + 3) % height, 0, row_w) };
+
+                for c_idx in 0..n_compresses {
+                    for pos_offset in 0..RATE {
+                        let iter_pos = c_idx * RATE + pos_offset;
+                        let state_pos = WIDTH - 1 - pos_offset;
+                        state[state_pos] = if iter_pos < n_pad {
+                            P::default()
+                        } else {
+                            let col = effective_base_width - 1 - (iter_pos - n_pad);
+                            P::from_fn(|i| match i {
+                                0 => r0[col],
+                                1 => r1[col],
+                                2 => r2[col],
+                                _ => r3[col],
+                            })
+                        };
+                    }
+                    perm.compress_mut(&mut state);
+                }
+            } else {
+                // Fallback for non-4 widths: original iter path.
+                let rtl_iter =
+                    matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
+                let packed_digest: [P; DIGEST_ELEMS] =
+                    symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
+                        perm,
+                        rtl_iter,
+                        packed_initial_state,
+                    );
+                for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
+                    *dst = src;
+                }
+                return;
+            }
+
+            let packed_digest: [P; DIGEST_ELEMS] = state[..DIGEST_ELEMS].try_into().unwrap();
             for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
                 *dst = src;
             }
