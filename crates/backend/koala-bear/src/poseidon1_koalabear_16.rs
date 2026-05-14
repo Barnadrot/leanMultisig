@@ -977,29 +977,6 @@ impl Poseidon1KoalaBear16 {
             let mut split = InternalLayer16::from_packed_field_array(*state);
 
             for r in 0..POSEIDON1_PARTIAL_ROUNDS {
-                // Prefetch next-round constants while current round computes.
-                // first_row[r] (16 PackedKB = 1024B = 16 cache lines) and
-                // v[r] (16 PackedKB) are loaded inside this iteration; the
-                // partial-round body is long enough that prefetched next-round
-                // lines arrive in L1 by the time iteration r+1 starts.
-                #[cfg(target_arch = "x86_64")]
-                if r + 1 < POSEIDON1_PARTIAL_ROUNDS {
-                    use core::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
-                    unsafe {
-                        let fr_next = simd.packed_sparse_first_row.as_ptr().add(r + 1) as *const i8;
-                        let v_next = simd.packed_sparse_v.as_ptr().add(r + 1) as *const i8;
-                        // 16 cache lines per first_row; prefetch first 4 (covers 256 B = early use).
-                        _mm_prefetch::<_MM_HINT_T0>(fr_next);
-                        _mm_prefetch::<_MM_HINT_T0>(fr_next.add(256));
-                        _mm_prefetch::<_MM_HINT_T0>(fr_next.add(512));
-                        _mm_prefetch::<_MM_HINT_T0>(fr_next.add(768));
-                        _mm_prefetch::<_MM_HINT_T0>(v_next);
-                        _mm_prefetch::<_MM_HINT_T0>(v_next.add(256));
-                        _mm_prefetch::<_MM_HINT_T0>(v_next.add(512));
-                        _mm_prefetch::<_MM_HINT_T0>(v_next.add(768));
-                    }
-                }
-
                 // PATH A (high latency): S-box on s0 only.
                 split.s0 = sbox::<FP, 3>(split.s0);
 
