@@ -941,59 +941,20 @@ impl Poseidon1KoalaBear16 {
         /// FFT MDS: state = C * state.
         /// Uses lambda/16 eigenvalues so no separate /16 step needed.
         /// C * x = DIT_FFT((lambda/16) ⊙ DIF_IFFT(x))
-        ///
-        /// Lambda-mul UNROLLED: same mechanism as h5 (rank-1 unroll). The
-        /// `for i in 0..16 { state[i] *= lambda[i] }` loop was producing a
-        /// tight 16-iter loop body that indexed state[i] from caller memory
-        /// (loop hot at 0x483430-0x4834d7 in baseline). Explicit per-i ops
-        /// let LLVM keep each state[i] in its own ZMM across the FFT layers.
         #[inline(always)]
         fn mds_fft(state: &mut [PackedKB; 16], lambda16: &[PackedKB; 16]) {
             dif_ifft_16_mut(state);
-            state[0] *= lambda16[0];
-            state[1] *= lambda16[1];
-            state[2] *= lambda16[2];
-            state[3] *= lambda16[3];
-            state[4] *= lambda16[4];
-            state[5] *= lambda16[5];
-            state[6] *= lambda16[6];
-            state[7] *= lambda16[7];
-            state[8] *= lambda16[8];
-            state[9] *= lambda16[9];
-            state[10] *= lambda16[10];
-            state[11] *= lambda16[11];
-            state[12] *= lambda16[12];
-            state[13] *= lambda16[13];
-            state[14] *= lambda16[14];
-            state[15] *= lambda16[15];
+            for i in 0..16 {
+                state[i] *= lambda16[i];
+            }
             dit_fft_16_mut(state);
-        }
-
-        /// add_rc_and_sbox applied to all 16 state elements with explicit
-        /// per-i ops (avoids the looped indexed pattern).
-        #[inline(always)]
-        fn full_round_add_rc_sbox(state: &mut [PackedKB; 16], rc: &[Rc; 16]) {
-            add_rc_and_sbox::<FP, 3>(&mut state[0], rc[0]);
-            add_rc_and_sbox::<FP, 3>(&mut state[1], rc[1]);
-            add_rc_and_sbox::<FP, 3>(&mut state[2], rc[2]);
-            add_rc_and_sbox::<FP, 3>(&mut state[3], rc[3]);
-            add_rc_and_sbox::<FP, 3>(&mut state[4], rc[4]);
-            add_rc_and_sbox::<FP, 3>(&mut state[5], rc[5]);
-            add_rc_and_sbox::<FP, 3>(&mut state[6], rc[6]);
-            add_rc_and_sbox::<FP, 3>(&mut state[7], rc[7]);
-            add_rc_and_sbox::<FP, 3>(&mut state[8], rc[8]);
-            add_rc_and_sbox::<FP, 3>(&mut state[9], rc[9]);
-            add_rc_and_sbox::<FP, 3>(&mut state[10], rc[10]);
-            add_rc_and_sbox::<FP, 3>(&mut state[11], rc[11]);
-            add_rc_and_sbox::<FP, 3>(&mut state[12], rc[12]);
-            add_rc_and_sbox::<FP, 3>(&mut state[13], rc[13]);
-            add_rc_and_sbox::<FP, 3>(&mut state[14], rc[14]);
-            add_rc_and_sbox::<FP, 3>(&mut state[15], rc[15]);
         }
 
         // --- Initial full rounds (first 3 of 4) ---
         for round_constants in &simd.packed_initial_rc {
-            full_round_add_rc_sbox(state, round_constants);
+            for (s, &rc) in state.iter_mut().zip(round_constants.iter()) {
+                add_rc_and_sbox::<FP, 3>(s, rc);
+            }
             mds_fft(state, lambda16);
         }
 
@@ -1002,21 +963,13 @@ impl Poseidon1KoalaBear16 {
         //      = (m_i * MDS) * state + m_i * first_rc
         // Saves one full FFT MDS call.
         {
-            full_round_add_rc_sbox(state, &simd.packed_last_initial_rc);
-            let input = *state;
-            // Unroll the m_i*MDS dot-product loop too — 16 independent dot
-            // products with shared `input` and per-i `packed_fused_mi_mds[i]`
-            // + bias[i].
-            macro_rules! mi_mds_row {
-                ($i:expr) => {
-                    state[$i] = PackedKB::dot_product(&input, &simd.packed_fused_mi_mds[$i])
-                        + simd.packed_fused_bias[$i];
-                };
+            for (s, &rc) in state.iter_mut().zip(simd.packed_last_initial_rc.iter()) {
+                add_rc_and_sbox::<FP, 3>(s, rc);
             }
-            mi_mds_row!(0);  mi_mds_row!(1);  mi_mds_row!(2);  mi_mds_row!(3);
-            mi_mds_row!(4);  mi_mds_row!(5);  mi_mds_row!(6);  mi_mds_row!(7);
-            mi_mds_row!(8);  mi_mds_row!(9);  mi_mds_row!(10); mi_mds_row!(11);
-            mi_mds_row!(12); mi_mds_row!(13); mi_mds_row!(14); mi_mds_row!(15);
+            let input = *state;
+            for (i, state_i) in state.iter_mut().enumerate() {
+                *state_i = PackedKB::dot_product(&input, &simd.packed_fused_mi_mds[i]) + simd.packed_fused_bias[i];
+            }
         }
 
         // --- Partial rounds loop with latency hiding via InternalLayer16 split ---
@@ -1073,7 +1026,9 @@ impl Poseidon1KoalaBear16 {
 
         // --- Terminal full rounds ---
         for round_constants in &simd.packed_terminal_rc {
-            full_round_add_rc_sbox(state, round_constants);
+            for (s, &rc) in state.iter_mut().zip(round_constants.iter()) {
+                add_rc_and_sbox::<FP, 3>(s, rc);
+            }
             mds_fft(state, lambda16);
         }
     }
