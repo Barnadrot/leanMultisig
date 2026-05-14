@@ -188,11 +188,7 @@ pub fn compute_product_sumcheck_polynomial_base_ext_packed<
 
     type Acc<const D: usize> = ([u128; D], [i128; D]);
 
-    // M4-tuned: finer chunks (256 vs default 1024) let E-cores finish small
-    // pieces quickly without blocking P-cores at the par_iter barrier.
-    // h8 tested the opposite (4096) and regressed +1.36% — confirming P/E
-    // asymmetry punishes coarse chunks.
-    let chunk_size = 256;
+    let chunk_size = 1024;
 
     let (c0_acc, c2_acc) = pol_0[..half]
         .par_chunks(chunk_size)
