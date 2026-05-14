@@ -67,15 +67,8 @@ where
     let default_digest = [P::Value::default(); DIGEST_ELEMS];
     let mut next_digests = vec![default_digest; next_len_padded];
 
-    // M4-tuned: each rayon split processes at least MIN_LEN_FACTOR width-chunks
-    // contiguously. Default rayon splits to 1 chunk per task → high dispatch
-    // overhead and frequent work-stealing thrashing. Profiling shows
-    // __psynch_cvwait at 18.54% self-time; coarsening splits should reduce
-    // barrier waits without losing parallelism (still all 10 workers active).
-    const MIN_LEN_FACTOR: usize = 8;
     next_digests[0..next_len]
         .par_chunks_exact_mut(width)
-        .with_min_len(MIN_LEN_FACTOR)
         .enumerate()
         .for_each(|(i, digests_chunk)| {
             let first_row = i * width;
