@@ -1015,6 +1015,115 @@ impl Poseidon1KoalaBear16 {
         }
     }
 
+    /// SIMD x2 fast path: run two independent permutations interleaved.
+    /// Doubles the in-flight independent mul-port work, hiding S-box latency
+    /// of one instance behind the other's MDS dot products.
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[inline(always)]
+    fn permute_simd_x2(&self, a: &mut [PackedKB; 16], b: &mut [PackedKB; 16]) {
+        use crate::{InternalLayer16, add_rc_and_sbox, sbox};
+        use core::mem::transmute;
+
+        let simd = &self.pre.simd;
+        let lambda16 = &simd.packed_lambda_over_16;
+
+        #[inline(always)]
+        fn mds_fft_x2(
+            a: &mut [PackedKB; 16],
+            b: &mut [PackedKB; 16],
+            lambda16: &[PackedKB; 16],
+        ) {
+            dif_ifft_16_mut(a);
+            dif_ifft_16_mut(b);
+            for i in 0..16 {
+                a[i] *= lambda16[i];
+                b[i] *= lambda16[i];
+            }
+            dit_fft_16_mut(a);
+            dit_fft_16_mut(b);
+        }
+
+        // --- Initial full rounds (first 3 of 4) ---
+        for round_constants in &simd.packed_initial_rc {
+            for k in 0..16 {
+                let rc = round_constants[k];
+                add_rc_and_sbox::<FP, 3>(&mut a[k], rc);
+                add_rc_and_sbox::<FP, 3>(&mut b[k], rc);
+            }
+            mds_fft_x2(a, b, lambda16);
+        }
+
+        // --- Last initial full round: fused (m_i * MDS) ---
+        {
+            for k in 0..16 {
+                let rc = simd.packed_last_initial_rc[k];
+                add_rc_and_sbox::<FP, 3>(&mut a[k], rc);
+                add_rc_and_sbox::<FP, 3>(&mut b[k], rc);
+            }
+            let input_a = *a;
+            let input_b = *b;
+            for i in 0..16 {
+                let row = &simd.packed_fused_mi_mds[i];
+                let bias = simd.packed_fused_bias[i];
+                a[i] = PackedKB::dot_product(&input_a, row) + bias;
+                b[i] = PackedKB::dot_product(&input_b, row) + bias;
+            }
+        }
+
+        // --- Partial rounds (interleaved) ---
+        {
+            let mut split_a = InternalLayer16::from_packed_field_array(*a);
+            let mut split_b = InternalLayer16::from_packed_field_array(*b);
+
+            for r in 0..POSEIDON1_PARTIAL_ROUNDS {
+                // Independent S-boxes — overlap A's cube latency with B's.
+                split_a.s0 = sbox::<FP, 3>(split_a.s0);
+                split_b.s0 = sbox::<FP, 3>(split_b.s0);
+
+                if r < POSEIDON1_PARTIAL_ROUNDS - 1 {
+                    let rc = simd.packed_round_constants[r];
+                    split_a.s0 += rc;
+                    split_b.s0 += rc;
+                }
+
+                let first_row = &simd.packed_sparse_first_row[r];
+                let first_row_hi: &[PackedKB; 15] = first_row[1..].try_into().unwrap();
+
+                let s_hi_a: &[PackedKB; 15] = unsafe { transmute(&split_a.s_hi) };
+                let s_hi_b: &[PackedKB; 15] = unsafe { transmute(&split_b.s_hi) };
+                let pd_a = PackedKB::dot_product(s_hi_a, first_row_hi);
+                let pd_b = PackedKB::dot_product(s_hi_b, first_row_hi);
+
+                let s0_a_val = split_a.s0;
+                let s0_b_val = split_b.s0;
+                split_a.s0 = s0_a_val * first_row[0] + pd_a;
+                split_b.s0 = s0_b_val * first_row[0] + pd_b;
+
+                let v = &simd.packed_sparse_v[r];
+                let s_hi_a_mut: &mut [PackedKB; 15] = unsafe { transmute(&mut split_a.s_hi) };
+                let s_hi_b_mut: &mut [PackedKB; 15] = unsafe { transmute(&mut split_b.s_hi) };
+                for j in 0..15 {
+                    let vj = v[j];
+                    s_hi_a_mut[j] += s0_a_val * vj;
+                    s_hi_b_mut[j] += s0_b_val * vj;
+                }
+            }
+
+            *a = unsafe { split_a.to_packed_field_array() };
+            *b = unsafe { split_b.to_packed_field_array() };
+        }
+
+        // --- Terminal full rounds ---
+        for round_constants in &simd.packed_terminal_rc {
+            for k in 0..16 {
+                let rc = round_constants[k];
+                add_rc_and_sbox::<FP, 3>(&mut a[k], rc);
+                add_rc_and_sbox::<FP, 3>(&mut b[k], rc);
+            }
+            mds_fft_x2(a, b, lambda16);
+        }
+    }
+
     /// Compression mode: output = permute(input) + input.
     #[inline(always)]
     pub fn compress_in_place<R: Algebra<KoalaBear> + InjectiveMonomial<3> + Send + Sync + 'static>(
@@ -1027,6 +1136,37 @@ impl Poseidon1KoalaBear16 {
         for (s, init) in state.iter_mut().zip(initial) {
             *s += init;
         }
+    }
+
+    /// Compression mode for two states in parallel. On AVX-512 dispatches to
+    /// the x2 interleaved SIMD path; otherwise falls back to two sequential
+    /// compress_in_place calls.
+    #[inline(always)]
+    pub fn compress_in_place_x2<R: Algebra<KoalaBear> + InjectiveMonomial<3> + Send + Sync + 'static>(
+        &self,
+        a: &mut [R; 16],
+        b: &mut [R; 16],
+    ) {
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+        {
+            if std::any::TypeId::of::<R>() == std::any::TypeId::of::<PackedKB>() {
+                // SAFETY: TypeId confirms R == PackedKB; PackedKB is repr(transparent).
+                let init_a = *a;
+                let init_b = *b;
+                let a_simd: &mut [PackedKB; 16] = unsafe { &mut *(a as *mut [R; 16] as *mut [PackedKB; 16]) };
+                let b_simd: &mut [PackedKB; 16] = unsafe { &mut *(b as *mut [R; 16] as *mut [PackedKB; 16]) };
+                self.permute_simd_x2(a_simd, b_simd);
+                for (s, init) in a.iter_mut().zip(init_a) {
+                    *s += init;
+                }
+                for (s, init) in b.iter_mut().zip(init_b) {
+                    *s += init;
+                }
+                return;
+            }
+        }
+        self.compress_in_place(a);
+        self.compress_in_place(b);
     }
 }
 
