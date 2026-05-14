@@ -683,12 +683,27 @@ pub fn poseidon1_lambda_over_16() -> &'static [KoalaBear; 16] {
 }
 
 #[inline(always)]
-pub fn mds_fft_16<R: PrimeCharacteristicRing + Mul<KoalaBear, Output = R>>(state: &mut [R; 16]) {
+pub fn mds_fft_16<R: PrimeCharacteristicRing + Mul<KoalaBear, Output = R> + Copy>(state: &mut [R; 16]) {
     let lambda = poseidon1_lambda_over_16();
     dif_ifft_16_mut(state);
-    for i in 0..16 {
-        state[i] = state[i] * lambda[i];
-    }
+    // Unrolled lambda multiply — same h5 mechanism: keep state[i] as SSA
+    // value across the layer instead of looping with indexed access.
+    state[0] = state[0] * lambda[0];
+    state[1] = state[1] * lambda[1];
+    state[2] = state[2] * lambda[2];
+    state[3] = state[3] * lambda[3];
+    state[4] = state[4] * lambda[4];
+    state[5] = state[5] * lambda[5];
+    state[6] = state[6] * lambda[6];
+    state[7] = state[7] * lambda[7];
+    state[8] = state[8] * lambda[8];
+    state[9] = state[9] * lambda[9];
+    state[10] = state[10] * lambda[10];
+    state[11] = state[11] * lambda[11];
+    state[12] = state[12] * lambda[12];
+    state[13] = state[13] * lambda[13];
+    state[14] = state[14] * lambda[14];
+    state[15] = state[15] * lambda[15];
     dit_fft_16_mut(state);
 }
 
