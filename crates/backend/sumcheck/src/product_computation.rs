@@ -188,7 +188,11 @@ pub fn compute_product_sumcheck_polynomial_base_ext_packed<
 
     type Acc<const D: usize> = ([u128; D], [i128; D]);
 
-    let chunk_size = 1024;
+    // M4-tuned: 4096 (vs default 1024) reduces work-stealing thrashing in
+    // the sumcheck folding par_chunks. Profile anchors __psynch_cvwait at
+    // 18.54%; coarser chunks at this hot par_iter site amortize dispatch
+    // cost over 4x more elements per worker batch.
+    let chunk_size = 4096;
 
     let (c0_acc, c2_acc) = pol_0[..half]
         .par_chunks(chunk_size)
