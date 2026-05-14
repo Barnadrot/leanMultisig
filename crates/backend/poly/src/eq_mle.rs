@@ -653,157 +653,6 @@ where
     [s000, s001, s010, s011, s100, s101, s110, s111]
 }
 
-/// Compute the scaled multilinear equality polynomial over `{0,1}^4`.
-/// Same recurrence as eval_eq_3, extended one level. Returns evaluations in
-/// lex order of `x ∈ {0,1}^4`. Manually unrolled to expose the 8 leaf-level
-/// independent muls as straight-line code for the OoO scheduler.
-#[allow(clippy::inline_always)]
-#[inline(always)]
-fn eval_eq_4<F, FP>(eval: &[F], scalar: FP) -> [FP; 16]
-where
-    F: Field,
-    FP: Algebra<F> + Copy,
-{
-    assert_eq!(eval.len(), 4);
-    let z_0 = eval[0];
-    let z_1 = eval[1];
-    let z_2 = eval[2];
-    let z_3 = eval[3];
-
-    // Level 0
-    let s1 = scalar * z_0;
-    let s0 = scalar - s1;
-    // Level 1
-    let s01 = s0 * z_1;
-    let s00 = s0 - s01;
-    let s11 = s1 * z_1;
-    let s10 = s1 - s11;
-    // Level 2
-    let s001 = s00 * z_2;
-    let s000 = s00 - s001;
-    let s011 = s01 * z_2;
-    let s010 = s01 - s011;
-    let s101 = s10 * z_2;
-    let s100 = s10 - s101;
-    let s111 = s11 * z_2;
-    let s110 = s11 - s111;
-    // Level 3 — 8 independent muls exposed as straight-line code
-    let s0001 = s000 * z_3;
-    let s0000 = s000 - s0001;
-    let s0011 = s001 * z_3;
-    let s0010 = s001 - s0011;
-    let s0101 = s010 * z_3;
-    let s0100 = s010 - s0101;
-    let s0111 = s011 * z_3;
-    let s0110 = s011 - s0111;
-    let s1001 = s100 * z_3;
-    let s1000 = s100 - s1001;
-    let s1011 = s101 * z_3;
-    let s1010 = s101 - s1011;
-    let s1101 = s110 * z_3;
-    let s1100 = s110 - s1101;
-    let s1111 = s111 * z_3;
-    let s1110 = s111 - s1111;
-
-    [
-        s0000, s0001, s0010, s0011, s0100, s0101, s0110, s0111,
-        s1000, s1001, s1010, s1011, s1100, s1101, s1110, s1111,
-    ]
-}
-
-/// Compute the scaled multilinear equality polynomial over `{0,1}^5`.
-/// Returns 32 evaluations in lex order. 16 independent muls at the deepest
-/// level are exposed as straight-line code for OoO scheduling.
-#[allow(clippy::inline_always)]
-#[inline(always)]
-fn eval_eq_5<F, FP>(eval: &[F], scalar: FP) -> [FP; 32]
-where
-    F: Field,
-    FP: Algebra<F> + Copy,
-{
-    assert_eq!(eval.len(), 5);
-    let z_0 = eval[0];
-    let z_1 = eval[1];
-    let z_2 = eval[2];
-    let z_3 = eval[3];
-    let z_4 = eval[4];
-
-    // Level 0
-    let s1 = scalar * z_0;
-    let s0 = scalar - s1;
-    // Level 1
-    let s01 = s0 * z_1;
-    let s00 = s0 - s01;
-    let s11 = s1 * z_1;
-    let s10 = s1 - s11;
-    // Level 2
-    let s001 = s00 * z_2;
-    let s000 = s00 - s001;
-    let s011 = s01 * z_2;
-    let s010 = s01 - s011;
-    let s101 = s10 * z_2;
-    let s100 = s10 - s101;
-    let s111 = s11 * z_2;
-    let s110 = s11 - s111;
-    // Level 3
-    let s0001 = s000 * z_3;
-    let s0000 = s000 - s0001;
-    let s0011 = s001 * z_3;
-    let s0010 = s001 - s0011;
-    let s0101 = s010 * z_3;
-    let s0100 = s010 - s0101;
-    let s0111 = s011 * z_3;
-    let s0110 = s011 - s0111;
-    let s1001 = s100 * z_3;
-    let s1000 = s100 - s1001;
-    let s1011 = s101 * z_3;
-    let s1010 = s101 - s1011;
-    let s1101 = s110 * z_3;
-    let s1100 = s110 - s1101;
-    let s1111 = s111 * z_3;
-    let s1110 = s111 - s1111;
-    // Level 4 — 16 independent muls
-    let r00001 = s0000 * z_4;
-    let r00000 = s0000 - r00001;
-    let r00011 = s0001 * z_4;
-    let r00010 = s0001 - r00011;
-    let r00101 = s0010 * z_4;
-    let r00100 = s0010 - r00101;
-    let r00111 = s0011 * z_4;
-    let r00110 = s0011 - r00111;
-    let r01001 = s0100 * z_4;
-    let r01000 = s0100 - r01001;
-    let r01011 = s0101 * z_4;
-    let r01010 = s0101 - r01011;
-    let r01101 = s0110 * z_4;
-    let r01100 = s0110 - r01101;
-    let r01111 = s0111 * z_4;
-    let r01110 = s0111 - r01111;
-    let r10001 = s1000 * z_4;
-    let r10000 = s1000 - r10001;
-    let r10011 = s1001 * z_4;
-    let r10010 = s1001 - r10011;
-    let r10101 = s1010 * z_4;
-    let r10100 = s1010 - r10101;
-    let r10111 = s1011 * z_4;
-    let r10110 = s1011 - r10111;
-    let r11001 = s1100 * z_4;
-    let r11000 = s1100 - r11001;
-    let r11011 = s1101 * z_4;
-    let r11010 = s1101 - r11011;
-    let r11101 = s1110 * z_4;
-    let r11100 = s1110 - r11101;
-    let r11111 = s1111 * z_4;
-    let r11110 = s1111 - r11111;
-
-    [
-        r00000, r00001, r00010, r00011, r00100, r00101, r00110, r00111,
-        r01000, r01001, r01010, r01011, r01100, r01101, r01110, r01111,
-        r10000, r10001, r10010, r10011, r10100, r10101, r10110, r10111,
-        r11000, r11001, r11010, r11011, r11100, r11101, r11110, r11111,
-    ]
-}
-
 /// Computes the equality polynomial evaluations via a simple recursive algorithm.
 ///
 /// Given an evaluation point vector `eval`, the function computes
@@ -854,14 +703,6 @@ where
             // Manually unroll for three variable case
             let eq_evaluations = eval_eq_3(eval, scalar);
 
-            add_or_set_f::<_, INITIALIZED>(out, &eq_evaluations);
-        }
-        4 => {
-            let eq_evaluations = eval_eq_4(eval, scalar);
-            add_or_set_f::<_, INITIALIZED>(out, &eq_evaluations);
-        }
-        5 => {
-            let eq_evaluations = eval_eq_5(eval, scalar);
             add_or_set_f::<_, INITIALIZED>(out, &eq_evaluations);
         }
         _ => {
@@ -960,32 +801,6 @@ fn eval_eq_with_packed_scalar<F: Field, EF: ExtensionField<F>, const INITIALIZED
                     }
                 });
         }
-        4 => {
-            const EVAL_LEN: usize = 16;
-            let eq_evaluations = eval_eq_4(eval, scalar);
-            iter_array_chunks_padded::<_, EVAL_LEN>(EF::ExtensionPacking::to_ext_iter(eq_evaluations), EF::ZERO)
-                .zip(out.chunks_exact_mut(EVAL_LEN))
-                .for_each(|(res, out_chunk)| {
-                    if INITIALIZED {
-                        EF::add_slices(out_chunk, &res);
-                    } else {
-                        out_chunk.copy_from_slice(&res);
-                    }
-                });
-        }
-        5 => {
-            const EVAL_LEN: usize = 32;
-            let eq_evaluations = eval_eq_5(eval, scalar);
-            iter_array_chunks_padded::<_, EVAL_LEN>(EF::ExtensionPacking::to_ext_iter(eq_evaluations), EF::ZERO)
-                .zip(out.chunks_exact_mut(EVAL_LEN))
-                .for_each(|(res, out_chunk)| {
-                    if INITIALIZED {
-                        EF::add_slices(out_chunk, &res);
-                    } else {
-                        out_chunk.copy_from_slice(&res);
-                    }
-                });
-        }
         _ => {
             let (&x, tail) = eval.split_first().unwrap();
 
@@ -1039,14 +854,6 @@ fn eval_eq_with_packed_output<F: Field, EF: ExtensionField<F>, const INITIALIZED
         3 => {
             // Manually unroll for three variable case
             let eq_evaluations = eval_eq_3(eval, scalar);
-            add_or_set_pf::<_, INITIALIZED>(out, &eq_evaluations);
-        }
-        4 => {
-            let eq_evaluations = eval_eq_4(eval, scalar);
-            add_or_set_pf::<_, INITIALIZED>(out, &eq_evaluations);
-        }
-        5 => {
-            let eq_evaluations = eval_eq_5(eval, scalar);
             add_or_set_pf::<_, INITIALIZED>(out, &eq_evaluations);
         }
         _ => {
@@ -1125,14 +932,6 @@ fn base_eval_eq_packed<F, EF, const INITIALIZED: bool>(
 
             scale_and_add::<_, _, INITIALIZED>(out, F::Packing::unpack_slice(&eq_evaluations), scalar);
         }
-        4 => {
-            let eq_evaluations = eval_eq_4(eval_points, eq_evals);
-            scale_and_add::<_, _, INITIALIZED>(out, F::Packing::unpack_slice(&eq_evaluations), scalar);
-        }
-        5 => {
-            let eq_evaluations = eval_eq_5(eval_points, eq_evals);
-            scale_and_add::<_, _, INITIALIZED>(out, F::Packing::unpack_slice(&eq_evaluations), scalar);
-        }
         _ => {
             let (&x, tail) = eval_points.split_first().unwrap();
 
@@ -1192,14 +991,6 @@ fn base_eval_eq_packed_with_packed_output<F, EF, const INITIALIZED: bool>(
         }
         3 => {
             let eq_evaluations = eval_eq_3(eval_points, eq_evals);
-            scale_and_add_pf::<F, EF, INITIALIZED>(out, eq_evaluations.as_slice(), packed_scalar);
-        }
-        4 => {
-            let eq_evaluations = eval_eq_4(eval_points, eq_evals);
-            scale_and_add_pf::<F, EF, INITIALIZED>(out, eq_evaluations.as_slice(), packed_scalar);
-        }
-        5 => {
-            let eq_evaluations = eval_eq_5(eval_points, eq_evals);
             scale_and_add_pf::<F, EF, INITIALIZED>(out, eq_evaluations.as_slice(), packed_scalar);
         }
         _ => {
