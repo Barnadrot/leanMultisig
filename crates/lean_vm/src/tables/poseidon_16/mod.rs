@@ -509,38 +509,12 @@ fn sparse_mat_air_16<A: PrimeCharacteristicRing + 'static>(
     v: &[F; WIDTH],
 ) {
     let old_s0 = state[0];
-    // Unrolled new_s0 dot-product (same h5 mechanism).
-    let new_s0 = mul_kb(state[0], first_row[0])
-        + mul_kb(state[1], first_row[1])
-        + mul_kb(state[2], first_row[2])
-        + mul_kb(state[3], first_row[3])
-        + mul_kb(state[4], first_row[4])
-        + mul_kb(state[5], first_row[5])
-        + mul_kb(state[6], first_row[6])
-        + mul_kb(state[7], first_row[7])
-        + mul_kb(state[8], first_row[8])
-        + mul_kb(state[9], first_row[9])
-        + mul_kb(state[10], first_row[10])
-        + mul_kb(state[11], first_row[11])
-        + mul_kb(state[12], first_row[12])
-        + mul_kb(state[13], first_row[13])
-        + mul_kb(state[14], first_row[14])
-        + mul_kb(state[15], first_row[15]);
+    let mut new_s0 = A::ZERO;
+    for j in 0..WIDTH {
+        new_s0 += mul_kb(state[j], first_row[j]);
+    }
     state[0] = new_s0;
-    // Unrolled rank-1 update on state[1..16].
-    state[1] += mul_kb(old_s0, v[0]);
-    state[2] += mul_kb(old_s0, v[1]);
-    state[3] += mul_kb(old_s0, v[2]);
-    state[4] += mul_kb(old_s0, v[3]);
-    state[5] += mul_kb(old_s0, v[4]);
-    state[6] += mul_kb(old_s0, v[5]);
-    state[7] += mul_kb(old_s0, v[6]);
-    state[8] += mul_kb(old_s0, v[7]);
-    state[9] += mul_kb(old_s0, v[8]);
-    state[10] += mul_kb(old_s0, v[9]);
-    state[11] += mul_kb(old_s0, v[10]);
-    state[12] += mul_kb(old_s0, v[11]);
-    state[13] += mul_kb(old_s0, v[12]);
-    state[14] += mul_kb(old_s0, v[13]);
-    state[15] += mul_kb(old_s0, v[14]);
+    for i in 1..WIDTH {
+        state[i] += mul_kb(old_s0, v[i - 1]);
+    }
 }
