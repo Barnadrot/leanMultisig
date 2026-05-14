@@ -125,11 +125,11 @@ where
     // doubling chunks to NUM_THREADS_PADDED * 2 gives P-cores work to steal
     // when E-cores lag at the par_iter barrier. Compatible bundle with h11
     // (same file, different par_iter call site, same mechanism).
-    const PARALLEL_OVERSUB_FACTOR: usize = 4;
+    const PARALLEL_OVERSUB_FACTOR: usize = 2;
     let total_chunks = NUM_THREADS_PADDED * PARALLEL_OVERSUB_FACTOR;
     let mut parallel_buffer = EF::ExtensionPacking::zero_vec(total_chunks);
     let out_chunk_size = out.len() / total_chunks;
-    let log_total_chunks = LOG_NUM_THREADS + 2;
+    let log_total_chunks = LOG_NUM_THREADS + 1;
 
     // Compute the equality polynomial corresponding to the last log_packing_width elements
     // and pack these.
@@ -203,11 +203,11 @@ where
         // lag at the par_iter barrier. With 16 base chunks across 10 workers,
         // 6 worker slots sit idle until the imbalance resolves; 32 chunks
         // expose more steal-able pieces.
-        const PARALLEL_OVERSUB_FACTOR: usize = 4;
+        const PARALLEL_OVERSUB_FACTOR: usize = 2;
         let total_chunks = NUM_THREADS_PADDED * PARALLEL_OVERSUB_FACTOR;
         let mut parallel_buffer = EF::ExtensionPacking::zero_vec(total_chunks);
         let out_chunk_size = out.len() / total_chunks;
-        let log_total_chunks = LOG_NUM_THREADS + 2; // log2(2x)
+        let log_total_chunks = LOG_NUM_THREADS + 1; // log2(2x)
 
         // Compute the equality polynomial corresponding to the last log_packing_width elements
         // and pack these.
@@ -285,11 +285,11 @@ where
     //
     // M4-tuned oversubscription (matches h11's pattern): doubling chunks to
     // NUM_THREADS_PADDED * 2 gives P-cores work to steal when E-cores lag.
-    const PARALLEL_OVERSUB_FACTOR: usize = 4;
+    const PARALLEL_OVERSUB_FACTOR: usize = 2;
     let total_chunks = NUM_THREADS_PADDED * PARALLEL_OVERSUB_FACTOR;
     let mut parallel_buffer = F::Packing::zero_vec(total_chunks);
     let out_chunk_size = out.len() / total_chunks;
-    let log_total_chunks = LOG_NUM_THREADS + 2;
+    let log_total_chunks = LOG_NUM_THREADS + 1;
 
     // Compute the equality polynomial corresponding to the last log_packing_width elements
     // and pack these.
