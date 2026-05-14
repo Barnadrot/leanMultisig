@@ -976,14 +976,13 @@ impl Poseidon1KoalaBear16 {
         {
             let mut split = InternalLayer16::from_packed_field_array(*state);
 
-            for r in 0..POSEIDON1_PARTIAL_ROUNDS {
+            // Hot rounds 0..N-1 always do the +rc step. Splitting the loop
+            // into hot + last eliminates the per-iter `if r < N-1` branch
+            // (~19 saved branch checks per perm).
+            for r in 0..POSEIDON1_PARTIAL_ROUNDS - 1 {
                 // PATH A (high latency): S-box on s0 only.
                 split.s0 = sbox::<FP, 3>(split.s0);
-
-                // Add scalar round constant (except last round).
-                if r < POSEIDON1_PARTIAL_ROUNDS - 1 {
-                    split.s0 += simd.packed_round_constants[r];
-                }
+                split.s0 += simd.packed_round_constants[r];
 
                 // PATH B (can overlap with S-box): partial dot product on s_hi.
                 let s_hi: &[PackedKB; 15] = unsafe { transmute(&split.s_hi) };
@@ -996,6 +995,25 @@ impl Poseidon1KoalaBear16 {
                 split.s0 = s0_val * first_row[0] + partial_dot;
 
                 // Rank-1 update: s_hi[j] += s0_old * v[j].
+                let v = &simd.packed_sparse_v[r];
+                let s_hi_mut: &mut [PackedKB; 15] = unsafe { transmute(&mut split.s_hi) };
+                for j in 0..15 {
+                    s_hi_mut[j] += s0_val * v[j];
+                }
+            }
+            // Last round (POSEIDON1_PARTIAL_ROUNDS - 1): no +rc step.
+            {
+                let r = POSEIDON1_PARTIAL_ROUNDS - 1;
+                split.s0 = sbox::<FP, 3>(split.s0);
+
+                let s_hi: &[PackedKB; 15] = unsafe { transmute(&split.s_hi) };
+                let first_row = &simd.packed_sparse_first_row[r];
+                let first_row_hi: &[PackedKB; 15] = first_row[1..].try_into().unwrap();
+                let partial_dot = PackedKB::dot_product(s_hi, first_row_hi);
+
+                let s0_val = split.s0;
+                split.s0 = s0_val * first_row[0] + partial_dot;
+
                 let v = &simd.packed_sparse_v[r];
                 let s_hi_mut: &mut [PackedKB; 15] = unsafe { transmute(&mut split.s_hi) };
                 for j in 0..15 {
