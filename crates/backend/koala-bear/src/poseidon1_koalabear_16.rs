@@ -996,11 +996,29 @@ impl Poseidon1KoalaBear16 {
                 split.s0 = s0_val * first_row[0] + partial_dot;
 
                 // Rank-1 update: s_hi[j] += s0_old * v[j].
+                // MANUAL UNROLL: LLVM kept this as a tight 15-iter loop with
+                // s_hi[j] indexed off the stack frame, causing ~3.6% of total
+                // cycles in stack r/w (perf annotate: hot lines 0x482945 at
+                // 2.28% store + 0x482931 at 1.31% load on indexed 0x780(rsp,rsi)).
+                // Explicit per-j ops let LLVM assign each s_hi_mut[j] to its
+                // own ZMM, eliminating the stack roundtrip.
                 let v = &simd.packed_sparse_v[r];
                 let s_hi_mut: &mut [PackedKB; 15] = unsafe { transmute(&mut split.s_hi) };
-                for j in 0..15 {
-                    s_hi_mut[j] += s0_val * v[j];
-                }
+                s_hi_mut[0] += s0_val * v[0];
+                s_hi_mut[1] += s0_val * v[1];
+                s_hi_mut[2] += s0_val * v[2];
+                s_hi_mut[3] += s0_val * v[3];
+                s_hi_mut[4] += s0_val * v[4];
+                s_hi_mut[5] += s0_val * v[5];
+                s_hi_mut[6] += s0_val * v[6];
+                s_hi_mut[7] += s0_val * v[7];
+                s_hi_mut[8] += s0_val * v[8];
+                s_hi_mut[9] += s0_val * v[9];
+                s_hi_mut[10] += s0_val * v[10];
+                s_hi_mut[11] += s0_val * v[11];
+                s_hi_mut[12] += s0_val * v[12];
+                s_hi_mut[13] += s0_val * v[13];
+                s_hi_mut[14] += s0_val * v[14];
             }
 
             *state = unsafe { split.to_packed_field_array() };
