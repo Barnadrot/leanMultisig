@@ -69,6 +69,7 @@ where
 
     next_digests[0..next_len]
         .par_chunks_exact_mut(width)
+        .with_min_len(64)
         .enumerate()
         .for_each(|(i, digests_chunk)| {
             let first_row = i * width;
