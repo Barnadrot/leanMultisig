@@ -31,6 +31,13 @@ impl<EF: ExtensionField<PF<EF>>> MerkleData<EF> {
         }
     }
 
+    pub(crate) fn release(&mut self) {
+        match self {
+            MerkleData::Base(tree) => tree.release(),
+            MerkleData::Extension(tree) => tree.release(),
+        }
+    }
+
     pub(crate) fn open(&self, index: usize) -> (MleOwned<EF>, Vec<[PF<EF>; DIGEST_ELEMS]>) {
         match self {
             MerkleData::Base(prover_data) => {

@@ -39,6 +39,10 @@ impl<F: Clone + Copy + Default + Send + Sync, const DIGEST_ELEMS: usize> MerkleT
         self.digest_layers.last().unwrap()[0]
     }
 
+    pub fn release_layers(&mut self) {
+        self.digest_layers = vec![];
+    }
+
     /// Returns the sibling digests along the path from leaf to root.
     pub fn open_siblings(&self, index: usize, log_height: usize) -> Vec<[F; DIGEST_ELEMS]> {
         (0..log_height)

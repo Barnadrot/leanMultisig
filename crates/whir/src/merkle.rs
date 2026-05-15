@@ -211,6 +211,16 @@ impl<F: Clone + Copy + Default + Send + Sync, M: Matrix<F>, const DIGEST_ELEMS: 
     }
 }
 
+impl<F: Clone + Copy + Default + Send + Sync, const DIGEST_ELEMS: usize>
+    WhirMerkleTree<F, DenseMatrix<F>, DIGEST_ELEMS>
+{
+    pub(crate) fn release(&mut self) {
+        self.leaf.values = vec![];
+        self.leaf.width = 0;
+        self.tree.release_layers();
+    }
+}
+
 #[instrument(name = "first digest layer", level = "debug", skip_all)]
 fn first_digest_layer<P, Perm, M, const DIGEST_ELEMS: usize, const WIDTH: usize, const RATE: usize>(
     perm: &Perm,
