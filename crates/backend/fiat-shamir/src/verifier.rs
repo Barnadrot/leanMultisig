@@ -8,7 +8,7 @@ use crate::{
     *,
 };
 use field::PrimeCharacteristicRing;
-use field::{ExtensionField, PrimeField64};
+use field::{ExtensionField, PrimeField32, PrimeField64};
 use koala_bear::symmetric::Permutation;
 use koala_bear::{KoalaBear, default_koalabear_poseidon1_16};
 
@@ -72,7 +72,17 @@ where
         // SAFETY: We've confirmed PF<EF> == KoalaBear
         let paths: PrunedMerklePaths<KoalaBear, KoalaBear> = unsafe { std::mem::transmute(paths) };
         let perm = default_koalabear_poseidon1_16();
-        let hash_fn = |data: &[KoalaBear]| symetric::hash_slice::<_, _, 16, 8, DIGEST_LEN_FE>(&perm, data);
+        let hash_fn = |data: &[KoalaBear]| {
+            let mut buf = vec![0u8; data.len() * 4];
+            for (i, elem) in data.iter().enumerate() {
+                buf[i * 4..i * 4 + 4].copy_from_slice(&elem.to_unique_u32().to_le_bytes());
+            }
+            let hash = blake3::hash(&buf);
+            std::array::from_fn(|j| {
+                let val = u32::from_le_bytes(hash.as_bytes()[j * 4..j * 4 + 4].try_into().unwrap());
+                KoalaBear::new(val % KoalaBear::ORDER_U32)
+            })
+        };
         let combine_fn = |left: &[KoalaBear; DIGEST_LEN_FE], right: &[KoalaBear; DIGEST_LEN_FE]| {
             symetric::compress(&perm, [*left, *right])
         };
