@@ -10,7 +10,7 @@ use crate::{
 use field::PrimeCharacteristicRing;
 use field::{ExtensionField, PrimeField32, PrimeField64};
 use koala_bear::symmetric::Permutation;
-use koala_bear::{KoalaBear, default_koalabear_poseidon1_16};
+use koala_bear::KoalaBear;
 
 pub struct VerifierState<EF: ExtensionField<PF<EF>>, P> {
     challenger: Challenger<PF<EF>, P>,
@@ -71,7 +71,6 @@ where
         assert_eq!(TypeId::of::<PF<EF>>(), TypeId::of::<KoalaBear>());
         // SAFETY: We've confirmed PF<EF> == KoalaBear
         let paths: PrunedMerklePaths<KoalaBear, KoalaBear> = unsafe { std::mem::transmute(paths) };
-        let perm = default_koalabear_poseidon1_16();
         let hash_fn = |data: &[KoalaBear]| {
             let mut buf = vec![0u8; data.len() * 4];
             for (i, elem) in data.iter().enumerate() {
@@ -84,7 +83,19 @@ where
             })
         };
         let combine_fn = |left: &[KoalaBear; DIGEST_LEN_FE], right: &[KoalaBear; DIGEST_LEN_FE]| {
-            symetric::compress(&perm, [*left, *right])
+            let mut buf = [0u8; DIGEST_LEN_FE * 2 * 4];
+            for (i, elem) in left.iter().enumerate() {
+                buf[i * 4..i * 4 + 4].copy_from_slice(&elem.to_unique_u32().to_le_bytes());
+            }
+            for (i, elem) in right.iter().enumerate() {
+                let offset = DIGEST_LEN_FE * 4 + i * 4;
+                buf[offset..offset + 4].copy_from_slice(&elem.to_unique_u32().to_le_bytes());
+            }
+            let hash = blake3::hash(&buf);
+            std::array::from_fn(|j| {
+                let val = u32::from_le_bytes(hash.as_bytes()[j * 4..j * 4 + 4].try_into().unwrap());
+                KoalaBear::new(val % KoalaBear::ORDER_U32)
+            })
         };
         let restored: MerklePaths<KoalaBear, KoalaBear> = paths.restore(&hash_fn, &combine_fn)?;
         let openings: Vec<MerkleOpening<KoalaBear>> = restored
