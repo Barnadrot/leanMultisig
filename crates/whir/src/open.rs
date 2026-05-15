@@ -160,11 +160,6 @@ where
             &stir_combination_randomness,
         );
 
-        round_state.merkle_prover_data.release();
-        if let Some(ref mut data_b) = round_state.commitment_merkle_prover_data_b {
-            data_b.release();
-        }
-
         let next_folding_randomness = round_state.sumcheck_prover.run_sumcheck_many_rounds(
             None,
             prover_state,
@@ -238,8 +233,6 @@ where
         if !ext_paths.is_empty() {
             prover_state.hint_merkle_paths_extension(ext_paths);
         }
-
-        round_state.merkle_prover_data.release();
 
         // Run final sumcheck if required
         if self.final_sumcheck_rounds > 0 {
