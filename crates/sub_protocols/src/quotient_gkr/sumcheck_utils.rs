@@ -225,25 +225,51 @@ pub(super) fn run_phase1_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
     let padding_sum = alpha * mle_of_zeros_then_ones(active_chunks, &outer_point);
 
     let mut pending_r: Option<EF> = initial_pending_r;
+    let mut cached_eq_within: Option<Vec<EFPacking<EF>>> = None;
+    let mut eq_scale = EF::ONE;
+
     while layer_chunk_log > w + 1 && remaining_eq.len() > w + 1 {
         let eq_alpha = *remaining_eq.last().unwrap();
-        let eq_within = eval_eq_packed(&within_pt(&remaining_eq, head_len));
 
-        let coeffs = if let Some(prev_r) = pending_r.take() {
+        let eq_within: &[EFPacking<EF>] = if let (Some(prev_eq), Some(prev_r)) =
+            (&mut cached_eq_within, pending_r)
+        {
+            let half = prev_eq.len() / 2;
+            let one_minus_r: EFPacking<EF> = (EF::ONE - prev_r).into();
+            let prev_r_packed: EFPacking<EF> = prev_r.into();
+            for i in 0..half {
+                prev_eq[i] = prev_eq[i] * one_minus_r + prev_eq[i + half] * prev_r_packed;
+            }
+            prev_eq.truncate(half);
+            eq_scale *= (EF::ONE - eq_alpha) * (EF::ONE - prev_r) + eq_alpha * prev_r;
+            prev_eq.as_slice()
+        } else {
+            let fresh = eval_eq_packed(&within_pt(&remaining_eq, head_len));
+            cached_eq_within = Some(fresh);
+            eq_scale = EF::ONE;
+            cached_eq_within.as_ref().unwrap().as_slice()
+        };
+
+        let mut coeffs = if let Some(prev_r) = pending_r.take() {
             let (new_nums, new_dens, c) = fold_and_compute_round_packed::<EF, _>(
                 nums.as_ref(),
                 dens.as_ref(),
                 layer_chunk_log + 1,
                 prev_r,
                 &eq_outer,
-                &eq_within,
+                eq_within,
             );
             nums = Cow::Owned(new_nums);
             dens = Cow::Owned(new_dens);
             c
         } else {
-            compute_round_packed::<EF, _>(nums.as_ref(), dens.as_ref(), layer_chunk_log, &eq_outer, &eq_within)
+            compute_round_packed::<EF, _>(nums.as_ref(), dens.as_ref(), layer_chunk_log, &eq_outer, eq_within)
         };
+
+        if eq_scale != EF::ONE {
+            let inv = eq_scale.inverse();
+            coeffs = coeffs * inv;
+        }
 
         let r = finalize_round(prover_state, coeffs, alpha, eq_alpha, &mut sum, &mut mmf, padding_sum);
         pending_r = Some(r);
