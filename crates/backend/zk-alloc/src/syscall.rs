@@ -15,6 +15,7 @@ mod imp {
     const MAP_ANONYMOUS: usize = 0x20;
     const MAP_NORESERVE: usize = 0x4000;
 
+    pub const MADV_HUGEPAGE: usize = 14;
     pub const MADV_NOHUGEPAGE: usize = 15;
 
     #[inline]
@@ -74,6 +75,7 @@ mod imp {
 mod imp {
     use std::ptr;
 
+    pub const MADV_HUGEPAGE: usize = 14;
     pub const MADV_NOHUGEPAGE: usize = 15;
 
     #[inline]
@@ -97,4 +99,4 @@ mod imp {
     }
 }
 
-pub use imp::{MADV_NOHUGEPAGE, madvise, mmap_anonymous};
+pub use imp::{MADV_HUGEPAGE, MADV_NOHUGEPAGE, madvise, mmap_anonymous};
