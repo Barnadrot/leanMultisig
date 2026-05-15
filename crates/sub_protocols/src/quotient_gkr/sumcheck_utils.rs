@@ -136,8 +136,8 @@ pub(super) fn quotient_sumcheck_prove_packed_br_base<EF: ExtensionField<PF<EF>>>
     let padding_sum = alpha * mle_of_zeros_then_ones(active_chunks, &outer_point);
 
     let eq_alpha_0 = *remaining_eq.last().unwrap();
-    let eq_within_0 = eval_eq_packed(&within_pt(&remaining_eq, head_len));
-    let coeffs_0 = compute_round_packed::<EF, _>(packed_nums, packed_dens, parent_chunk_log, &eq_outer, &eq_within_0);
+    let mut eq_within = eval_eq_packed(&within_pt(&remaining_eq, head_len));
+    let coeffs_0 = compute_round_packed::<EF, _>(packed_nums, packed_dens, parent_chunk_log, &eq_outer, &eq_within);
     let r0 = finalize_round(
         prover_state,
         coeffs_0,
@@ -151,9 +151,13 @@ pub(super) fn quotient_sumcheck_prove_packed_br_base<EF: ExtensionField<PF<EF>>>
     remaining_eq.pop();
 
     let eq_alpha_1 = *remaining_eq.last().unwrap();
-    let eq_within_1 = eval_eq_packed(&within_pt(&remaining_eq, head_len));
+    let half = eq_within.len() / 2;
+    for i in 0..half {
+        eq_within[i] = eq_within[i] + eq_within[i + half];
+    }
+    eq_within.truncate(half);
     let (nums_ext, dens_ext, coeffs_1) =
-        fold_and_compute_round_packed::<EF, _>(packed_nums, packed_dens, parent_chunk_log, r0, &eq_outer, &eq_within_1);
+        fold_and_compute_round_packed::<EF, _>(packed_nums, packed_dens, parent_chunk_log, r0, &eq_outer, &eq_within);
     let r1 = finalize_round(
         prover_state,
         coeffs_1,
@@ -225,9 +229,21 @@ pub(super) fn run_phase1_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
     let padding_sum = alpha * mle_of_zeros_then_ones(active_chunks, &outer_point);
 
     let mut pending_r: Option<EF> = initial_pending_r;
+    let mut eq_within_buf: Vec<EFPacking<EF>> = Vec::new();
+    let mut eq_within_initialized = false;
     while layer_chunk_log > w + 1 && remaining_eq.len() > w + 1 {
         let eq_alpha = *remaining_eq.last().unwrap();
-        let eq_within = eval_eq_packed(&within_pt(&remaining_eq, head_len));
+
+        if eq_within_initialized {
+            let half = eq_within_buf.len() / 2;
+            for i in 0..half {
+                eq_within_buf[i] = eq_within_buf[i] + eq_within_buf[i + half];
+            }
+            eq_within_buf.truncate(half);
+        } else {
+            eq_within_buf = eval_eq_packed(&within_pt(&remaining_eq, head_len));
+            eq_within_initialized = true;
+        }
 
         let coeffs = if let Some(prev_r) = pending_r.take() {
             let (new_nums, new_dens, c) = fold_and_compute_round_packed::<EF, _>(
@@ -236,13 +252,13 @@ pub(super) fn run_phase1_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
                 layer_chunk_log + 1,
                 prev_r,
                 &eq_outer,
-                &eq_within,
+                &eq_within_buf,
             );
             nums = Cow::Owned(new_nums);
             dens = Cow::Owned(new_dens);
             c
         } else {
-            compute_round_packed::<EF, _>(nums.as_ref(), dens.as_ref(), layer_chunk_log, &eq_outer, &eq_within)
+            compute_round_packed::<EF, _>(nums.as_ref(), dens.as_ref(), layer_chunk_log, &eq_outer, &eq_within_buf)
         };
 
         let r = finalize_round(prover_state, coeffs, alpha, eq_alpha, &mut sum, &mut mmf, padding_sum);
