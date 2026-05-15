@@ -73,11 +73,10 @@ where
         let paths: PrunedMerklePaths<KoalaBear, KoalaBear> = unsafe { std::mem::transmute(paths) };
         let perm = default_koalabear_poseidon1_16();
         let hash_fn = |data: &[KoalaBear]| {
-            let mut buf = vec![0u8; data.len() * 4];
-            for (i, elem) in data.iter().enumerate() {
-                buf[i * 4..i * 4 + 4].copy_from_slice(&elem.to_unique_u32().to_le_bytes());
-            }
-            let hash = blake3::hash(&buf);
+            let bytes = unsafe {
+                std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4)
+            };
+            let hash = blake3::hash(bytes);
             std::array::from_fn(|j| {
                 let val = u32::from_le_bytes(hash.as_bytes()[j * 4..j * 4 + 4].try_into().unwrap());
                 KoalaBear::new(val % KoalaBear::ORDER_U32)
