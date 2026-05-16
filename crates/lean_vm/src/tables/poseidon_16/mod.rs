@@ -85,9 +85,7 @@ mod trace_gen;
 pub use trace_gen::fill_trace_poseidon_16;
 
 pub(super) const WIDTH: usize = 16;
-const HALF_INITIAL_FULL_ROUNDS: usize = POSEIDON1_HALF_FULL_ROUNDS / 2;
 const PARTIAL_ROUNDS: usize = POSEIDON1_PARTIAL_ROUNDS;
-const HALF_FINAL_FULL_ROUNDS: usize = POSEIDON1_HALF_FULL_ROUNDS / 2;
 
 // `PRECOMPILE_DATA` encoding: see `tables/mod.rs`.
 pub const POSEIDON_PRECOMPILE_DATA: usize = 1;
@@ -297,21 +295,19 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         num_cols_poseidon_16()
     }
     fn degree_air(&self) -> usize {
-        // Last 4 output constraints (i in 4..8) are gated by the single linear factor
-        // `(1 - flag_permute - flag_half_output)`, which is boolean thanks to the mutex
-        // `flag_permute * flag_half_output = 0`. The permutation expression has degree 9, so
-        // the gated constraint stays at degree 10.
-        10
+        // Single-round checkpointing: each full round is cube+MDS at degree 3.
+        // Output gates are flag × linear = degree 2. Partial rounds are degree 3.
+        3
     }
     fn low_degree_air(&self) -> Option<(usize, usize)> {
-        // Each partial round contributes one `assert_eq_low` per round (1 S-box / round), of degree 3 (= the "low" degree part)
-        Some((3, PARTIAL_ROUNDS))
+        None
     }
     fn down_column_indexes(&self) -> Vec<usize> {
         vec![]
     }
     fn n_constraints(&self) -> usize {
-        BUS as usize + 99
+        // 7 meta + 128 full-round checkpoints + 20 partial + 24 output = 179
+        BUS as usize + 179
     }
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
         let cols: Poseidon1Cols16<AB::IF> = {
@@ -375,9 +371,9 @@ pub(super) struct Poseidon1Cols16<T> {
     pub flag_permute: T,
 
     pub inputs: [T; WIDTH],
-    pub beginning_full_rounds: [[T; WIDTH]; HALF_INITIAL_FULL_ROUNDS],
+    pub initial_full_rounds: [[T; WIDTH]; POSEIDON1_HALF_FULL_ROUNDS],
     pub partial_rounds: [T; PARTIAL_ROUNDS],
-    pub ending_full_rounds: [[T; WIDTH]; HALF_FINAL_FULL_ROUNDS - 1],
+    pub final_full_rounds: [[T; WIDTH]; POSEIDON1_HALF_FULL_ROUNDS],
     pub outputs_left: [T; WIDTH / 2],
     pub outputs_right: [T; WIDTH / 2],
 }
@@ -386,18 +382,16 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
     let mut state: [_; WIDTH] = local.inputs;
 
     let initial_constants = poseidon1_initial_constants();
-    for round in 0..HALF_INITIAL_FULL_ROUNDS {
-        eval_2_full_rounds_16(
+    for round in 0..POSEIDON1_HALF_FULL_ROUNDS {
+        eval_1_full_round(
             &mut state,
-            &local.beginning_full_rounds[round],
-            &initial_constants[2 * round],
-            &initial_constants[2 * round + 1],
+            &local.initial_full_rounds[round],
+            &initial_constants[round],
             builder,
         );
     }
 
     // --- Sparse partial rounds ---
-    // Transition: add first-round constants, multiply by m_i
     builder.low_degree_block(&mut state, |b, state| {
         let state: &mut [AB::IF; WIDTH] = state.try_into().unwrap();
 
@@ -411,37 +405,31 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
         let v_vecs = poseidon1_sparse_v();
         let scalar_rc = poseidon1_sparse_scalar_round_constants();
         for round in 0..PARTIAL_ROUNDS {
-            // S-box on state[0]
             state[0] = state[0].cube();
             b.assert_eq_low(state[0], local.partial_rounds[round]);
             state[0] = local.partial_rounds[round];
-            // Scalar round constant (not on last round)
             if round < PARTIAL_ROUNDS - 1 {
                 add_kb(&mut state[0], scalar_rc[round]);
             }
-            // Sparse matrix: new_s0 = dot(first_row, state), state[i] += old_s0 * v[i-1]
             sparse_mat_air_16(state, &first_rows[round], &v_vecs[round]);
         }
     });
 
     let final_constants = poseidon1_final_constants();
-    for round in 0..HALF_FINAL_FULL_ROUNDS - 1 {
-        eval_2_full_rounds_16(
+    for round in 0..POSEIDON1_HALF_FULL_ROUNDS {
+        eval_1_full_round(
             &mut state,
-            &local.ending_full_rounds[round],
-            &final_constants[2 * round],
-            &final_constants[2 * round + 1],
+            &local.final_full_rounds[round],
+            &final_constants[round],
             builder,
         );
     }
 
-    eval_last_2_full_rounds_16(
+    eval_output_gates(
         &local.inputs,
-        &mut state,
+        &state,
         &local.outputs_left,
         &local.outputs_right,
-        &final_constants[2 * (HALF_FINAL_FULL_ROUNDS - 1)],
-        &final_constants[2 * (HALF_FINAL_FULL_ROUNDS - 1) + 1],
         local.flag_half_output,
         local.flag_permute,
         builder,
@@ -458,52 +446,33 @@ pub const fn num_cols_total_poseidon_16() -> usize {
 }
 
 #[inline]
-fn eval_2_full_rounds_16<AB: AirBuilder>(
+fn eval_1_full_round<AB: AirBuilder>(
     state: &mut [AB::IF; WIDTH],
-    post_full_round: &[AB::IF; WIDTH],
-    round_constants_1: &[F; WIDTH],
-    round_constants_2: &[F; WIDTH],
+    checkpoint: &[AB::IF; WIDTH],
+    round_constants: &[F; WIDTH],
     builder: &mut AB,
 ) {
-    for (s, r) in state.iter_mut().zip(round_constants_1.iter()) {
+    for (s, r) in state.iter_mut().zip(round_constants.iter()) {
         add_kb(s, *r);
         *s = s.cube();
     }
     mds_air_16(state);
-    for (s, r) in state.iter_mut().zip(round_constants_2.iter()) {
-        add_kb(s, *r);
-        *s = s.cube();
-    }
-    mds_air_16(state);
-    for (state_i, post_i) in state.iter_mut().zip(post_full_round) {
-        builder.assert_eq(*state_i, *post_i);
-        *state_i = *post_i;
+    for (state_i, &chk_i) in state.iter_mut().zip(checkpoint) {
+        builder.assert_eq(*state_i, chk_i);
+        *state_i = chk_i;
     }
 }
 
 #[inline]
-#[allow(clippy::too_many_arguments)]
-fn eval_last_2_full_rounds_16<AB: AirBuilder>(
+fn eval_output_gates<AB: AirBuilder>(
     initial_state: &[AB::IF; WIDTH],
-    state: &mut [AB::IF; WIDTH],
+    final_state: &[AB::IF; WIDTH],
     outputs_left: &[AB::IF; WIDTH / 2],
     outputs_right: &[AB::IF; WIDTH / 2],
-    round_constants_1: &[F; WIDTH],
-    round_constants_2: &[F; WIDTH],
     flag_half_output: AB::IF,
     flag_permute: AB::IF,
     builder: &mut AB,
 ) {
-    for (s, r) in state.iter_mut().zip(round_constants_1.iter()) {
-        add_kb(s, *r);
-        *s = s.cube();
-    }
-    mds_air_16(state);
-    for (s, r) in state.iter_mut().zip(round_constants_2.iter()) {
-        add_kb(s, *r);
-        *s = s.cube();
-    }
-    mds_air_16(state);
     let not_permute = AB::IF::ONE - flag_permute;
     let compression_last4 = not_permute - flag_half_output;
     for i in 0..(WIDTH / 2) {
@@ -512,9 +481,9 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
         } else {
             compression_last4
         };
-        builder.assert_zero(compression_gate * (state[i] + initial_state[i] - outputs_left[i]));
-        builder.assert_zero(flag_permute * (state[i] - outputs_left[i]));
-        builder.assert_zero(flag_permute * (state[i + WIDTH / 2] - outputs_right[i]));
+        builder.assert_zero(compression_gate * (final_state[i] + initial_state[i] - outputs_left[i]));
+        builder.assert_zero(flag_permute * (final_state[i] - outputs_left[i]));
+        builder.assert_zero(flag_permute * (final_state[i + WIDTH / 2] - outputs_right[i]));
     }
 }
 
