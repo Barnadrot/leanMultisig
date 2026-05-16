@@ -1,6 +1,3 @@
-mod blake3_permutation;
-pub use blake3_permutation::Blake3Permutation;
-
 mod errors;
 pub use errors::*;
 
