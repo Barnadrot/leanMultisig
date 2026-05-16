@@ -197,23 +197,6 @@ pub(crate) fn global_dft<F: Field>() -> Arc<EvalsDft<F>> {
         .unwrap()
 }
 
-#[cfg(target_os = "linux")]
-fn configure_allocator_for_proving() {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        unsafe extern "C" {
-            fn mallopt(param: i32, value: i32) -> i32;
-        }
-        unsafe {
-            mallopt(-1, -1); // M_TRIM_THRESHOLD: disable heap trimming (no MADV_DONTNEED)
-            mallopt(-3, i32::MAX); // M_MMAP_THRESHOLD: use sbrk instead of mmap for large allocs
-        }
-    });
-}
-
 pub fn precompute_dft_twiddles<F: TwoAdicField>(n: usize) {
-    #[cfg(target_os = "linux")]
-    configure_allocator_for_proving();
     global_dft::<F>().update_twiddles(n);
 }
