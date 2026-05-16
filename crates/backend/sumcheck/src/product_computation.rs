@@ -313,3 +313,90 @@ where
     let quadratic = (y_1 - y_0) * (x_1 - x_0);
     (constant, quadratic)
 }
+
+/// Compute the first round of the product sumcheck using factored eq weights.
+///
+/// Instead of materializing the full weight vector w[i] over 2n elements, exploits:
+///   w[i]      = s0 * eq_rest[i]    (for i < n)
+///   w[i + n]  = s1 * eq_rest[i]    (for i < n)
+/// where s0 = (1-alpha_first), s1 = alpha_first, and eq_rest has n packed elements.
+///
+/// Returns (sumcheck_poly, folded_evals, folded_weights, eq_factor) where eq_factor is the
+/// scalar to multiply eq_rest after folding to reconstruct the folded weights.
+#[instrument(skip_all, name = "factored_first_round")]
+pub fn compute_product_sumcheck_first_round_factored<
+    const DIM: usize,
+    F: PrimeField32,
+    PF: PackedField<Scalar = F>,
+    EFP: BasedVectorSpace<PF> + Copy + Send + Sync,
+    EF: Field + BasedVectorSpace<F>,
+>(
+    pol_0: &[PF],
+    eq_rest: &[EFP],
+    alpha_first: EF,
+    sum: EF,
+) -> (DensePolynomial<EF>, EF, EF) {
+    assert_eq!(DIM, EF::DIMENSION);
+    let n = pol_0.len();
+    assert_eq!(n, eq_rest.len() * 2);
+    assert!(n.is_power_of_two());
+    let half = n / 2;
+
+    type Acc<const D: usize> = ([u128; D], [i128; D]);
+
+    let chunk_size = 1024;
+
+    // c0_raw = sum_i pol_0[i] * eq_rest[i]
+    // c2_raw = sum_i (pol_0[i+half] - pol_0[i]) * eq_rest[i]
+    let (c0_raw_acc, c2_raw_acc) = pol_0[..half]
+        .par_chunks(chunk_size)
+        .zip(pol_0[half..].par_chunks(chunk_size))
+        .zip(eq_rest.par_chunks(chunk_size))
+        .map(|((b_lo, b_hi), eq_chunk)| {
+            let mut c0 = [0u128; DIM];
+            let mut c2 = [0i128; DIM];
+            for i in 0..b_lo.len() {
+                let x0_lanes = b_lo[i].as_slice();
+                let x1_lanes = b_hi[i].as_slice();
+                let eq_coords = eq_chunk[i].as_basis_coefficients_slice();
+                for j in 0..DIM {
+                    let eq_j = eq_coords[j].as_slice();
+                    for lane in 0..PF::WIDTH {
+                        let x0 = x0_lanes[lane].to_unique_u32() as u64;
+                        let eq_val = eq_j[lane].to_unique_u32();
+                        c0[j] += (eq_val as u64 * x0) as u128;
+                        c2[j] += eq_val as i128
+                            * (x1_lanes[lane].to_unique_u32() as i64 - x0 as i64) as i128;
+                    }
+                }
+            }
+            (c0, c2)
+        })
+        .reduce(
+            || ([0u128; DIM], [0i128; DIM]),
+            |(mut a0, mut a2): Acc<DIM>, (b0, b2): Acc<DIM>| {
+                for j in 0..DIM {
+                    a0[j] += b0[j];
+                    a2[j] += b2[j];
+                }
+                (a0, a2)
+            },
+        );
+
+    let c0_raw = EF::from_basis_coefficients_fn(|j| F::reduce_product_sum(c0_raw_acc[j]));
+    let c2_raw = EF::from_basis_coefficients_fn(|j| F::reduce_signed_product_sum(c2_raw_acc[j]));
+
+    // Apply the factored scaling:
+    // c0 = s0 * c0_raw where s0 = (1 - alpha_first)
+    // Full c2 = sum_i (pol_0[i+half]-pol_0[i]) * (w[i+half]-w[i])
+    //         = sum_i (pol_0[i+half]-pol_0[i]) * (s1 - s0) * eq_rest[i]
+    //         = (2*alpha_first - 1) * c2_raw
+    let s0 = EF::ONE - alpha_first;
+    let s1_minus_s0 = alpha_first.double() - EF::ONE;
+
+    let c0 = s0 * c0_raw;
+    let c2 = s1_minus_s0 * c2_raw;
+    let c1 = sum - c0.double() - c2;
+
+    (DensePolynomial::new(vec![c0, c1, c2]), c0_raw, c2_raw)
+}
