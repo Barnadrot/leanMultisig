@@ -71,13 +71,16 @@ pub(super) fn generate_trace_rows_for_perm<F: Algebra<KoalaBear> + Copy>(perm: &
     let first_rows = poseidon1_sparse_first_row();
     let v_vecs = poseidon1_sparse_v();
     let scalar_rc = poseidon1_sparse_scalar_round_constants();
-    let n_partial = perm.partial_rounds.len();
-    for round in 0..n_partial {
+    let n_checkpoints = perm.partial_rounds.len();
+    for round in 0..POSEIDON1_PARTIAL_ROUNDS {
         // S-box on state[0]
         state[0] = state[0].cube();
-        *perm.partial_rounds[round] = state[0];
+        // Store checkpoint only after odd rounds (1, 3, 5, ..., 19)
+        if round % 2 == 1 {
+            *perm.partial_rounds[round / 2] = state[0];
+        }
         // Scalar round constant (not on last round)
-        if round < n_partial - 1 {
+        if round < POSEIDON1_PARTIAL_ROUNDS - 1 {
             state[0] += scalar_rc[round];
         }
         // Sparse matrix
@@ -89,6 +92,7 @@ pub(super) fn generate_trace_rows_for_perm<F: Algebra<KoalaBear> + Copy>(perm: &
             state[i] += old_s0 * v_vecs[round][i - 1];
         }
     }
+    let _ = n_checkpoints;
 
     let n_ending_full_rounds = perm.ending_full_rounds.len();
     for (full_round, constants) in perm
