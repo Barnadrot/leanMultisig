@@ -89,9 +89,6 @@ const HALF_INITIAL_FULL_ROUNDS: usize = POSEIDON1_HALF_FULL_ROUNDS / 2;
 const PARTIAL_ROUNDS: usize = POSEIDON1_PARTIAL_ROUNDS;
 const HALF_FINAL_FULL_ROUNDS: usize = POSEIDON1_HALF_FULL_ROUNDS / 2;
 
-/// Committed columns: 9 metadata + 16 inputs. Intermediates and outputs verified by GKR.
-pub const N_COMMITTED_COLS_P16: usize = 9 + WIDTH;
-
 // `PRECOMPILE_DATA` encoding: see `tables/mod.rs`.
 pub const POSEIDON_PRECOMPILE_DATA: usize = 1;
 pub const POSEIDON_PERMUTE_SHIFT: usize = 1 << 1;
@@ -294,42 +291,28 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
     }
 }
 
-/// Layout of the committed columns only (metadata + inputs). GKR verifies the rest.
-#[repr(C)]
-#[derive(Debug)]
-struct PoseidonCommittedCols16<T> {
-    flag_active: T,
-    index_b: T,
-    index_res: T,
-    flag_half_output: T,
-    flag_hardcoded_left: T,
-    offset_hardcoded_left: T,
-    effective_index_left_first: T,
-    effective_index_left_second: T,
-    flag_permute: T,
-    inputs: [T; WIDTH],
-}
-
-const _: () = assert!(size_of::<PoseidonCommittedCols16<u8>>() == N_COMMITTED_COLS_P16);
-
 impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
     type ExtraData = ExtraDataForBuses<EF>;
     fn n_columns(&self) -> usize {
-        N_COMMITTED_COLS_P16
+        num_cols_poseidon_16()
     }
     fn degree_air(&self) -> usize {
-        2
+        9
+    }
+    fn low_degree_air(&self) -> Option<(usize, usize)> {
+        // Each partial round contributes one `assert_eq_low` per round (1 S-box / round), of degree 3 (= the "low" degree part)
+        Some((3, PARTIAL_ROUNDS))
     }
     fn down_column_indexes(&self) -> Vec<usize> {
         vec![]
     }
     fn n_constraints(&self) -> usize {
-        BUS as usize + 7
+        BUS as usize + 83
     }
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
-        let cols: PoseidonCommittedCols16<AB::IF> = {
+        let cols: Poseidon1Cols16<AB::IF> = {
             let up = builder.up();
-            let (prefix, shorts, suffix) = unsafe { up.align_to::<PoseidonCommittedCols16<AB::IF>>() };
+            let (prefix, shorts, suffix) = unsafe { up.align_to::<Poseidon1Cols16<AB::IF>>() };
             debug_assert!(prefix.is_empty(), "Alignment should match");
             debug_assert!(suffix.is_empty(), "Alignment should match");
             debug_assert_eq!(shorts.len(), 1);
@@ -344,10 +327,12 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
                 * AB::F::from_usize(POSEIDON_HARDCODED_LEFT_4_OFFSET_SHIFT)
             + cols.flag_permute * AB::F::from_usize(POSEIDON_PERMUTE_SHIFT);
 
+        // effective_index_left_first = index_a * (1 - flag_hardcoded_left_4) + offset * flag_hardcoded_left_4
         let one_minus_flag_hardcoded_left = AB::IF::ONE - cols.flag_hardcoded_left;
         let index_a =
             cols.effective_index_left_second - one_minus_flag_hardcoded_left * AB::F::from_usize(HALF_DIGEST_LEN);
 
+        // Bus data: [precompile_data, a, b, res]
         if BUS {
             builder.assert_zero_ef(eval_virtual_bus_column::<AB, EF>(
                 extra_data,
@@ -367,6 +352,8 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
 
         builder.assert_zero(cols.flag_hardcoded_left * (cols.offset_hardcoded_left - cols.effective_index_left_first));
         builder.assert_zero(one_minus_flag_hardcoded_left * (index_a - cols.effective_index_left_first));
+
+        eval_poseidon1_16(builder, &cols)
     }
 }
 

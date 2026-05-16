@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use crate::*;
 use backend::{Proof, RawProof, VerifierState};
 use lean_vm::*;
-use poseidon_gkr::verify_poseidon_gkr;
 use sub_protocols::*;
 use utils::{ToUsize, from_end, get_poseidon16};
 
@@ -89,20 +88,11 @@ pub fn verify_execution(
     let mut committed_statements: CommittedStatements = Default::default();
     for table in ALL_TABLES {
         let log_n = table_n_vars[&table];
-        let col_values = if table == Table::poseidon16() {
-            logup_statements.columns_values[&table]
-                .iter()
-                .filter(|&(&col, _)| col < N_COMMITTED_COLS_P16)
-                .map(|(&k, &v)| (k, v))
-                .collect()
-        } else {
-            logup_statements.columns_values[&table].clone()
-        };
         committed_statements.insert(
             table,
             vec![(
                 MultilinearPoint(from_end(gkr_point, log_n).to_vec()),
-                col_values,
+                logup_statements.columns_values[&table].clone(),
                 BTreeMap::new(),
             )],
         );
@@ -186,30 +176,6 @@ pub fn verify_execution(
     if my_air_final_value != claimed_air_final_value {
         return Err(ProofError::InvalidProof);
     }
-
-    // GKR Poseidon verification
-    let poseidon_log_n = table_n_vars[&Table::poseidon16()];
-    let gkr_output_point = MultilinearPoint(from_end(gkr_point, poseidon_log_n).to_vec());
-    let logup_poseidon_evals = &logup_statements.columns_values[&Table::poseidon16()];
-    let perm_out_0_7: Vec<EF> = (0..8)
-        .map(|i| {
-            logup_poseidon_evals[&(POSEIDON_16_COL_OUTPUT_LEFT + i)]
-                - logup_poseidon_evals[&(POSEIDON_16_COL_INPUT_START + i)]
-        })
-        .collect();
-    let gkr_result = verify_poseidon_gkr::<16>(
-        &mut verifier_state,
-        poseidon_log_n,
-        &gkr_output_point,
-        &perm_out_0_7,
-    )?;
-    let gkr_input_claims: BTreeMap<ColIndex, EF> = (0..16)
-        .map(|i| (POSEIDON_16_COL_INPUT_START + i, gkr_result.input_evals[i]))
-        .collect();
-    committed_statements
-        .get_mut(&Table::poseidon16())
-        .unwrap()
-        .push((gkr_result.input_point, gkr_input_claims, BTreeMap::new()));
 
     let public_memory_random_point =
         MultilinearPoint(verifier_state.sample_vec(log2_strict_usize(public_memory.len())));
