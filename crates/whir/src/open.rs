@@ -522,12 +522,31 @@ where
     let num_variables = statements[0].total_num_variables;
     assert!(statements.iter().all(|e| e.total_num_variables == num_variables));
 
-    let mut combined_weights = EFPacking::<EF>::zero_vec(1 << (num_variables - packing_log_width::<EF>()));
+    let out_len = 1 << (num_variables - packing_log_width::<EF>());
 
+    let first = &statements[0];
+    let first_is_full_initializer = !first.is_next
+        && first.values.len() == 1
+        && first.values[0].selector == 0
+        && first.inner_num_variables() == num_variables;
+
+    let mut combined_weights: Vec<EFPacking<EF>>;
     let mut combined_sum = EF::ZERO;
     let mut gamma_pow = EF::ONE;
+    let start_idx;
 
-    for smt in statements {
+    if first_is_full_initializer {
+        combined_weights = unsafe { uninitialized_vec(out_len) };
+        compute_eval_eq_packed::<EF, false>(&first.point.0, &mut combined_weights, gamma_pow);
+        combined_sum += first.values[0].value * gamma_pow;
+        gamma_pow *= gamma;
+        start_idx = 1;
+    } else {
+        combined_weights = EFPacking::<EF>::zero_vec(out_len);
+        start_idx = 0;
+    }
+
+    for smt in &statements[start_idx..] {
         if !smt.is_next && (smt.values.len() == 1 || smt.inner_num_variables() < packing_log_width::<EF>()) {
             for evaluation in &smt.values {
                 compute_sparse_eval_eq_packed::<EF>(evaluation.selector, &smt.point, &mut combined_weights, gamma_pow);

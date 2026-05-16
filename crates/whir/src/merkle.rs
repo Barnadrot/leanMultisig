@@ -57,11 +57,24 @@ pub(crate) fn merkle_commit<F: Field, EF: ExtensionField<F>>(
 }
 
 fn blake3_leaf_hash(row: &[KoalaBear], full_base_width: usize) -> [KoalaBear; DIGEST_ELEMS] {
-    let mut buf = vec![0u8; full_base_width * 4];
-    for (i, elem) in row.iter().enumerate() {
-        buf[i * 4..i * 4 + 4].copy_from_slice(&elem.to_unique_u32().to_le_bytes());
-    }
-    let hash = blake3::hash(&buf);
+    let row_bytes: &[u8] =
+        unsafe { std::slice::from_raw_parts(row.as_ptr() as *const u8, row.len() * 4) };
+    let padding_bytes = (full_base_width - row.len()) * 4;
+    let hash = if padding_bytes == 0 {
+        blake3::hash(row_bytes)
+    } else {
+        let byte_len = full_base_width * 4;
+        const STACK_LIMIT: usize = 4096;
+        if byte_len <= STACK_LIMIT {
+            let mut buf = [0u8; STACK_LIMIT];
+            buf[..row_bytes.len()].copy_from_slice(row_bytes);
+            blake3::hash(&buf[..byte_len])
+        } else {
+            let mut buf = vec![0u8; byte_len];
+            buf[..row_bytes.len()].copy_from_slice(row_bytes);
+            blake3::hash(&buf)
+        }
+    };
     blake3_digest_to_field(hash.as_bytes())
 }
 
@@ -73,14 +86,11 @@ fn blake3_digest_to_field(hash_bytes: &[u8; 32]) -> [KoalaBear; DIGEST_ELEMS] {
 }
 
 fn blake3_compress_internal(left: [KoalaBear; DIGEST_ELEMS], right: [KoalaBear; DIGEST_ELEMS]) -> [KoalaBear; DIGEST_ELEMS] {
+    let left_bytes: &[u8; DIGEST_ELEMS * 4] = unsafe { &*(&left as *const _ as *const _) };
+    let right_bytes: &[u8; DIGEST_ELEMS * 4] = unsafe { &*(&right as *const _ as *const _) };
     let mut buf = [0u8; DIGEST_ELEMS * 2 * 4];
-    for (i, elem) in left.iter().enumerate() {
-        buf[i * 4..i * 4 + 4].copy_from_slice(&elem.to_unique_u32().to_le_bytes());
-    }
-    for (i, elem) in right.iter().enumerate() {
-        let offset = DIGEST_ELEMS * 4 + i * 4;
-        buf[offset..offset + 4].copy_from_slice(&elem.to_unique_u32().to_le_bytes());
-    }
+    buf[..DIGEST_ELEMS * 4].copy_from_slice(left_bytes);
+    buf[DIGEST_ELEMS * 4..].copy_from_slice(right_bytes);
     let hash = blake3::hash(&buf);
     blake3_digest_to_field(hash.as_bytes())
 }
