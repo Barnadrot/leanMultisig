@@ -537,26 +537,7 @@ where
 
     if first_is_full_initializer {
         combined_weights = unsafe { uninitialized_vec(out_len) };
-        let point = &first.point.0;
-        if point.len() > packing_log_width::<EF>() + 1 {
-            let alpha_first = point[0];
-            let s0 = gamma_pow * (EF::ONE - alpha_first);
-            let s1 = gamma_pow * alpha_first;
-            let rest_len = out_len / 2;
-            let mut eq_rest: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(rest_len) };
-            compute_eval_eq_packed::<EF, false>(&point[1..], &mut eq_rest, EF::ONE);
-            let (lo, hi) = combined_weights.split_at_mut(rest_len);
-            let s0_packed = EFPacking::<EF>::from(s0);
-            let s1_packed = EFPacking::<EF>::from(s1);
-            lo.par_iter_mut().zip(eq_rest.par_iter()).for_each(|(out, &eq)| {
-                *out = eq * s0_packed;
-            });
-            hi.par_iter_mut().zip(eq_rest.par_iter()).for_each(|(out, &eq)| {
-                *out = eq * s1_packed;
-            });
-        } else {
-            compute_eval_eq_packed::<EF, false>(point, &mut combined_weights, gamma_pow);
-        }
+        compute_eval_eq_packed::<EF, false>(&first.point.0, &mut combined_weights, gamma_pow);
         combined_sum += first.values[0].value * gamma_pow;
         gamma_pow *= gamma;
         start_idx = 1;
