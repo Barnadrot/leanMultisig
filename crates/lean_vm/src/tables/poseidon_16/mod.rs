@@ -298,8 +298,8 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         9
     }
     fn low_degree_air(&self) -> Option<(usize, usize)> {
-        // Each partial round contributes one `assert_eq_low` per round (1 S-box / round), of degree 3 (= the "low" degree part)
-        Some((3, PARTIAL_ROUNDS))
+        // 20 partial-round S-box checkpoints + 7 metadata bool/zero checks (all degree ≤ 3)
+        Some((3, PARTIAL_ROUNDS + 7))
     }
     fn down_column_indexes(&self) -> Vec<usize> {
         vec![]
@@ -341,15 +341,6 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
             builder.declare_values(std::slice::from_ref(&cols.flag_active));
             builder.declare_values(&[precompile_data_reconstructed, index_a, cols.index_b, cols.index_res]);
         }
-
-        builder.assert_bool(cols.flag_active);
-        builder.assert_bool(cols.flag_half_output);
-        builder.assert_bool(cols.flag_hardcoded_left);
-        builder.assert_bool(cols.flag_permute);
-        builder.assert_zero(cols.flag_permute * (cols.flag_half_output + cols.flag_hardcoded_left));
-
-        builder.assert_zero(cols.flag_hardcoded_left * (cols.offset_hardcoded_left - cols.effective_index_left_first));
-        builder.assert_zero(one_minus_flag_hardcoded_left * (index_a - cols.effective_index_left_first));
 
         eval_poseidon1_16(builder, &cols)
     }
@@ -415,6 +406,17 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
             // Sparse matrix: new_s0 = dot(first_row, state), state[i] += old_s0 * v[i-1]
             sparse_mat_air_16(state, &first_rows[round], &v_vecs[round]);
         }
+
+        // Metadata constraints (degree ≤ 3) — moved into low_degree_block to skip at high eval points
+        b.assert_eq_low(local.flag_active.bool_check(), AB::IF::ZERO);
+        b.assert_eq_low(local.flag_half_output.bool_check(), AB::IF::ZERO);
+        b.assert_eq_low(local.flag_hardcoded_left.bool_check(), AB::IF::ZERO);
+        b.assert_eq_low(local.flag_permute.bool_check(), AB::IF::ZERO);
+        b.assert_eq_low(local.flag_permute * (local.flag_half_output + local.flag_hardcoded_left), AB::IF::ZERO);
+        let one_minus_fhl = AB::IF::ONE - local.flag_hardcoded_left;
+        let index_a = local.effective_index_left_second - one_minus_fhl * AB::F::from_usize(HALF_DIGEST_LEN);
+        b.assert_eq_low(local.flag_hardcoded_left * (local.offset_hardcoded_left - local.effective_index_left_first), AB::IF::ZERO);
+        b.assert_eq_low(one_minus_fhl * (index_a - local.effective_index_left_first), AB::IF::ZERO);
     });
 
     let final_constants = poseidon1_final_constants();
