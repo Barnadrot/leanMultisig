@@ -30,14 +30,20 @@ impl<const BUS: bool> TableT for ExecutionTable<BUS> {
             LookupIntoMemory {
                 index: COL_MEM_ADDRESS_A,
                 values: vec![COL_MEM_VALUE_A],
+                address_offset: 0,
+                conditional_inactive: vec![],
             },
             LookupIntoMemory {
                 index: COL_MEM_ADDRESS_B,
                 values: vec![COL_MEM_VALUE_B],
+                address_offset: 0,
+                conditional_inactive: vec![],
             },
             LookupIntoMemory {
                 index: COL_MEM_ADDRESS_C,
                 values: vec![COL_MEM_VALUE_C],
+                address_offset: 0,
+                conditional_inactive: vec![],
             },
         ]
     }

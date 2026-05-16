@@ -108,28 +108,9 @@ pub fn get_execution_trace(bytecode: &Bytecode, execution_result: ExecutionResul
     let poseidon_trace = traces.get_mut(&Table::poseidon16()).unwrap();
     fill_trace_poseidon_16(&mut poseidon_trace.columns);
 
-    // For half_output=1 rows, override outputs_left[4..7] with memory values
-    // so the lookup matches (only first 4 outputs were written by the VM).
-    {
-        let split = POSEIDON_16_COL_OUTPUT_LEFT + HALF_DIGEST_LEN;
-        let (left, right) = poseidon_trace.columns.split_at_mut(split);
-        let half_output_col = &left[POSEIDON_16_COL_FLAG_HALF_OUTPUT];
-        let res_col = &left[POSEIDON_16_COL_INDEX_INPUT_RES];
-        const N: usize = HALF_DIGEST_LEN;
-        let cols: &mut [Vec<F>; N] = (&mut right[..N]).try_into().unwrap();
-
-        transposed_par_iter_mut(cols)
-            .zip(half_output_col)
-            .zip(res_col)
-            .for_each(|((row, &half), &res)| {
-                if half == F::ONE {
-                    let base = res.to_usize();
-                    for j in 0..HALF_DIGEST_LEN {
-                        *row[j] = memory_padded[base + HALF_DIGEST_LEN + j];
-                    }
-                }
-            });
-    }
+    // outputs_left[4..8] always holds the correct Poseidon output (state[i]+inputs[i]).
+    // The second-half result lookup is conditional (inactive when flag_half_output=1),
+    // so no override is needed.
 
     let extension_op_trace = traces.get_mut(&Table::extension_op()).unwrap();
     fill_trace_extension_op(extension_op_trace, &memory_padded);

@@ -172,16 +172,42 @@ pub fn prove_generic_logup(
         // II] Lookup into memory
         let value_columns = table.lookup_value_columns(trace);
         let index_columns = table.lookup_index_columns(trace);
-        for (col_index, col_values) in index_columns.iter().zip(&value_columns) {
-            numerators[offset..][..col_values.len() << log_n_rows]
-                .par_iter_mut()
-                .for_each(|n| *n = F::ONE);
+        let address_offsets = table.lookup_address_offsets();
+        let conditional_cols = table.lookup_conditional_inactive_columns(trace);
+        for (lookup_idx, (col_index, col_values)) in index_columns.iter().zip(&value_columns).enumerate() {
+            let addr_offset = address_offsets[lookup_idx];
+            let addr_offset_field = F::from_usize(addr_offset);
+            let inactive_cols = &conditional_cols[lookup_idx];
+            if !inactive_cols.is_empty() {
+                let num_slice = &mut numerators[offset..][..col_values.len() << log_n_rows];
+                num_slice
+                    .par_chunks_exact_mut(1 << log_n_rows)
+                    .for_each(|chunk| {
+                        chunk
+                            .par_chunks_exact_mut(chunk_size)
+                            .enumerate()
+                            .for_each(|(c, dst_chunk)| {
+                                for (i, slot) in dst_chunk.iter_mut().enumerate() {
+                                    let src_i = i.reverse_bits() >> chunk_shift;
+                                    let mut sum_flags = F::ZERO;
+                                    for sel_col in inactive_cols {
+                                        sum_flags += sel_col[c * chunk_size + src_i];
+                                    }
+                                    *slot = F::ONE - sum_flags;
+                                }
+                            });
+                    });
+            } else {
+                numerators[offset..][..col_values.len() << log_n_rows]
+                    .par_iter_mut()
+                    .for_each(|n| *n = F::ONE);
+            }
             let packed_chunk_size = (1 << log_n_rows) / width;
             denominators[offset / width..][..col_values.len() * packed_chunk_size]
                 .par_chunks_exact_mut(packed_chunk_size)
                 .enumerate()
                 .for_each(|(i, denom_chunk)| {
-                    let i_field = F::from_usize(i);
+                    let i_field = F::from_usize(i) + addr_offset_field;
                     denom_chunk.par_iter_mut().enumerate().for_each(|(p, slot)| {
                         *slot = c_packed
                             - finger_print_packed::<EF>(
@@ -291,16 +317,25 @@ pub fn prove_generic_logup(
 
         // II] Lookup into memory
         for lookup in table.lookups() {
-            let index_eval = trace.columns[lookup.index].evaluate(&inner_point);
-            prover_state.add_extension_scalar(index_eval);
-            assert!(!table_values.contains_key(&lookup.index));
-            table_values.insert(lookup.index, index_eval);
+            if !table_values.contains_key(&lookup.index) {
+                let index_eval = trace.columns[lookup.index].evaluate(&inner_point);
+                prover_state.add_extension_scalar(index_eval);
+                table_values.insert(lookup.index, index_eval);
+            }
 
             for col_index in &lookup.values {
                 let value_eval = trace.columns[*col_index].evaluate(&inner_point);
                 prover_state.add_extension_scalar(value_eval);
                 assert!(!table_values.contains_key(col_index));
                 table_values.insert(*col_index, value_eval);
+            }
+
+            for &cond_col in &lookup.conditional_inactive {
+                if !table_values.contains_key(&cond_col) {
+                    let cond_eval = trace.columns[cond_col].evaluate(&inner_point);
+                    prover_state.add_extension_scalar(cond_eval);
+                    table_values.insert(cond_col, cond_eval);
+                }
             }
         }
 
@@ -444,9 +479,13 @@ pub fn verify_generic_logup(
 
         // II] Lookup into memory
         for lookup in table.lookups() {
-            let index_eval = verifier_state.next_extension_scalar()?;
-            assert!(!table_values.contains_key(&lookup.index));
-            table_values.insert(lookup.index, index_eval);
+            let index_eval = if !table_values.contains_key(&lookup.index) {
+                let e = verifier_state.next_extension_scalar()?;
+                table_values.insert(lookup.index, e);
+                e
+            } else {
+                table_values[&lookup.index]
+            };
 
             for (i, col_index) in lookup.values.iter().enumerate() {
                 let value_eval = verifier_state.next_extension_scalar()?;
@@ -454,14 +493,32 @@ pub fn verify_generic_logup(
                 table_values.insert(*col_index, value_eval);
 
                 let pref = pref_at(offset, log_n_rows);
-                retrieved_numerators_value += pref; // numerator is 1
+                let addr = index_eval + F::from_usize(lookup.address_offset + i);
                 retrieved_denominators_value += pref
                     * (c - finger_print(
                         F::from_usize(LOGUP_MEMORY_DOMAINSEP),
-                        &[value_eval, index_eval + F::from_usize(i)],
+                        &[value_eval, addr],
                         alphas_eq_poly,
                     ));
                 offset += 1 << log_n_rows;
+            }
+
+            let mut numerator_eval = EF::ONE;
+            for &cond_col in &lookup.conditional_inactive {
+                let cond_eval = if !table_values.contains_key(&cond_col) {
+                    let e = verifier_state.next_extension_scalar()?;
+                    table_values.insert(cond_col, e);
+                    e
+                } else {
+                    table_values[&cond_col]
+                };
+                numerator_eval -= cond_eval;
+            }
+            let n_values = lookup.values.len();
+            let base_offset = offset - (n_values << log_n_rows);
+            for i in 0..n_values {
+                let pref = pref_at(base_offset + (i << log_n_rows), log_n_rows);
+                retrieved_numerators_value += pref * numerator_eval;
             }
         }
 

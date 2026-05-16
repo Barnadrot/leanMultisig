@@ -92,9 +92,15 @@ pub fn prove_execution(
     info_span!("Building memory access count").in_scope(|| {
         for (table, trace) in &traces {
             for lookup in table.lookups() {
-                for i in &trace.columns[lookup.index] {
+                let inactive_cols: Vec<&[F]> = lookup.conditional_inactive.iter()
+                    .map(|&col| &trace.columns[col][..])
+                    .collect();
+                for (row, i) in trace.columns[lookup.index].iter().enumerate() {
+                    if inactive_cols.iter().any(|col| col[row] == F::ONE) {
+                        continue;
+                    }
                     for j in 0..lookup.values.len() {
-                        memory_acc[i.to_usize() + j] += F::ONE;
+                        memory_acc[i.to_usize() + lookup.address_offset + j] += F::ONE;
                     }
                 }
             }

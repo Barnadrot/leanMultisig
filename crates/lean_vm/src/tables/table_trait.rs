@@ -14,8 +14,13 @@ pub type CommittedStatements =
 #[derive(Debug)]
 pub struct LookupIntoMemory {
     pub index: ColIndex, // should be in base field columns
-    /// For (i, col_index) in values.iter().enumerate(), For j in 0..num_rows, columns_f[col_index][j] = memory[index[j] + i]
+    /// For (i, col_index) in values.iter().enumerate(), For j in 0..num_rows, columns_f[col_index][j] = memory[index[j] + address_offset + i]
     pub values: Vec<ColIndex>,
+    /// Constant offset added to the index address (default 0).
+    pub address_offset: usize,
+    /// Columns whose value=1 makes the lookup inactive (numerator=0).
+    /// Lookup is active when ALL listed columns are 0. Empty = always active.
+    pub conditional_inactive: Vec<ColIndex>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,5 +162,14 @@ pub trait TableT: Air {
             cols.push(lookup.values.iter().map(|&c| &trace.columns[c][..]).collect());
         }
         cols
+    }
+    fn lookup_address_offsets(&self) -> Vec<usize> {
+        self.lookups().iter().map(|l| l.address_offset).collect()
+    }
+    fn lookup_conditional_inactive_columns<'a>(&self, trace: &'a TableTrace) -> Vec<Vec<&'a [F]>> {
+        self.lookups()
+            .iter()
+            .map(|l| l.conditional_inactive.iter().map(|&col| &trace.columns[col][..]).collect())
+            .collect()
     }
 }

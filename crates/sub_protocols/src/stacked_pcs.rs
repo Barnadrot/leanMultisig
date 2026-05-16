@@ -203,15 +203,25 @@ pub fn min_stacked_n_vars(log_bytecode: usize) -> usize {
 }
 
 pub fn total_whir_statements() -> usize {
+    use std::collections::BTreeSet;
     6 // memory + memory_acc + public_memory + bytecode_acc + pc_start + pc_end
      + ALL_TABLES
         .iter()
         .map(|table| {
             // AIR
-            table.n_columns()
-            + table.n_down_columns()
-            // Lookups into memory
-            + table.lookups().iter().map(|lookup| 1 + lookup.values.len()).sum::<usize>()
+            let air_count = table.n_columns() + table.n_down_columns();
+            // Lookups into memory: count unique columns (index + values + conditionals)
+            let mut logup_cols = BTreeSet::new();
+            for lookup in table.lookups() {
+                logup_cols.insert(lookup.index);
+                for &v in &lookup.values {
+                    logup_cols.insert(v);
+                }
+                for &c in &lookup.conditional_inactive {
+                    logup_cols.insert(c);
+                }
+            }
+            air_count + logup_cols.len()
         })
         .sum::<usize>()
         // bytecode lookup

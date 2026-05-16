@@ -142,20 +142,35 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
             LookupIntoMemory {
                 index: POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_FIRST,
                 values: (POSEIDON_16_COL_INPUT_START..POSEIDON_16_COL_INPUT_START + HALF_DIGEST_LEN).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
             },
             LookupIntoMemory {
                 index: POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_SECOND,
                 values: (POSEIDON_16_COL_INPUT_START + HALF_DIGEST_LEN..POSEIDON_16_COL_INPUT_START + DIGEST_LEN)
                     .collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
             },
             LookupIntoMemory {
                 index: POSEIDON_16_COL_INDEX_INPUT_RIGHT,
                 values: (POSEIDON_16_COL_INPUT_START + DIGEST_LEN..POSEIDON_16_COL_INPUT_START + DIGEST_LEN * 2)
                     .collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
             },
             LookupIntoMemory {
                 index: POSEIDON_16_COL_INDEX_INPUT_RES,
-                values: (POSEIDON_16_COL_OUTPUT_LEFT..POSEIDON_16_COL_OUTPUT_LEFT + DIGEST_LEN).collect(),
+                values: (POSEIDON_16_COL_OUTPUT_LEFT..POSEIDON_16_COL_OUTPUT_LEFT + HALF_DIGEST_LEN).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![POSEIDON_16_COL_FLAG_PERMUTE],
+            },
+            LookupIntoMemory {
+                index: POSEIDON_16_COL_INDEX_INPUT_RES,
+                values: (POSEIDON_16_COL_OUTPUT_LEFT + HALF_DIGEST_LEN..POSEIDON_16_COL_OUTPUT_LEFT + DIGEST_LEN)
+                    .collect(),
+                address_offset: HALF_DIGEST_LEN,
+                conditional_inactive: vec![POSEIDON_16_COL_FLAG_HALF_OUTPUT, POSEIDON_16_COL_FLAG_PERMUTE],
             },
         ]
     }
@@ -295,7 +310,7 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         num_cols_poseidon_16()
     }
     fn degree_air(&self) -> usize {
-        10
+        9
     }
     fn low_degree_air(&self) -> Option<(usize, usize)> {
         // Each partial round contributes one `assert_eq_low` per round (1 S-box / round), of degree 3 (= the "low" degree part)
@@ -434,7 +449,6 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
         &local.outputs_left,
         &final_constants[2 * (HALF_FINAL_FULL_ROUNDS - 1)],
         &final_constants[2 * (HALF_FINAL_FULL_ROUNDS - 1) + 1],
-        local.flag_half_output,
         builder,
     );
 }
@@ -473,14 +487,12 @@ fn eval_2_full_rounds_16<AB: AirBuilder>(
 }
 
 #[inline]
-#[allow(clippy::too_many_arguments)]
 fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     initial_state: &[AB::IF; WIDTH],
     state: &mut [AB::IF; WIDTH],
     outputs_left: &[AB::IF; WIDTH / 2],
     round_constants_1: &[F; WIDTH],
     round_constants_2: &[F; WIDTH],
-    flag_half_output: AB::IF,
     builder: &mut AB,
 ) {
     for (s, r) in state.iter_mut().zip(round_constants_1.iter()) {
@@ -494,12 +506,7 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     }
     mds_air_16(state);
     for i in 0..(WIDTH / 2) {
-        if i < HALF_DIGEST_LEN {
-            builder.assert_zero(state[i] + initial_state[i] - outputs_left[i]);
-        } else {
-            let compression_gate = AB::IF::ONE - flag_half_output;
-            builder.assert_zero(compression_gate * (state[i] + initial_state[i] - outputs_left[i]));
-        }
+        builder.assert_zero(state[i] + initial_state[i] - outputs_left[i]);
     }
 }
 
