@@ -537,10 +537,34 @@ where
 
     if first_is_full_initializer {
         combined_weights = unsafe { uninitialized_vec(out_len) };
-        compute_eval_eq_packed::<EF, false>(&first.point.0, &mut combined_weights, gamma_pow);
+        let first_scalar = gamma_pow;
         combined_sum += first.values[0].value * gamma_pow;
         gamma_pow *= gamma;
-        start_idx = 1;
+
+        let second = statements.get(1);
+        let second_is_full_domain = second.is_some_and(|s| {
+            !s.is_next
+                && s.values.len() == 1
+                && s.values[0].selector == 0
+                && s.inner_num_variables() == num_variables
+        });
+
+        if second_is_full_domain {
+            let second = &statements[1];
+            compute_eval_eq_packed_dual::<EF>(
+                &first.point.0,
+                &second.point.0,
+                &mut combined_weights,
+                first_scalar,
+                gamma_pow,
+            );
+            combined_sum += second.values[0].value * gamma_pow;
+            gamma_pow *= gamma;
+            start_idx = 2;
+        } else {
+            compute_eval_eq_packed::<EF, false>(&first.point.0, &mut combined_weights, first_scalar);
+            start_idx = 1;
+        }
     } else {
         combined_weights = EFPacking::<EF>::zero_vec(out_len);
         start_idx = 0;
