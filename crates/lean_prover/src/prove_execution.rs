@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::*;
 use lean_vm::*;
 
-use poseidon_gkr::{generate_gkr_witness, prove_poseidon_gkr};
+use poseidon_gkr::{POSEIDON_16_N_GKR_COLS, generate_gkr_witness, prove_poseidon_gkr};
 use serde::{Deserialize, Serialize};
 use sub_protocols::*;
 use tracing::info_span;
@@ -240,13 +240,14 @@ pub fn prove_execution(
     // GKR Poseidon proof: verify computation via GKR instead of degree-9 AIR
     let poseidon_log_n = traces[&Table::poseidon16()].log_n_rows;
     let gkr_output_point = MultilinearPoint(from_end(gkr_point, poseidon_log_n).to_vec());
-    let logup_poseidon_evals = &logup_statements.columns_values[&Table::poseidon16()];
-    let perm_out_0_7: Vec<EF> = (0..8)
-        .map(|i| {
-            logup_poseidon_evals[&(POSEIDON_16_COL_OUTPUT_LEFT + i)]
-                - logup_poseidon_evals[&(POSEIDON_16_COL_INPUT_START + i)]
-        })
-        .collect();
+    let output_layer_start = POSEIDON_16_N_GKR_COLS - 16;
+    let perm_out_0_7: Vec<EF> = info_span!("computing perm_out[0..7]").in_scope(|| {
+        (0..8)
+            .into_par_iter()
+            .map(|i| (&gkr_witness[output_layer_start + i][..]).evaluate(&gkr_output_point))
+            .collect()
+    });
+    prover_state.add_extension_scalars(&perm_out_0_7);
     let gkr_result = info_span!("GKR Poseidon proof").in_scope(|| {
         prove_poseidon_gkr::<16>(&mut prover_state, &gkr_witness, gkr_output_point, &perm_out_0_7)
     });
