@@ -311,7 +311,7 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         vec![]
     }
     fn n_constraints(&self) -> usize {
-        BUS as usize + 99
+        BUS as usize + 83
     }
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
         let cols: Poseidon1Cols16<AB::IF> = {
@@ -487,11 +487,11 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     initial_state: &[AB::IF; WIDTH],
     state: &mut [AB::IF; WIDTH],
     outputs_left: &[AB::IF; WIDTH / 2],
-    outputs_right: &[AB::IF; WIDTH / 2],
+    _outputs_right: &[AB::IF; WIDTH / 2],
     round_constants_1: &[F; WIDTH],
     round_constants_2: &[F; WIDTH],
     flag_half_output: AB::IF,
-    flag_permute: AB::IF,
+    _flag_permute: AB::IF,
     builder: &mut AB,
 ) {
     for (s, r) in state.iter_mut().zip(round_constants_1.iter()) {
@@ -504,17 +504,13 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
         *s = s.cube();
     }
     mds_air_16(state);
-    let not_permute = AB::IF::ONE - flag_permute;
-    let compression_last4 = not_permute - flag_half_output;
     for i in 0..(WIDTH / 2) {
-        let compression_gate = if i < HALF_DIGEST_LEN {
-            not_permute
+        if i < HALF_DIGEST_LEN {
+            builder.assert_zero(state[i] + initial_state[i] - outputs_left[i]);
         } else {
-            compression_last4
-        };
-        builder.assert_zero(compression_gate * (state[i] + initial_state[i] - outputs_left[i]));
-        builder.assert_zero(flag_permute * (state[i] - outputs_left[i]));
-        builder.assert_zero(flag_permute * (state[i + WIDTH / 2] - outputs_right[i]));
+            let compression_gate = AB::IF::ONE - flag_half_output;
+            builder.assert_zero(compression_gate * (state[i] + initial_state[i] - outputs_left[i]));
+        }
     }
 }
 
