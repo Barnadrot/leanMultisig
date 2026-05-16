@@ -94,14 +94,6 @@ impl<EF: ExtensionField<PF<EF>>> MleGroupOwned<EF> {
         }
     }
 
-    pub fn fold_at_bit_in_place(&mut self, alpha: EF, bit: usize) {
-        match self {
-            Self::ExtensionPacked(pols) => batch_fold_at_bit_in_place(pols, alpha, bit),
-            Self::Extension(pols) => batch_fold_at_bit_in_place(pols, alpha, bit),
-            _ => unreachable!(),
-        }
-    }
-
     pub fn empty(extension: bool, packed: bool) -> Self {
         match (extension, packed) {
             (false, false) => Self::Base(Vec::new()),
