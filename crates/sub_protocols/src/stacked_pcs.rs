@@ -207,14 +207,21 @@ pub fn total_whir_statements() -> usize {
      + ALL_TABLES
         .iter()
         .map(|table| {
+            let n_committed = table.n_columns();
             // AIR
-            table.n_columns()
+            n_committed
             + table.n_down_columns()
-            // Lookups into memory
-            + table.lookups().iter().map(|lookup| 1 + lookup.values.len()).sum::<usize>()
+            // Lookups into memory — only count columns within committed range
+            + table.lookups().iter().map(|lookup| {
+                let idx = usize::from(lookup.index < n_committed);
+                let vals = lookup.values.iter().filter(|&&v| v < n_committed).count();
+                idx + vals
+            }).sum::<usize>()
         })
         .sum::<usize>()
         // bytecode lookup
         + 1 // PC
         + N_INSTRUCTION_COLUMNS
+        // GKR Poseidon: input evaluations at the GKR sumcheck point
+        + 16
 }

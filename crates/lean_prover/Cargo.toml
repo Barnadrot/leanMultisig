@@ -18,6 +18,7 @@ rand.workspace = true
 
 tracing.workspace = true
 sub_protocols.workspace = true
+poseidon_gkr.workspace = true
 lean_vm.workspace = true
 lean_compiler.workspace = true
 backend.workspace = true

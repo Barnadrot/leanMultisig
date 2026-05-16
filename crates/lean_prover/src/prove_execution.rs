@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::*;
 use lean_vm::*;
 
+use poseidon_gkr::{generate_gkr_witness, prove_poseidon_gkr};
 use serde::{Deserialize, Serialize};
 use sub_protocols::*;
 use tracing::info_span;
@@ -87,6 +88,11 @@ pub fn prove_execution(
     table_log = table_log.trim_end_matches(" | ").to_string();
     tracing::info!("Trace tables sizes: {}", table_log.magenta());
 
+    let gkr_witness = info_span!("GKR witness generation").in_scope(|| {
+        let pt = &traces[&Table::poseidon16()];
+        generate_gkr_witness(&pt.columns[POSEIDON_16_COL_INPUT_START..POSEIDON_16_COL_INPUT_START + 16])
+    });
+
     // TODO parrallelize
     let mut memory_acc = F::zero_vec(memory.len());
     info_span!("Building memory access count").in_scope(|| {
@@ -139,11 +145,20 @@ pub fn prove_execution(
     let mut committed_statements: CommittedStatements = Default::default();
     for table in ALL_TABLES {
         let log_n_rows = traces[&table].log_n_rows;
+        let col_values = if table == Table::poseidon16() {
+            logup_statements.columns_values[&table]
+                .iter()
+                .filter(|&(&col, _)| col < N_COMMITTED_COLS_P16)
+                .map(|(&k, &v)| (k, v))
+                .collect()
+        } else {
+            logup_statements.columns_values[&table].clone()
+        };
         committed_statements.insert(
             table,
             vec![(
                 MultilinearPoint(from_end(gkr_point, log_n_rows).to_vec()),
-                logup_statements.columns_values[&table].clone(),
+                col_values,
                 BTreeMap::new(),
             )],
         );
@@ -221,6 +236,27 @@ pub fn prove_execution(
         let claim = delegate_to_inner!(table => split);
         committed_statements.get_mut(table).unwrap().push(claim);
     }
+
+    // GKR Poseidon proof: verify computation via GKR instead of degree-9 AIR
+    let poseidon_log_n = traces[&Table::poseidon16()].log_n_rows;
+    let gkr_output_point = MultilinearPoint(from_end(gkr_point, poseidon_log_n).to_vec());
+    let logup_poseidon_evals = &logup_statements.columns_values[&Table::poseidon16()];
+    let perm_out_0_7: Vec<EF> = (0..8)
+        .map(|i| {
+            logup_poseidon_evals[&(POSEIDON_16_COL_OUTPUT_LEFT + i)]
+                - logup_poseidon_evals[&(POSEIDON_16_COL_INPUT_START + i)]
+        })
+        .collect();
+    let gkr_result = info_span!("GKR Poseidon proof").in_scope(|| {
+        prove_poseidon_gkr::<16>(&mut prover_state, &gkr_witness, gkr_output_point, &perm_out_0_7)
+    });
+    let gkr_input_claims: BTreeMap<ColIndex, EF> = (0..16)
+        .map(|i| (POSEIDON_16_COL_INPUT_START + i, gkr_result.input_evals[i]))
+        .collect();
+    committed_statements
+        .get_mut(&Table::poseidon16())
+        .unwrap()
+        .push((gkr_result.input_point, gkr_input_claims, BTreeMap::new()));
 
     let public_memory_random_point = MultilinearPoint(prover_state.sample_vec(log2_strict_usize(public_memory_size)));
     let public_memory_eval = (&memory[..public_memory_size]).evaluate(&public_memory_random_point);
