@@ -295,7 +295,7 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         num_cols_poseidon_16()
     }
     fn degree_air(&self) -> usize {
-        9
+        10
     }
     fn low_degree_air(&self) -> Option<(usize, usize)> {
         // Each partial round contributes one `assert_eq_low` per round (1 S-box / round), of degree 3 (= the "low" degree part)
@@ -434,6 +434,7 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
         &local.outputs_left,
         &final_constants[2 * (HALF_FINAL_FULL_ROUNDS - 1)],
         &final_constants[2 * (HALF_FINAL_FULL_ROUNDS - 1) + 1],
+        local.flag_half_output,
         builder,
     );
 }
@@ -479,6 +480,7 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     outputs_left: &[AB::IF; WIDTH / 2],
     round_constants_1: &[F; WIDTH],
     round_constants_2: &[F; WIDTH],
+    flag_half_output: AB::IF,
     builder: &mut AB,
 ) {
     for (s, r) in state.iter_mut().zip(round_constants_1.iter()) {
@@ -492,7 +494,12 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     }
     mds_air_16(state);
     for i in 0..(WIDTH / 2) {
-        builder.assert_zero(state[i] + initial_state[i] - outputs_left[i]);
+        if i < HALF_DIGEST_LEN {
+            builder.assert_zero(state[i] + initial_state[i] - outputs_left[i]);
+        } else {
+            let compression_gate = AB::IF::ONE - flag_half_output;
+            builder.assert_zero(compression_gate * (state[i] + initial_state[i] - outputs_left[i]));
+        }
     }
 }
 
