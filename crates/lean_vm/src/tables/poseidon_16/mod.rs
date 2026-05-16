@@ -297,11 +297,7 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         num_cols_poseidon_16()
     }
     fn degree_air(&self) -> usize {
-        // Last 4 output constraints (i in 4..8) are gated by the single linear factor
-        // `(1 - flag_permute - flag_half_output)`, which is boolean thanks to the mutex
-        // `flag_permute * flag_half_output = 0`. The permutation expression has degree 9, so
-        // the gated constraint stays at degree 10.
-        10
+        9
     }
     fn low_degree_air(&self) -> Option<(usize, usize)> {
         // Each partial round contributes one `assert_eq_low` per round (1 S-box / round), of degree 3 (= the "low" degree part)
@@ -490,7 +486,7 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     _outputs_right: &[AB::IF; WIDTH / 2],
     round_constants_1: &[F; WIDTH],
     round_constants_2: &[F; WIDTH],
-    flag_half_output: AB::IF,
+    _flag_half_output: AB::IF,
     _flag_permute: AB::IF,
     builder: &mut AB,
 ) {
@@ -505,12 +501,7 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     }
     mds_air_16(state);
     for i in 0..(WIDTH / 2) {
-        if i < HALF_DIGEST_LEN {
-            builder.assert_zero(state[i] + initial_state[i] - outputs_left[i]);
-        } else {
-            let compression_gate = AB::IF::ONE - flag_half_output;
-            builder.assert_zero(compression_gate * (state[i] + initial_state[i] - outputs_left[i]));
-        }
+        builder.assert_zero(state[i] + initial_state[i] - outputs_left[i]);
     }
 }
 
