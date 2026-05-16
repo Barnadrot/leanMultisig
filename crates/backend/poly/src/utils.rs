@@ -1,6 +1,6 @@
 use std::{
     mem::ManuallyDrop,
-    ops::{Add, Range, Sub},
+    ops::{Add, Mul, Range, Sub},
 };
 
 use field::*;
@@ -156,6 +156,57 @@ pub fn fold_multilinear_at_bit<
             .collect_into_vec(&mut res);
     }
     res
+}
+
+pub fn fold_at_bit_in_place<
+    Alpha: Copy,
+    T: Copy + Sub<Output = T> + Add<Output = T> + Mul<Alpha, Output = T>,
+>(
+    m: &mut Vec<T>,
+    alpha: Alpha,
+    bit: usize,
+) {
+    let new_size = m.len() / 2;
+    assert!(m.len() >= 2 * (1 << bit));
+
+    let stride = 1usize << bit;
+    let lo_mask = stride - 1;
+
+    for new_j in 0..new_size {
+        let (i0, i1) = if bit == 0 {
+            (2 * new_j, 2 * new_j + 1)
+        } else {
+            let i_hi = new_j >> bit;
+            let i_lo = new_j & lo_mask;
+            let i0 = (i_hi << (bit + 1)) | i_lo;
+            (i0, i0 | stride)
+        };
+        let v0 = m[i0];
+        let v1 = m[i1];
+        m[new_j] = (v1 - v0) * alpha + v0;
+    }
+
+    m.truncate(new_size);
+}
+
+pub fn batch_fold_at_bit_in_place<
+    Alpha: Copy + Send + Sync,
+    T: Copy + Sub<Output = T> + Add<Output = T> + Mul<Alpha, Output = T> + Send + Sync,
+>(
+    polys: &mut [Vec<T>],
+    alpha: Alpha,
+    bit: usize,
+) {
+    let total_size: usize = polys.iter().map(|p| p.len()).sum();
+    if total_size < PARALLEL_THRESHOLD {
+        for col in polys.iter_mut() {
+            fold_at_bit_in_place(col, alpha, bit);
+        }
+    } else {
+        polys.par_iter_mut().for_each(|col| {
+            fold_at_bit_in_place(col, alpha, bit);
+        });
+    }
 }
 
 pub fn fold_multilinear<

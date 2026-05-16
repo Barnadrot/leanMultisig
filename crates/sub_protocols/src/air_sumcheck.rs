@@ -274,7 +274,14 @@ where
         let was_in_phase_1 = self.in_phase_1();
         let fold_bit = self.folding_bit_packed();
 
-        self.multilinears = self.multilinears.by_ref().fold_at_bit(challenge, fold_bit).into();
+        let fold_in_place = matches!(&self.multilinears, MleGroup::Owned(owned) if owned.is_extension());
+        if fold_in_place {
+            if let MleGroup::Owned(ref mut owned) = self.multilinears {
+                owned.fold_at_bit_in_place(challenge, fold_bit);
+            }
+        } else {
+            self.multilinears = self.multilinears.by_ref().fold_at_bit(challenge, fold_bit).into();
+        }
 
         self.current_unpadded_len = self.current_unpadded_len.div_ceil(2);
         self.rounds_done += 1;
