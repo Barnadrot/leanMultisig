@@ -6,7 +6,7 @@ use field::PrimeCharacteristicRing;
 use field::{ExtensionField, Field, TwoAdicField};
 use poly::*;
 use rayon::prelude::*;
-use sumcheck::{ProductComputation, run_product_sumcheck, sumcheck_prove_many_rounds};
+use sumcheck::{ProductComputation, ScatterRegion, run_product_sumcheck, run_product_sumcheck_fused_eq, sumcheck_prove_many_rounds};
 use tracing::{info_span, instrument};
 
 use crate::{config::WhirConfig, *};
@@ -419,6 +419,30 @@ where
     ) -> (Self, MultilinearPoint<EF>) {
         assert_ne!(folding_factor, 0);
 
+        let num_variables = statement[0].total_num_variables;
+        let first = &statement[0];
+        let first_is_full = !first.is_next
+            && first.values.len() == 1
+            && first.values[0].selector == 0
+            && first.inner_num_variables() == num_variables;
+        let second_is_full = statement.get(1).is_some_and(|s| {
+            !s.is_next
+                && s.values.len() == 1
+                && s.values[0].selector == 0
+                && s.inner_num_variables() == num_variables
+        });
+
+        let pw = packing_log_width::<EF>();
+        let n_packed_vars = num_variables.saturating_sub(pw);
+        let use_lazy = folding_factor >= 2 && first_is_full && second_is_full
+            && n_packed_vars >= sumcheck::LAZY_EQ_MIN_PACKED_VARS;
+
+        if use_lazy {
+            return Self::run_initial_sumcheck_lazy(
+                evals, statement, combination_randomness, prover_state, folding_factor, pow_bits,
+            );
+        }
+
         let (weights, sum) = combine_statement::<EF>(statement, combination_randomness);
 
         let mut evals = evals.pack();
@@ -443,6 +467,132 @@ where
 
         (sumcheck, challengess)
     }
+
+    #[instrument(skip_all)]
+    fn run_initial_sumcheck_lazy(
+        evals: &MleRef<'_, EF>,
+        statement: &[SparseStatement<EF>],
+        gamma: EF,
+        prover_state: &mut impl FSProver<EF>,
+        folding_factor: usize,
+        pow_bits: usize,
+    ) -> (Self, MultilinearPoint<EF>) {
+        let num_variables = statement[0].total_num_variables;
+        let pw = packing_log_width::<EF>();
+
+        let point_a = &statement[0].point.0;
+        let point_b = &statement[1].point.0;
+        let scalar_a = EF::ONE;
+        let scalar_b = gamma;
+
+        let mut combined_sum = statement[0].values[0].value * scalar_a
+            + statement[1].values[0].value * scalar_b;
+        let mut gamma_pow = gamma * gamma;
+
+        let scatter = build_scatter_regions::<EF>(&statement[2..], num_variables, pw, gamma, &mut gamma_pow, &mut combined_sum);
+
+        let packed_evals = evals.pack();
+        let evals_ref = packed_evals.by_ref();
+        let evals_slice = match evals_ref {
+            MleRef::BasePacked(v) => v,
+            _ => unreachable!("expected BasePacked after pack()"),
+        };
+
+        let (challengess, new_sum, new_evals, new_weights) = run_product_sumcheck_fused_eq(
+            evals_slice,
+            point_a,
+            point_b,
+            scalar_a,
+            scalar_b,
+            &scatter,
+            prover_state,
+            combined_sum,
+            folding_factor,
+            pow_bits,
+        );
+
+        let sumcheck = Self {
+            evals: new_evals,
+            weights: new_weights,
+            sum: new_sum,
+        };
+
+        (sumcheck, challengess)
+    }
+}
+
+fn build_scatter_regions<EF>(
+    statements: &[SparseStatement<EF>],
+    _num_variables: usize,
+    pw: usize,
+    gamma: EF,
+    gamma_pow: &mut EF,
+    combined_sum: &mut EF,
+) -> Vec<ScatterRegion<EF>>
+where
+    EF: ExtensionField<PF<EF>>,
+{
+    let mut regions = Vec::new();
+
+    for smt in statements {
+        if !smt.is_next && (smt.values.len() == 1 || smt.inner_num_variables() < pw) {
+            for evaluation in &smt.values {
+                let inner_vars = smt.inner_num_variables();
+                if inner_vars >= pw {
+                    let region_len = 1 << (inner_vars - pw);
+                    let packed_start = evaluation.selector * region_len;
+                    let mut data = unsafe { uninitialized_vec::<EFPacking<EF>>(region_len) };
+                    compute_eval_eq_packed::<EF, false>(&smt.point.0, &mut data, *gamma_pow);
+                    regions.push(ScatterRegion { packed_start, data });
+                } else {
+                    let shift = pw - inner_vars;
+                    let packed_start = evaluation.selector >> shift;
+                    let mut data = vec![EFPacking::<EF>::ZERO; 1];
+                    let mut unpacked: Vec<EF> = unpack_extension(&data);
+                    compute_sparse_eval_eq::<EF>(evaluation.selector & ((1 << shift) - 1), &smt.point.0, &mut unpacked, *gamma_pow);
+                    data[0] = pack_extension(&unpacked)[0];
+                    regions.push(ScatterRegion { packed_start, data });
+                }
+                *combined_sum += evaluation.value * *gamma_pow;
+                *gamma_pow *= gamma;
+            }
+        } else {
+            let inner_poly = if smt.is_next {
+                let next = matrix_next_mle_folded(&smt.point.0);
+                pack_extension(&next)
+            } else {
+                eval_eq_packed(&smt.point)
+            };
+            let shift = smt.inner_num_variables() - pw;
+
+            let mut next_gamma_powers = vec![*gamma_pow];
+            for _ in 1..smt.values.len() {
+                next_gamma_powers.push(*next_gamma_powers.last().unwrap() * gamma);
+            }
+            for (e, &scalar) in smt.values.iter().zip(&next_gamma_powers) {
+                *combined_sum += e.value * scalar;
+            }
+
+            let mut indexed_values = smt.values.iter().enumerate().collect::<Vec<_>>();
+            indexed_values.sort_by_key(|(_, e)| e.selector);
+            indexed_values.dedup_by_key(|(_, e)| e.selector);
+
+            for &(origin_index, value) in &indexed_values {
+                let packed_start = value.selector << shift;
+                let region_len = 1 << shift;
+                let data: Vec<EFPacking<EF>> = inner_poly
+                    .iter()
+                    .map(|&poly_elem| poly_elem * next_gamma_powers[origin_index])
+                    .collect();
+                assert_eq!(data.len(), region_len);
+                regions.push(ScatterRegion { packed_start, data });
+            }
+
+            *gamma_pow = *next_gamma_powers.last().unwrap() * gamma;
+        }
+    }
+
+    regions
 }
 
 #[derive(Debug)]
