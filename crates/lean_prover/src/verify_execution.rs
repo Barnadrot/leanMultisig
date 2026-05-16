@@ -190,7 +190,13 @@ pub fn verify_execution(
     // GKR Poseidon verification
     let poseidon_log_n = table_n_vars[&Table::poseidon16()];
     let gkr_output_point = MultilinearPoint(from_end(gkr_point, poseidon_log_n).to_vec());
-    let perm_out_0_7 = verifier_state.next_extension_scalars_vec(8)?;
+    let logup_poseidon_evals = &logup_statements.columns_values[&Table::poseidon16()];
+    let perm_out_0_7: Vec<EF> = (0..8)
+        .map(|i| {
+            logup_poseidon_evals[&(POSEIDON_16_COL_OUTPUT_LEFT + i)]
+                - logup_poseidon_evals[&(POSEIDON_16_COL_INPUT_START + i)]
+        })
+        .collect();
     let gkr_result = verify_poseidon_gkr::<16>(
         &mut verifier_state,
         poseidon_log_n,

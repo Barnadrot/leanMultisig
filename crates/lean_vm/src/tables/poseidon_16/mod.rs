@@ -157,7 +157,10 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
                 values: (POSEIDON_16_COL_INPUT_START + DIGEST_LEN..POSEIDON_16_COL_INPUT_START + DIGEST_LEN * 2)
                     .collect(),
             },
-            // Output lookup removed: outputs verified by GKR, memory writes tracked by execution table
+            LookupIntoMemory {
+                index: POSEIDON_16_COL_INDEX_INPUT_RES,
+                values: (POSEIDON_16_COL_OUTPUT_LEFT..POSEIDON_16_COL_OUTPUT_LEFT + DIGEST_LEN * 2).collect(),
+            },
         ]
     }
 
