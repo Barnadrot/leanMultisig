@@ -114,63 +114,25 @@ pub fn stack_polynomials_and_commit(
         log2_strict_usize(bytecode_acc.len()),
         &tables_heights_sorted.iter().cloned().collect(),
     );
-    let total_len = 1 << stacked_n_vars;
-    let mut global_polynomial: Vec<F> = unsafe { uninitialized_vec(total_len) };
-
-    // Build a task list of (src_ptr, dst_offset, len) for parallel execution.
-    // All destination ranges are non-overlapping, making parallel mutable writes sound.
-    struct CopyTask<'a> {
-        src: &'a [F],
-        dst_offset: usize,
-    }
-    let mut tasks: Vec<CopyTask<'_>> = Vec::new();
-
-    tasks.push(CopyTask { src: memory, dst_offset: 0 });
+    let mut global_polynomial = F::zero_vec(1 << stacked_n_vars); // TODO avoid cloning all witness data
+    global_polynomial[..memory.len()].copy_from_slice(memory);
     let mut offset = memory.len();
-    tasks.push(CopyTask { src: memory_acc, dst_offset: offset });
+    global_polynomial[offset..][..memory_acc.len()].copy_from_slice(memory_acc);
     offset += memory_acc.len();
 
-    tasks.push(CopyTask { src: bytecode_acc, dst_offset: offset });
-    let bytecode_end = offset + bytecode_acc.len();
+    global_polynomial[offset..][..bytecode_acc.len()].copy_from_slice(bytecode_acc);
     let largest_table_height = 1 << tables_heights_sorted[0].1;
-    let padded_bytecode_end = offset + largest_table_height.max(bytecode_acc.len());
-    offset = padded_bytecode_end;
+    offset += largest_table_height.max(bytecode_acc.len()); // we may pad bytecode_acc to match largest table height
 
     for (table, log_n_rows) in &tables_heights_sorted {
         let n_rows = 1 << *log_n_rows;
         for col_index in 0..table.n_columns() {
             let col = &traces[table].columns[col_index];
-            tasks.push(CopyTask { src: &col[..n_rows], dst_offset: offset });
+            global_polynomial[offset..][..n_rows].copy_from_slice(&col[..n_rows]);
             offset += n_rows;
         }
     }
     assert_eq!(log2_ceil_usize(offset), stacked_n_vars);
-
-    // Execute all copies in parallel + zero gaps/tail.
-    // SAFETY: all destination ranges in `tasks` are non-overlapping subsets of global_polynomial.
-    let data_end = offset;
-    let base_addr = global_polynomial.as_mut_ptr() as usize;
-    tasks.par_iter().for_each(|task| {
-        unsafe {
-            let dst = std::slice::from_raw_parts_mut(
-                (base_addr + task.dst_offset * std::mem::size_of::<F>()) as *mut F,
-                task.src.len(),
-            );
-            dst.copy_from_slice(task.src);
-        }
-    });
-    // Zero the bytecode padding gap (between bytecode data end and padded section end)
-    if bytecode_end < padded_bytecode_end {
-        global_polynomial[bytecode_end..padded_bytecode_end]
-            .par_iter_mut()
-            .for_each(|v| *v = F::ZERO);
-    }
-    // Zero the tail padding (from data end to 2^stacked_n_vars)
-    if data_end < total_len {
-        global_polynomial[data_end..total_len]
-            .par_iter_mut()
-            .for_each(|v| *v = F::ZERO);
-    }
     tracing::info!(
         "{}",
         format!(
