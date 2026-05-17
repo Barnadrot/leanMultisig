@@ -93,6 +93,7 @@ where
                     .par_iter()
                     .map(|&src| {
                         let mut dst: Vec<PFPacking<EF>> = unsafe { uninitialized_vec(src.len()) };
+                        hint_hugepages(&dst);
                         let src_u = PFPacking::<EF>::unpack_slice(src);
                         let dst_u = PFPacking::<EF>::unpack_slice_mut(&mut dst);
                         for (src_chunk, dst_chunk) in

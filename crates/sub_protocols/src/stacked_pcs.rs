@@ -9,6 +9,7 @@ use tracing::instrument;
 use utils::VarCount;
 use utils::ansi::Colorize;
 
+
 /*
 Stacking of various (multilinear) polynomials into a single -big- (multilinear) polynomial, which is committed via WHIR.
 [------------------------------ Memory ------------------------------]
@@ -114,15 +115,22 @@ pub fn stack_polynomials_and_commit(
         log2_strict_usize(bytecode_acc.len()),
         &tables_heights_sorted.iter().cloned().collect(),
     );
-    let mut global_polynomial = F::zero_vec(1 << stacked_n_vars); // TODO avoid cloning all witness data
+    let total_len = 1 << stacked_n_vars;
+    let mut global_polynomial: Vec<F> = unsafe { uninitialized_vec(total_len) };
+    hint_hugepages(&global_polynomial);
     global_polynomial[..memory.len()].copy_from_slice(memory);
     let mut offset = memory.len();
     global_polynomial[offset..][..memory_acc.len()].copy_from_slice(memory_acc);
     offset += memory_acc.len();
 
+    let bytecode_acc_offset = offset;
     global_polynomial[offset..][..bytecode_acc.len()].copy_from_slice(bytecode_acc);
     let largest_table_height = 1 << tables_heights_sorted[0].1;
-    offset += largest_table_height.max(bytecode_acc.len()); // we may pad bytecode_acc to match largest table height
+    let padded_bytecode_region = largest_table_height.max(bytecode_acc.len());
+    if padded_bytecode_region > bytecode_acc.len() {
+        global_polynomial[bytecode_acc_offset + bytecode_acc.len()..bytecode_acc_offset + padded_bytecode_region].fill(F::ZERO);
+    }
+    offset += padded_bytecode_region;
 
     for (table, log_n_rows) in &tables_heights_sorted {
         let n_rows = 1 << *log_n_rows;
@@ -133,6 +141,7 @@ pub fn stack_polynomials_and_commit(
         }
     }
     assert_eq!(log2_ceil_usize(offset), stacked_n_vars);
+    global_polynomial[offset..total_len].fill(F::ZERO);
     tracing::info!(
         "{}",
         format!(
