@@ -99,8 +99,13 @@ pub const POSEIDON_HARDCODED_LEFT_4_OFFSET_SHIFT: usize = 1 << 4;
 pub const POSEIDON_16_COL_FLAG: ColIndex = 0;
 pub const POSEIDON_16_COL_INDEX_INPUT_RIGHT: ColIndex = 1;
 pub const POSEIDON_16_COL_INDEX_INPUT_RES: ColIndex = 2;
-pub const POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT: ColIndex = 3;
-pub const POSEIDON_16_COL_INPUT_START: ColIndex = 4;
+pub const POSEIDON_16_COL_FLAG_HALF_OUTPUT: ColIndex = 3;
+pub const POSEIDON_16_COL_FLAG_HARDCODED_LEFT: ColIndex = 4;
+pub const POSEIDON_16_COL_OFFSET_LEFT_HARDCODED: ColIndex = 5;
+pub const POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_FIRST: ColIndex = 6;
+pub const POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_SECOND: ColIndex = 7;
+pub const POSEIDON_16_COL_FLAG_PERMUTE: ColIndex = 8;
+pub const POSEIDON_16_COL_INPUT_START: ColIndex = 9;
 pub const POSEIDON_16_COL_OUTPUT_LEFT: ColIndex = num_cols_poseidon_16() - 8;
 /// Non-committed columns ("virtual"):
 pub const POSEIDON_16_COL_INDEX_INPUT_LEFT: ColIndex = num_cols_poseidon_16();
@@ -135,8 +140,15 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
     fn lookups(&self) -> Vec<LookupIntoMemory> {
         vec![
             LookupIntoMemory {
-                index: POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT,
-                values: (POSEIDON_16_COL_INPUT_START..POSEIDON_16_COL_INPUT_START + DIGEST_LEN).collect(),
+                index: POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_FIRST,
+                values: (POSEIDON_16_COL_INPUT_START..POSEIDON_16_COL_INPUT_START + HALF_DIGEST_LEN).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
+            },
+            LookupIntoMemory {
+                index: POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_SECOND,
+                values: (POSEIDON_16_COL_INPUT_START + HALF_DIGEST_LEN..POSEIDON_16_COL_INPUT_START + DIGEST_LEN)
+                    .collect(),
                 address_offset: 0,
                 conditional_inactive: vec![],
             },
@@ -149,9 +161,16 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
             },
             LookupIntoMemory {
                 index: POSEIDON_16_COL_INDEX_INPUT_RES,
-                values: (POSEIDON_16_COL_OUTPUT_LEFT..POSEIDON_16_COL_OUTPUT_LEFT + DIGEST_LEN).collect(),
+                values: (POSEIDON_16_COL_OUTPUT_LEFT..POSEIDON_16_COL_OUTPUT_LEFT + HALF_DIGEST_LEN).collect(),
                 address_offset: 0,
-                conditional_inactive: vec![],
+                conditional_inactive: vec![POSEIDON_16_COL_FLAG_PERMUTE],
+            },
+            LookupIntoMemory {
+                index: POSEIDON_16_COL_INDEX_INPUT_RES,
+                values: (POSEIDON_16_COL_OUTPUT_LEFT + HALF_DIGEST_LEN..POSEIDON_16_COL_OUTPUT_LEFT + DIGEST_LEN)
+                    .collect(),
+                address_offset: HALF_DIGEST_LEN,
+                conditional_inactive: vec![POSEIDON_16_COL_FLAG_HALF_OUTPUT, POSEIDON_16_COL_FLAG_PERMUTE],
             },
         ]
     }
@@ -185,7 +204,12 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
         *perm.flag_active = F::ZERO;
         *perm.index_b = F::from_usize(zero_vec_ptr);
         *perm.index_res = F::from_usize(null_hash_ptr);
-        *perm.effective_index_left = F::from_usize(zero_vec_ptr);
+        *perm.flag_half_output = F::ZERO;
+        *perm.flag_hardcoded_left = F::ZERO;
+        *perm.offset_hardcoded_left = F::ZERO;
+        *perm.effective_index_left_first = F::from_usize(zero_vec_ptr);
+        *perm.effective_index_left_second = F::from_usize(zero_vec_ptr + HALF_DIGEST_LEN);
+        *perm.flag_permute = F::ZERO;
         row[POSEIDON_16_COL_INDEX_INPUT_LEFT] = F::from_usize(zero_vec_ptr);
         row[POSEIDON_16_COL_PRECOMPILE_DATA] = F::from_usize(POSEIDON_PRECOMPILE_DATA);
 
@@ -218,6 +242,11 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
 
         let arg_a_usize = arg_a.to_usize();
         let flag_hardcoded = hardcoded_offset_left.is_some();
+        // Convention:
+        //   flag_hardcoded = 0: left input = m[arg_a..arg_a+8] (split as [arg_a..+4], [arg_a+4..+8])
+        //   flag_hardcoded = 1: left input = m[offset..offset+4] | m[arg_a..arg_a+4]
+        //                   (i.e. arg_a now points to a 4-element data digest, and the first 4
+        //                    elements come from the hardcoded prefix at `offset`)
         let left_first_addr = hardcoded_offset_left.unwrap_or(arg_a_usize);
         let left_second_addr = if flag_hardcoded {
             arg_a_usize
@@ -251,7 +280,12 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
         trace.columns[POSEIDON_16_COL_FLAG].push(F::ONE);
         trace.columns[POSEIDON_16_COL_INDEX_INPUT_RIGHT].push(arg_b);
         trace.columns[POSEIDON_16_COL_INDEX_INPUT_RES].push(index_res_a);
-        trace.columns[POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT].push(F::from_usize(left_first_addr));
+        trace.columns[POSEIDON_16_COL_FLAG_HALF_OUTPUT].push(F::from_bool(half_output));
+        trace.columns[POSEIDON_16_COL_FLAG_HARDCODED_LEFT].push(F::from_bool(flag_hardcoded));
+        trace.columns[POSEIDON_16_COL_OFFSET_LEFT_HARDCODED].push(F::from_usize(hardcoded_offset_left_val));
+        trace.columns[POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_FIRST].push(F::from_usize(left_first_addr));
+        trace.columns[POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_SECOND].push(F::from_usize(left_second_addr));
+        trace.columns[POSEIDON_16_COL_FLAG_PERMUTE].push(F::from_bool(permute));
         for (i, value) in input.iter().enumerate() {
             trace.columns[POSEIDON_16_COL_INPUT_START + i].push(*value);
         }
@@ -286,7 +320,7 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         vec![]
     }
     fn n_constraints(&self) -> usize {
-        BUS as usize + 77
+        BUS as usize + 83
     }
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
         let cols: Poseidon1Cols16<AB::IF> = {
@@ -298,8 +332,18 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
             unsafe { std::ptr::read(&shorts[0]) }
         };
 
-        let precompile_data_reconstructed = AB::IF::ONE;
-        let index_a = cols.effective_index_left;
+        let precompile_data_reconstructed = AB::IF::ONE
+            + cols.flag_half_output * AB::F::from_usize(POSEIDON_HALF_OUTPUT_SHIFT)
+            + cols.flag_hardcoded_left * AB::F::from_usize(POSEIDON_HARDCODED_LEFT_4_FLAG_SHIFT)
+            + cols.flag_hardcoded_left
+                * cols.offset_hardcoded_left
+                * AB::F::from_usize(POSEIDON_HARDCODED_LEFT_4_OFFSET_SHIFT)
+            + cols.flag_permute * AB::F::from_usize(POSEIDON_PERMUTE_SHIFT);
+
+        // effective_index_left_first = index_a * (1 - flag_hardcoded_left_4) + offset * flag_hardcoded_left_4
+        let one_minus_flag_hardcoded_left = AB::IF::ONE - cols.flag_hardcoded_left;
+        let index_a =
+            cols.effective_index_left_second - one_minus_flag_hardcoded_left * AB::F::from_usize(HALF_DIGEST_LEN);
 
         // Bus data: [precompile_data, a, b, res]
         if BUS {
@@ -314,6 +358,13 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         }
 
         builder.assert_bool(cols.flag_active);
+        builder.assert_bool(cols.flag_half_output);
+        builder.assert_bool(cols.flag_hardcoded_left);
+        builder.assert_bool(cols.flag_permute);
+        builder.assert_zero(cols.flag_permute * (cols.flag_half_output + cols.flag_hardcoded_left));
+
+        builder.assert_zero(cols.flag_hardcoded_left * (cols.offset_hardcoded_left - cols.effective_index_left_first));
+        builder.assert_zero(one_minus_flag_hardcoded_left * (index_a - cols.effective_index_left_first));
 
         eval_poseidon1_16(builder, &cols)
     }
@@ -325,7 +376,12 @@ pub(super) struct Poseidon1Cols16<T> {
     pub flag_active: T, // 0 = padding, 1 = active
     pub index_b: T,
     pub index_res: T,
-    pub effective_index_left: T,
+    pub flag_half_output: T,
+    pub flag_hardcoded_left: T,
+    pub offset_hardcoded_left: T,
+    pub effective_index_left_first: T,
+    pub effective_index_left_second: T,
+    pub flag_permute: T,
 
     pub inputs: [T; WIDTH],
     pub beginning_full_rounds: [[T; WIDTH]; HALF_INITIAL_FULL_ROUNDS],
