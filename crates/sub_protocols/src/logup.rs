@@ -66,6 +66,8 @@ pub fn prove_generic_logup(
     let chunk_size = 1usize << pivot;
     let chunk_shift = usize::BITS as usize - pivot;
     let chunk_mask = chunk_size - 1;
+    let max_table_height = 1 << tables_log_heights_sorted[0].1;
+
     let src_idx = |p: usize, w: usize| -> usize {
         let x = p * width + w;
         (x & !chunk_mask) | ((x & chunk_mask).reverse_bits() >> chunk_shift)
@@ -101,7 +103,31 @@ pub fn prove_generic_logup(
     });
     offset += memory.len();
 
+    // Bytecode section.
+    assert_eq!(1 << log_bytecode, bytecode_acc.len());
+    fill_num_from(&mut numerators[offset..][..bytecode_acc.len()], bytecode_acc, true);
     let bytecode_stride = N_INSTRUCTION_COLUMNS.next_power_of_two();
+    fill_denoms(
+        &mut denominators[offset / width..][..(1 << log_bytecode) / width],
+        |p| {
+            let mut data = [PFPacking::<EF>::ZERO; N_INSTRUCTION_COLUMNS + 1];
+            for k in 0..N_INSTRUCTION_COLUMNS {
+                data[k] = PFPacking::<EF>::from_fn(|w| bytecode_multilinear[src_idx(p, w) * bytecode_stride + k]);
+            }
+            data[N_INSTRUCTION_COLUMNS] = PFPacking::<EF>::from_fn(|w| F::from_usize(src_idx(p, w)));
+            c_packed - finger_print_packed::<EF>(bytecode_contrib, &data, &alphas_packed)
+        },
+    );
+    if 1 << log_bytecode < max_table_height {
+        // padding
+        numerators[offset + (1 << log_bytecode)..offset + max_table_height]
+            .par_iter_mut()
+            .for_each(|n| *n = F::ZERO);
+        denominators[(offset + (1 << log_bytecode)) / width..(offset + max_table_height) / width]
+            .par_iter_mut()
+            .for_each(|d| *d = EFPacking::<EF>::ONE);
+    }
+    offset += max_table_height.max(1 << log_bytecode);
 
     for (table, _) in &tables_log_heights_sorted {
         let trace = &traces[table];
@@ -196,24 +222,6 @@ pub fn prove_generic_logup(
                 });
             offset += col_values.len() << log_n_rows;
         }
-
-        // Bytecode section placed after execution's 2^20 sections for alignment
-        if *table == Table::execution() {
-            assert_eq!(1 << log_bytecode, bytecode_acc.len());
-            fill_num_from(&mut numerators[offset..][..bytecode_acc.len()], bytecode_acc, true);
-            fill_denoms(
-                &mut denominators[offset / width..][..(1 << log_bytecode) / width],
-                |p| {
-                    let mut data = [PFPacking::<EF>::ZERO; N_INSTRUCTION_COLUMNS + 1];
-                    for k in 0..N_INSTRUCTION_COLUMNS {
-                        data[k] = PFPacking::<EF>::from_fn(|w| bytecode_multilinear[src_idx(p, w) * bytecode_stride + k]);
-                    }
-                    data[N_INSTRUCTION_COLUMNS] = PFPacking::<EF>::from_fn(|w| F::from_usize(src_idx(p, w)));
-                    c_packed - finger_print_packed::<EF>(bytecode_contrib, &data, &alphas_packed)
-                },
-            );
-            offset += 1 << log_bytecode;
-        }
     }
 
     assert_eq!(offset, total_active_len);
@@ -246,11 +254,15 @@ pub fn prove_generic_logup(
     let value_memory = memory.evaluate(&memory_and_acc_point);
     prover_state.add_extension_scalar(value_memory);
 
+    let bytecode_and_acc_point = MultilinearPoint(from_end(&claim_point_gkr, log_bytecode).to_vec());
+    let value_bytecode_acc = bytecode_acc.evaluate(&bytecode_and_acc_point);
+    prover_state.add_extension_scalar(value_bytecode_acc);
+
+    // evaluation on bytecode itself can be done directly by the verifier
+
     let mut bus_numerators_values = BTreeMap::new();
     let mut bus_denominators_values = BTreeMap::new();
     let mut columns_values = BTreeMap::new();
-    let mut bytecode_and_acc_point = MultilinearPoint(vec![]);
-    let mut value_bytecode_acc = EF::ZERO;
     for (table, _) in &tables_log_heights_sorted {
         let trace = &traces[table];
         let log_n_rows = trace.log_n_rows;
@@ -327,13 +339,6 @@ pub fn prove_generic_logup(
             }
         }
 
-        // Bytecode evaluation placed after execution's columns
-        if table == &Table::execution() {
-            bytecode_and_acc_point = MultilinearPoint(from_end(&claim_point_gkr, log_bytecode).to_vec());
-            value_bytecode_acc = bytecode_acc.evaluate(&bytecode_and_acc_point);
-            prover_state.add_extension_scalar(value_bytecode_acc);
-        }
-
         columns_values.insert(*table, table_values);
     }
 
@@ -401,13 +406,39 @@ pub fn verify_generic_logup(
         ));
     let mut offset = 1 << log_memory;
 
+    let log_bytecode_padded = log_bytecode.max(tables_heights_sorted[0].1);
+    let bytecode_and_acc_point = MultilinearPoint(from_end(&point_gkr, log_bytecode).to_vec());
+    let pref = pref_at(offset, log_bytecode);
+    let pref_padded = pref_at(offset, log_bytecode_padded);
+
+    let value_bytecode_acc = verifier_state.next_extension_scalar()?;
+    retrieved_numerators_value -= pref * value_bytecode_acc;
+
+    // Bytecode denominator - computed directly by verifier
+    let bytecode_index_value = mle_of_01234567_etc(&bytecode_and_acc_point);
+
+    let mut bytecode_point = bytecode_and_acc_point.0.clone();
+    bytecode_point.extend(from_end(alphas, log2_ceil_usize(N_INSTRUCTION_COLUMNS)));
+    let bytecode_point = MultilinearPoint(bytecode_point);
+    let bytecode_value = bytecode_multilinear.evaluate(&bytecode_point);
+    let bytecode_value_corrected = bytecode_value
+        * alphas[..alphas.len() - log2_ceil_usize(N_INSTRUCTION_COLUMNS)]
+            .iter()
+            .map(|x| EF::ONE - *x)
+            .product::<EF>();
+    retrieved_denominators_value += pref
+        * (c - (bytecode_value_corrected
+            + bytecode_index_value * alphas_eq_poly[N_INSTRUCTION_COLUMNS]
+            + *alphas_eq_poly.last().unwrap() * F::from_usize(LOGUP_BYTECODE_DOMAINSEP)));
+    // Padding for bytecode
+    retrieved_denominators_value +=
+        pref_padded * mle_of_zeros_then_ones(1 << log_bytecode, from_end(&point_gkr, log_bytecode_padded));
+    offset += 1 << log_bytecode_padded;
+
+    // ... Rest of the tables:
     let mut bus_numerators_values = BTreeMap::new();
     let mut bus_denominators_values = BTreeMap::new();
     let mut columns_values = BTreeMap::new();
-    let mut bytecode_and_acc_point = MultilinearPoint(vec![]);
-    let mut value_bytecode_acc = EF::ZERO;
-    let mut bytecode_point = MultilinearPoint(vec![]);
-    let mut bytecode_value = EF::ZERO;
     for &(table, log_n_rows) in &tables_heights_sorted {
         let mut table_values = BTreeMap::<ColIndex, EF>::new();
 
@@ -491,31 +522,6 @@ pub fn verify_generic_logup(
             }
         }
 
-        // Bytecode section placed after execution's sections
-        if table == Table::execution() {
-            bytecode_and_acc_point = MultilinearPoint(from_end(&point_gkr, log_bytecode).to_vec());
-            let pref = pref_at(offset, log_bytecode);
-
-            value_bytecode_acc = verifier_state.next_extension_scalar()?;
-            retrieved_numerators_value -= pref * value_bytecode_acc;
-
-            let bytecode_index_value = mle_of_01234567_etc(&bytecode_and_acc_point);
-            let mut bc_point = bytecode_and_acc_point.0.clone();
-            bc_point.extend(from_end(alphas, log2_ceil_usize(N_INSTRUCTION_COLUMNS)));
-            bytecode_point = MultilinearPoint(bc_point);
-            bytecode_value = bytecode_multilinear.evaluate(&bytecode_point);
-            let bytecode_value_corrected = bytecode_value
-                * alphas[..alphas.len() - log2_ceil_usize(N_INSTRUCTION_COLUMNS)]
-                    .iter()
-                    .map(|x| EF::ONE - *x)
-                    .product::<EF>();
-            retrieved_denominators_value += pref
-                * (c - (bytecode_value_corrected
-                    + bytecode_index_value * alphas_eq_poly[N_INSTRUCTION_COLUMNS]
-                    + *alphas_eq_poly.last().unwrap() * F::from_usize(LOGUP_BYTECODE_DOMAINSEP)));
-            offset += 1 << log_bytecode;
-        }
-
         columns_values.insert(table, table_values);
     }
 
@@ -553,18 +559,17 @@ fn compute_total_active_len(
     log_bytecode: usize,
     tables_heights_sorted: &[(Table, VarCount)],
 ) -> usize {
+    let max_table_height = 1 << tables_heights_sorted[0].1;
     let log_n_cycles = tables_heights_sorted
         .iter()
         .find(|(table, _)| *table == Table::execution())
         .unwrap()
         .1;
     (1 << log_memory)
+        + (1 << log_bytecode).max(max_table_height)
         + (1 << log_n_cycles)
-        + offset_for_table(&Table::execution(), log_n_cycles)
-        + (1 << log_bytecode)
         + tables_heights_sorted
             .iter()
-            .filter(|(table, _)| *table != Table::execution())
             .map(|(table, log_n_rows)| offset_for_table(table, *log_n_rows))
             .sum::<usize>()
 }
