@@ -537,7 +537,6 @@ where
 
     if first_is_full_initializer {
         combined_weights = unsafe { uninitialized_vec(out_len) };
-        hint_hugepages(&combined_weights);
         let first_scalar = gamma_pow;
         combined_sum += first.values[0].value * gamma_pow;
         gamma_pow *= gamma;

@@ -223,34 +223,6 @@ pub unsafe fn uninitialized_vec<A>(len: usize) -> Vec<A> {
     }
 }
 
-#[cfg(target_os = "linux")]
-pub fn hint_hugepages<T>(slice: &[T]) {
-    const THRESHOLD: usize = 2 * 1024 * 1024; // 2 MB
-    let byte_len = std::mem::size_of_val(slice);
-    if byte_len < THRESHOLD {
-        return;
-    }
-    const SYS_MADVISE: i64 = 28;
-    const MADV_HUGEPAGE: i64 = 14;
-    let ptr = slice.as_ptr() as i64;
-    let len = byte_len as i64;
-    unsafe {
-        std::arch::asm!(
-            "syscall",
-            in("rax") SYS_MADVISE,
-            in("rdi") ptr,
-            in("rsi") len,
-            in("rdx") MADV_HUGEPAGE,
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack),
-        );
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn hint_hugepages<T>(_slice: &[T]) {}
-
 pub fn split_at_many<'a, A>(slice: &'a [A], indices: &[usize]) -> Vec<&'a [A]> {
     for i in 0..indices.len() {
         if i > 0 {

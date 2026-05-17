@@ -83,11 +83,9 @@ where
     }
     match prepared_evals {
         DftInput::Base(evals) => {
-            hint_hugepages(&evals);
             DftOutput::Base(dft.dft_algebra_batch_by_evals(RowMajorMatrix::new(evals, dft_n_cols)))
         }
         DftInput::Extension(evals) => {
-            hint_hugepages(&evals);
             DftOutput::Extension(dft.dft_algebra_batch_by_evals(RowMajorMatrix::new(evals, dft_n_cols)))
         }
     }

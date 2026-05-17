@@ -106,7 +106,6 @@ pub(super) fn bit_reverse_chunks<T: Copy + Send + Sync>(v: &[T], chunk_log: usiz
     let chunk_size = 1usize << chunk_log;
     debug_assert!(n.is_multiple_of(chunk_size));
     let mut out: Vec<T> = unsafe { uninitialized_vec(n) };
-    hint_hugepages(&out);
     if chunk_log == 0 {
         out.copy_from_slice(v);
         return out;
@@ -172,8 +171,6 @@ where
 
     let mut new_nums: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(nums.len() >> 1) };
     let mut new_dens: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(nums.len() >> 1) };
-    hint_hugepages(&new_nums);
-    hint_hugepages(&new_dens);
 
     new_nums
         .par_iter_mut()
