@@ -125,46 +125,6 @@ pub fn prove_execution(
         &traces,
     );
 
-    // Precompute AIR data preparation (independent of logup Fiat-Shamir state)
-    let tables_log_heights: BTreeMap<Table, VarCount> =
-        traces.iter().map(|(table, trace)| (*table, trace.log_n_rows)).collect();
-    let tables_sorted = sort_tables_by_height(&tables_log_heights);
-
-    let column_refs: Vec<Vec<&[F]>> = tables_sorted
-        .iter()
-        .map(|(table, _)| {
-            traces[table].columns[..table.n_columns()]
-                .iter()
-                .map(Vec::as_slice)
-                .collect()
-        })
-        .collect();
-    let shifted_rows: Vec<Vec<Vec<F>>> = info_span!("Computing shifted columns for AIR sumcheck")
-        .in_scope(|| {
-            tables_sorted
-                .par_iter()
-                .zip(&column_refs)
-                .map(|((table, _), cols)| compute_shifted_columns(&table.down_column_indexes(), cols))
-                .collect()
-        });
-    let precomputed_br: Vec<Vec<Vec<PFPacking<EF>>>> =
-        info_span!("pre-bit-reversing columns for AIR").in_scope(|| {
-            tables_sorted
-                .iter()
-                .enumerate()
-                .map(|(idx, (_, log_n_rows))| {
-                    let pivot = ENDIANNESS_PIVOT_AIR.min(*log_n_rows);
-                    let mut up_down: Vec<&[PF<EF>]> = column_refs[idx].to_vec();
-                    up_down.extend(shifted_rows[idx].iter().map(Vec::as_slice));
-                    let packed = MleGroupRef::<EF>::Base(up_down).pack();
-                    match packed.by_ref() {
-                        MleGroupRef::BasePacked(cols) => bit_reverse_columns_packed::<EF>(&cols, pivot),
-                        _ => unreachable!(),
-                    }
-                })
-                .collect()
-        });
-
     // logup (GKR)
     let logup_c = prover_state.sample();
     prover_state.duplex();
@@ -202,6 +162,26 @@ pub fn prove_execution(
     prover_state.duplex();
     let air_eta: EF = prover_state.sample();
 
+    let tables_log_heights: BTreeMap<Table, VarCount> =
+        traces.iter().map(|(table, trace)| (*table, trace.log_n_rows)).collect();
+    let tables_sorted = sort_tables_by_height(&tables_log_heights);
+
+    let column_refs: Vec<Vec<&[F]>> = tables_sorted
+        .iter()
+        .map(|(table, _)| {
+            traces[table].columns[..table.n_columns()]
+                .iter()
+                .map(Vec::as_slice)
+                .collect()
+        })
+        .collect();
+    let _span = info_span!("Computing shifted columns for AIR sumcheck").entered();
+    let shifted_rows: Vec<Vec<Vec<F>>> = tables_sorted
+        .par_iter()
+        .zip(&column_refs)
+        .map(|((table, _), cols)| compute_shifted_columns(&table.down_column_indexes(), cols))
+        .collect();
+    std::mem::drop(_span);
     let mut sessions = Vec::with_capacity(tables_sorted.len());
     for (idx, (table, log_n_rows)) in tables_sorted.iter().enumerate() {
         let bus_numerator_value = logup_statements.bus_numerators_values[table];
@@ -217,14 +197,15 @@ pub fn prove_execution(
 
         let extra_data = ExtraDataForBuses::new(logup_alphas_eq_poly.clone(), bus_beta, air_alpha_powers.clone());
 
-        let br_owned = MleGroupOwned::BasePacked(precomputed_br[idx].clone());
-        let packed: MleGroup<'_, EF> = MleGroup::Owned(br_owned);
+        let mut up_down: Vec<&[PF<EF>]> = column_refs[idx].to_vec();
+        up_down.extend(shifted_rows[idx].iter().map(Vec::as_slice));
+        let packed = MleGroupRef::<EF>::Base(up_down).pack();
 
         let non_padded = traces[table].non_padded_n_rows;
 
         macro_rules! make_session {
             ($t:expr) => {{
-                let session = AirSumcheckSession::new_pre_bit_reversed(packed, eq_suffix, bus_final_value, *$t, extra_data, non_padded);
+                let session = AirSumcheckSession::new(packed, eq_suffix, bus_final_value, *$t, extra_data, non_padded);
                 Box::new(session) as Box<dyn OuterSumcheckSession<EF> + '_>
             }};
         }

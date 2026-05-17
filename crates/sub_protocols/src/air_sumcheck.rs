@@ -29,7 +29,7 @@ use tracing::info_span;
 // early, at P-w-1, so `SplitEq` stays in packed mode (its eq_point needs length
 // > w; at round P-w-1 the eq_point has length L-(P-w-1)-1 = w).
 
-pub const ENDIANNESS_PIVOT_AIR: usize = 12;
+const ENDIANNESS_PIVOT_AIR: usize = 12;
 
 pub trait OuterSumcheckSession<EF: ExtensionField<PF<EF>>>: Debug {
     fn initial_n_vars(&self) -> usize;
@@ -72,29 +72,6 @@ where
         extra_data: A::ExtraData,
         non_padded_n_rows: usize,
     ) -> Self {
-        Self::new_inner(packed_multilinears, eq_factor, sum, computation, extra_data, non_padded_n_rows, false)
-    }
-
-    pub fn new_pre_bit_reversed(
-        pre_bit_reversed_multilinears: MleGroup<'a, EF>,
-        eq_factor: Vec<EF>,
-        sum: EF,
-        computation: A,
-        extra_data: A::ExtraData,
-        non_padded_n_rows: usize,
-    ) -> Self {
-        Self::new_inner(pre_bit_reversed_multilinears, eq_factor, sum, computation, extra_data, non_padded_n_rows, true)
-    }
-
-    fn new_inner(
-        packed_multilinears: MleGroup<'a, EF>,
-        eq_factor: Vec<EF>,
-        sum: EF,
-        computation: A,
-        extra_data: A::ExtraData,
-        non_padded_n_rows: usize,
-        already_bit_reversed: bool,
-    ) -> Self {
         let initial_n_vars = packed_multilinears.n_vars();
         assert_eq!(eq_factor.len(), initial_n_vars);
         let last_point = column_evals(&packed_multilinears.by_ref(), (1 << initial_n_vars) - 1);
@@ -107,17 +84,30 @@ where
             .next_multiple_of(1usize << pivot)
             .min(1usize << initial_n_vars);
 
-        let multilinears = if already_bit_reversed {
-            packed_multilinears
-        } else {
-            match (packed_multilinears.by_ref(), has_packed_phase) {
-                (MleGroupRef::BasePacked(cols), true) => {
-                    let _span = info_span!("chunk-bit-reversing columns").entered();
-                    let bit_reversed = bit_reverse_columns_packed::<EF>(&cols, pivot);
-                    MleGroup::Owned(MleGroupOwned::BasePacked(bit_reversed))
-                }
-                _ => unreachable!(),
+        let multilinears = match (packed_multilinears.by_ref(), has_packed_phase) {
+            (MleGroupRef::BasePacked(cols), true) => {
+                let _span = info_span!("chunk-bit-reversing columns").entered();
+                let chunk_size = 1usize << pivot;
+                let shift = usize::BITS as usize - pivot;
+                let bit_reversed = cols
+                    .par_iter()
+                    .map(|&src| {
+                        let mut dst: Vec<PFPacking<EF>> = unsafe { uninitialized_vec(src.len()) };
+                        let src_u = PFPacking::<EF>::unpack_slice(src);
+                        let dst_u = PFPacking::<EF>::unpack_slice_mut(&mut dst);
+                        for (src_chunk, dst_chunk) in
+                            src_u.chunks_exact(chunk_size).zip(dst_u.chunks_exact_mut(chunk_size))
+                        {
+                            for (p, slot) in dst_chunk.iter_mut().enumerate() {
+                                *slot = src_chunk[p.reverse_bits() >> shift];
+                            }
+                        }
+                        dst
+                    })
+                    .collect();
+                MleGroup::Owned(MleGroupOwned::BasePacked(bit_reversed))
             }
+            _ => unreachable!(),
         };
 
         Self {
@@ -133,29 +123,6 @@ where
             rounds_done: 0,
         }
     }
-}
-
-pub fn bit_reverse_columns_packed<EF: ExtensionField<PF<EF>>>(
-    cols: &[&[PFPacking<EF>]],
-    pivot: usize,
-) -> Vec<Vec<PFPacking<EF>>> {
-    let chunk_size = 1usize << pivot;
-    let shift = usize::BITS as usize - pivot;
-    cols.par_iter()
-        .map(|&src| {
-            let mut dst: Vec<PFPacking<EF>> = unsafe { uninitialized_vec(src.len()) };
-            let src_u = PFPacking::<EF>::unpack_slice(src);
-            let dst_u = PFPacking::<EF>::unpack_slice_mut(&mut dst);
-            for (src_chunk, dst_chunk) in
-                src_u.chunks_exact(chunk_size).zip(dst_u.chunks_exact_mut(chunk_size))
-            {
-                for (p, slot) in dst_chunk.iter_mut().enumerate() {
-                    *slot = src_chunk[p.reverse_bits() >> shift];
-                }
-            }
-            dst
-        })
-        .collect()
 }
 
 impl<'a, EF, A> AirSumcheckSession<'a, EF, A>
