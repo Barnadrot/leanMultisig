@@ -310,13 +310,17 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         num_cols_poseidon_16()
     }
     fn degree_air(&self) -> usize {
-        3
+        9
+    }
+    fn low_degree_air(&self) -> Option<(usize, usize)> {
+        // Each partial round contributes one `assert_eq_low` per round (1 S-box / round), of degree 3 (= the "low" degree part)
+        Some((3, PARTIAL_ROUNDS))
     }
     fn down_column_indexes(&self) -> Vec<usize> {
         vec![]
     }
     fn n_constraints(&self) -> usize {
-        BUS as usize + 147
+        BUS as usize + 83
     }
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
         let cols: Poseidon1Cols16<AB::IF> = {
@@ -380,12 +384,9 @@ pub(super) struct Poseidon1Cols16<T> {
     pub flag_permute: T,
 
     pub inputs: [T; WIDTH],
-    pub beginning_mid_checkpoints: [[T; WIDTH]; HALF_INITIAL_FULL_ROUNDS],
     pub beginning_full_rounds: [[T; WIDTH]; HALF_INITIAL_FULL_ROUNDS],
     pub partial_rounds: [T; PARTIAL_ROUNDS],
-    pub ending_mid_checkpoints: [[T; WIDTH]; HALF_FINAL_FULL_ROUNDS - 1],
     pub ending_full_rounds: [[T; WIDTH]; HALF_FINAL_FULL_ROUNDS - 1],
-    pub last_mid_checkpoint: [T; WIDTH],
     pub outputs_left: [T; WIDTH / 2],
 }
 
@@ -396,7 +397,6 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
     for round in 0..HALF_INITIAL_FULL_ROUNDS {
         eval_2_full_rounds_16(
             &mut state,
-            &local.beginning_mid_checkpoints[round],
             &local.beginning_full_rounds[round],
             &initial_constants[2 * round],
             &initial_constants[2 * round + 1],
@@ -436,7 +436,6 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
     for round in 0..HALF_FINAL_FULL_ROUNDS - 1 {
         eval_2_full_rounds_16(
             &mut state,
-            &local.ending_mid_checkpoints[round],
             &local.ending_full_rounds[round],
             &final_constants[2 * round],
             &final_constants[2 * round + 1],
@@ -447,7 +446,6 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
     eval_last_2_full_rounds_16(
         &local.inputs,
         &mut state,
-        &local.last_mid_checkpoint,
         &local.outputs_left,
         &final_constants[2 * (HALF_FINAL_FULL_ROUNDS - 1)],
         &final_constants[2 * (HALF_FINAL_FULL_ROUNDS - 1) + 1],
@@ -467,23 +465,16 @@ pub const fn num_cols_total_poseidon_16() -> usize {
 #[inline]
 fn eval_2_full_rounds_16<AB: AirBuilder>(
     state: &mut [AB::IF; WIDTH],
-    mid_checkpoint: &[AB::IF; WIDTH],
     post_full_round: &[AB::IF; WIDTH],
     round_constants_1: &[F; WIDTH],
     round_constants_2: &[F; WIDTH],
     builder: &mut AB,
 ) {
-    // First full round: add RC, cube, MDS → degree 3
     for (s, r) in state.iter_mut().zip(round_constants_1.iter()) {
         add_kb(s, *r);
         *s = s.cube();
     }
     mds_air_16(state);
-    for (state_i, mid_i) in state.iter_mut().zip(mid_checkpoint) {
-        builder.assert_eq(*state_i, *mid_i);
-        *state_i = *mid_i;
-    }
-    // Second full round: add RC, cube, MDS → degree 3 (reset from degree-1 checkpoint)
     for (s, r) in state.iter_mut().zip(round_constants_2.iter()) {
         add_kb(s, *r);
         *s = s.cube();
@@ -499,7 +490,6 @@ fn eval_2_full_rounds_16<AB: AirBuilder>(
 fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     initial_state: &[AB::IF; WIDTH],
     state: &mut [AB::IF; WIDTH],
-    mid_checkpoint: &[AB::IF; WIDTH],
     outputs_left: &[AB::IF; WIDTH / 2],
     round_constants_1: &[F; WIDTH],
     round_constants_2: &[F; WIDTH],
@@ -510,10 +500,6 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
         *s = s.cube();
     }
     mds_air_16(state);
-    for (state_i, mid_i) in state.iter_mut().zip(mid_checkpoint) {
-        builder.assert_eq(*state_i, *mid_i);
-        *state_i = *mid_i;
-    }
     for (s, r) in state.iter_mut().zip(round_constants_2.iter()) {
         add_kb(s, *r);
         *s = s.cube();
