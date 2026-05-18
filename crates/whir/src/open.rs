@@ -566,11 +566,7 @@ where
             start_idx = 1;
         }
     } else {
-        combined_weights = unsafe { uninitialized_vec(out_len) };
-        let zero_chunk = (out_len + 15) / 16;
-        combined_weights.par_chunks_mut(zero_chunk.max(1)).for_each(|chunk| {
-            unsafe { std::ptr::write_bytes(chunk.as_mut_ptr(), 0, chunk.len()) };
-        });
+        combined_weights = EFPacking::<EF>::zero_vec(out_len);
         start_idx = 0;
     }
 
