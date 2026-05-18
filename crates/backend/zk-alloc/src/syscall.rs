@@ -16,7 +16,6 @@ mod imp {
     const MAP_NORESERVE: usize = 0x4000;
 
     pub const MADV_NOHUGEPAGE: usize = 15;
-    pub const MADV_POPULATE_WRITE: usize = 23;
 
     #[inline]
     unsafe fn syscall6(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize, a6: usize) -> isize {
@@ -76,7 +75,6 @@ mod imp {
     use std::ptr;
 
     pub const MADV_NOHUGEPAGE: usize = 15;
-    pub const MADV_POPULATE_WRITE: usize = 23;
 
     #[inline]
     pub unsafe fn mmap_anonymous(size: usize) -> *mut u8 {
@@ -99,4 +97,4 @@ mod imp {
     }
 }
 
-pub use imp::{MADV_NOHUGEPAGE, MADV_POPULATE_WRITE, madvise, mmap_anonymous};
+pub use imp::{MADV_NOHUGEPAGE, madvise, mmap_anonymous};
