@@ -29,6 +29,7 @@ const SLAB_SIZE: usize = 8 << 30; // 8GB
 const SLACK: usize = 4; // SLACK absorbs the main thread and any non-rayon helpers.
 const MAX_THREADS: usize = NUM_THREADS + SLACK;
 const REGION_SIZE: usize = SLAB_SIZE * MAX_THREADS;
+const PAGE_SIZE: usize = 4096;
 
 #[derive(Debug)]
 pub struct ZkAllocator;
@@ -55,6 +56,14 @@ static REGION_INIT: Once = Once::new();
 /// themselves `ARENA_NO_SLAB` and permanently fall through to the system allocator.
 static THREAD_IDX: AtomicUsize = AtomicUsize::new(0);
 
+/// Per-thread high water mark: the maximum ARENA_PTR seen during the previous phase.
+/// Used by begin_phase() to pre-fault pages via MADV_POPULATE_WRITE, eliminating
+/// scattered minor page faults during hot parallel computation.
+static HIGH_WATER: [AtomicUsize; MAX_THREADS] = {
+    const INIT: AtomicUsize = AtomicUsize::new(0);
+    [INIT; MAX_THREADS]
+};
+
 thread_local! {
     /// Where this thread's next allocation lands. Advanced past each allocation.
     static ARENA_PTR: Cell<usize> = const { Cell::new(0) };
@@ -71,6 +80,8 @@ thread_local! {
     /// `true` if this thread was created after `MAX_THREADS` was already exhausted.
     /// Such threads skip arena logic entirely and always go to the system allocator.
     static ARENA_NO_SLAB: Cell<bool> = const { Cell::new(false) };
+    /// This thread's index in the HIGH_WATER array, or usize::MAX if no slab.
+    static ARENA_IDX: Cell<usize> = const { Cell::new(usize::MAX) };
 }
 
 /// Returns the base address of the mmap'd region, mapping it on the first call.
@@ -100,6 +111,17 @@ pub fn init() {
 /// Activates the arena and resets every thread's slab. All allocations until the next
 /// `end_phase()` go to the arena; the previous phase's data is overwritten in place.
 pub fn begin_phase() {
+    let base = REGION_BASE.load(Ordering::Relaxed);
+    if base != 0 {
+        for i in 0..MAX_THREADS {
+            let hwm = HIGH_WATER[i].load(Ordering::Relaxed);
+            if hwm > 0 {
+                let slab_base = base + i * SLAB_SIZE;
+                let len = (hwm - slab_base + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+                unsafe { syscall::madvise(slab_base as *mut u8, len, syscall::MADV_POPULATE_WRITE) };
+            }
+        }
+    }
     GENERATION.fetch_add(1, Ordering::Release);
     ARENA_ACTIVE.store(true, Ordering::Release);
 }
@@ -130,6 +152,14 @@ unsafe fn arena_alloc_cold(size: usize, align: usize) -> *mut u8 {
             base = region + idx * SLAB_SIZE;
             ARENA_BASE.set(base);
             ARENA_END.set(base + SLAB_SIZE);
+            ARENA_IDX.set(idx);
+        }
+        let idx = ARENA_IDX.get();
+        if idx != usize::MAX {
+            let prev_ptr = ARENA_PTR.get();
+            if prev_ptr > base {
+                HIGH_WATER[idx].store(prev_ptr, Ordering::Relaxed);
+            }
         }
         ARENA_PTR.set(base);
         ARENA_GEN.set(generation);
