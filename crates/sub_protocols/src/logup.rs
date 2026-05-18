@@ -186,7 +186,6 @@ pub fn prove_generic_logup(
                         chunk
                             .par_chunks_exact_mut(chunk_size)
                             .enumerate()
-                            .with_min_len(512)
                             .for_each(|(c, dst_chunk)| {
                                 for (i, slot) in dst_chunk.iter_mut().enumerate() {
                                     let src_i = i.reverse_bits() >> chunk_shift;
@@ -209,7 +208,7 @@ pub fn prove_generic_logup(
                 .enumerate()
                 .for_each(|(i, denom_chunk)| {
                     let i_field = F::from_usize(i) + addr_offset_field;
-                    denom_chunk.par_iter_mut().enumerate().with_min_len(512).for_each(|(p, slot)| {
+                    denom_chunk.par_iter_mut().enumerate().for_each(|(p, slot)| {
                         *slot = c_packed
                             - finger_print_packed::<EF>(
                                 memory_contrib,
@@ -580,5 +579,5 @@ fn fill_denoms<Build>(dst: &mut [EFPacking<EF>], build: Build)
 where
     Build: Fn(usize) -> EFPacking<EF> + Sync,
 {
-    dst.par_iter_mut().enumerate().with_min_len(512).for_each(|(p, slot)| *slot = build(p));
+    dst.par_iter_mut().enumerate().for_each(|(p, slot)| *slot = build(p));
 }

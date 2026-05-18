@@ -38,8 +38,6 @@ use crate::{Matrix, RowMajorMatrix, RowMajorMatrixViewMut};
 /// The number of layers to compute in each parallelization.
 const LAYERS_PER_GROUP: usize = 3;
 
-const MIN_BUTTERFLY_BATCH: usize = 1024;
-
 #[derive(Default, Debug)]
 pub(crate) struct EvalsDft<F> {
     twiddles: RwLock<Vec<Vec<F>>>,
@@ -204,7 +202,6 @@ fn dft_layer_par<F: Field, B: Butterfly<F>>(vec: &mut [F], twiddles: &[B], width
         left.par_chunks_exact_mut(width)
             .zip(right.par_chunks_exact_mut(width))
             .zip(twiddles.par_iter())
-            .with_min_len(MIN_BUTTERFLY_BATCH)
             .for_each(|((hi_chunk, lo_chunk), twiddle)| {
                 twiddle.apply_to_rows(hi_chunk, lo_chunk);
             });
@@ -262,7 +259,6 @@ fn dft_layer_par_double<F: Field, B: Butterfly<F>, M: MultiLayerButterfly<F, B>>
                 .zip(lo_hi_blocks.par_chunks_exact_mut(width))
                 .zip(lo_lo_blocks.par_chunks_exact_mut(width))
                 .enumerate()
-                .with_min_len(MIN_BUTTERFLY_BATCH)
                 .for_each(|(ind, (((hi_hi, hi_lo), lo_hi), lo_lo))| {
                     multi_butterfly.apply_2_layers(
                         ((hi_hi, hi_lo), (lo_hi, lo_lo)),
@@ -327,7 +323,6 @@ fn dft_layer_par_triple<F: Field, B: Butterfly<F>, M: MultiLayerButterfly<F, B>>
                 .zip(lo_lo_hi_blocks.par_chunks_exact_mut(width))
                 .zip(lo_lo_lo_blocks.par_chunks_exact_mut(width))
                 .enumerate()
-                .with_min_len(MIN_BUTTERFLY_BATCH)
                 .for_each(
                     |(
                         ind,
