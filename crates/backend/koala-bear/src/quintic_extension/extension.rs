@@ -546,57 +546,6 @@ pub fn quintic_mul<T: Copy + Sub<Output = T>>(
     ]
 }
 
-/// Karatsuba-variant quintic extension field multiplication in F[X]/(X^5 + X^2 - 1).
-/// Uses 3+2 split Karatsuba: 14 multiplications + ~55 additions, vs schoolbook's 25 muls.
-/// Beneficial when individual T*T multiplication is expensive relative to addition.
-#[inline(always)]
-pub fn quintic_mul_karatsuba<T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T>>(
-    a: &[T; 5],
-    b: &[T; 5],
-) -> [T; 5] {
-    // Split: a = (a0,a1,a2) + X^3*(a3,a4), same for b
-    // P = aL*bL (3x3 Karatsuba, 6 muls)
-    let m0 = a[0] * b[0];
-    let m1 = a[1] * b[1];
-    let m2 = a[2] * b[2];
-    let m3 = (a[0] + a[1]) * (b[0] + b[1]) - m0 - m1;
-    let m4 = (a[1] + a[2]) * (b[1] + b[2]) - m1 - m2;
-    let m5 = (a[0] + a[2]) * (b[0] + b[2]) - m0 - m2;
-
-    // Q = aH*bH (2x2 Karatsuba, 3 muls)
-    let m6 = a[3] * b[3];
-    let m7 = a[4] * b[4];
-    let m8 = (a[3] + a[4]) * (b[3] + b[4]) - m6 - m7;
-
-    // R = (aL+aH_pad)*(bL+bH_pad) (3x3 Karatsuba, 5 muls — n2=m2 reused)
-    let am0 = a[0] + a[3];
-    let am1 = a[1] + a[4];
-    let bm0 = b[0] + b[3];
-    let bm1 = b[1] + b[4];
-
-    let n0 = am0 * bm0;
-    let n1 = am1 * bm1;
-    let n3 = (am0 + am1) * (bm0 + bm1) - n0 - n1;
-    let n4 = (am1 + a[2]) * (bm1 + b[2]) - n1 - m2;
-    let n5 = (am0 + a[2]) * (bm0 + b[2]) - n0 - m2;
-
-    // Cross = R - P - Q_padded
-    let cross0 = n0 - m0 - m6;
-    let cross1 = n3 - m3 - m8;
-    let cross2 = n5 + n1 - m5 - m1 - m7;
-    let cross3 = n4 - m4;
-
-    // Reduce mod X^5 + X^2 - 1 (X^5=1-X^2, X^6=X-X^3, X^7=X^2-X^4, X^8=X^3+X^2-1)
-    let p2 = m5 + m1;
-    [
-        m0 + cross2 - m7,
-        m3 + cross3 + m6,
-        p2 - cross2 + m8 + m7,
-        m4 + cross0 - cross3 - m6 + m7,
-        m2 + cross1 - m8,
-    ]
-}
-
 #[inline(always)]
 pub(crate) fn quintic_square<F, R>(a: &[R; 5], res: &mut [R; 5])
 where

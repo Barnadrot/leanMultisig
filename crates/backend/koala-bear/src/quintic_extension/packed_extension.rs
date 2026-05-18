@@ -464,7 +464,7 @@ where
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
         Self {
-            value: super::extension::quintic_mul_karatsuba(&self.value, &rhs.value),
+            value: super::extension::quintic_mul(&self.value, &rhs.value, PF::dot_product::<5>),
         }
     }
 }
@@ -480,7 +480,7 @@ where
     fn mul(self, rhs: QuinticExtensionField<F>) -> Self {
         let b: [PF; 5] = rhs.value.map(|x| x.into());
         Self {
-            value: super::extension::quintic_mul_karatsuba(&self.value, &b),
+            value: super::extension::quintic_mul(&self.value, &b, PF::dot_product::<5>),
         }
     }
 }
