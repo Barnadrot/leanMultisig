@@ -551,13 +551,29 @@ where
 
         if second_is_full_domain {
             let second = &statements[1];
-            compute_eval_eq_packed_dual::<EF>(
-                &first.point.0,
-                &second.point.0,
-                &mut combined_weights,
-                first_scalar,
-                gamma_pow,
-            );
+            let n = first.point.0.len();
+            let log_packing = packing_log_width::<EF>();
+            let split_k = n / 2;
+            let bot_k = n - split_k;
+            debug_assert!(bot_k >= log_packing);
+            let stride = 1usize << (bot_k - log_packing);
+
+            let eq_top_a = eval_eq_scaled(&first.point.0[..split_k], first_scalar);
+            let eq_top_b = eval_eq_scaled(&second.point.0[..split_k], gamma_pow);
+            let eq_bot_a = eval_eq_packed_scaled(&first.point.0[split_k..], EF::ONE);
+            let eq_bot_b = eval_eq_packed_scaled(&second.point.0[split_k..], EF::ONE);
+
+            combined_weights
+                .par_chunks_exact_mut(stride)
+                .enumerate()
+                .for_each(|(i, chunk)| {
+                    let ca = EFPacking::<EF>::from(eq_top_a[i]);
+                    let cb = EFPacking::<EF>::from(eq_top_b[i]);
+                    for (out, (&ba, &bb)) in chunk.iter_mut().zip(eq_bot_a.iter().zip(eq_bot_b.iter())) {
+                        *out = ca * ba + cb * bb;
+                    }
+                });
+
             combined_sum += second.values[0].value * gamma_pow;
             gamma_pow *= gamma;
             start_idx = 2;
