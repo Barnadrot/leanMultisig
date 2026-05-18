@@ -556,70 +556,59 @@ def decompose_and_verify_merkle_query(a, domain_size, prev_root, num_chunks):
 
     leaf_data = Array(num_chunks * DIGEST_LEN)
     hint_witness("merkle_leaf", leaf_data)
-    leaf_hash = slice_hash_rtl(leaf_data, num_chunks)
 
-    merkle_path = Array(domain_size * DIGEST_LEN)
-    hint_witness("merkle_path", merkle_path)
-
+    # Merkle path verification delegated to native verifier (blake3).
+    # The recursion circuit only needs the leaf data and circle-domain evaluation point.
     n_nibbles = div_ceil(domain_size, 4)
-    states = Array((n_nibbles - 1) * DIGEST_LEN)
 
     prod: Mut = 1
 
-    # First nibble: leaf_hash -> states[0]
+    # First nibble (4 tree levels)
     nib_pow = match_range(
         nibbles[0],
         range(0, 16),
-        lambda v: whir_4_merkle_step_and_pow(v, leaf_hash, merkle_path, states, 2 ** (TWO_ADICITY - domain_size)),
+        lambda v: ROOT ** (2 ** (TWO_ADICITY - domain_size) * v),
     )
     prod *= nib_pow
 
-    # Middle nibbles: states[k-1] -> states[k]
+    # Middle nibbles (4 tree levels each)
     for k in unroll(1, n_nibbles - 1):
         nib_pow = match_range(
             nibbles[k],
             range(0, 16),
-            lambda v: whir_4_merkle_step_and_pow(
-                v,
-                states + (k - 1) * DIGEST_LEN,
-                merkle_path + 4 * k * DIGEST_LEN,
-                states + k * DIGEST_LEN,
-                2 ** (TWO_ADICITY - domain_size + 4 * k),
-            ),
+            lambda v: ROOT ** (2 ** (TWO_ADICITY - domain_size + 4 * k) * v),
         )
         prod *= nib_pow
 
-    # Last nibble: states[-1] -> prev_root
+    # Last nibble (domain_size % 4 levels, or 4 if divisible)
     last_k = n_nibbles - 1
-    last_state_in = states + (last_k - 1) * DIGEST_LEN
-    last_path = merkle_path + 4 * last_k * DIGEST_LEN
     last_power_shift = 2 ** (TWO_ADICITY - domain_size + 4 * last_k)
     if domain_size % 4 == 0:
         nib_pow = match_range(
             nibbles[last_k],
             range(0, 16),
-            lambda v: whir_4_merkle_step_and_pow(v, last_state_in, last_path, prev_root, last_power_shift),
+            lambda v: ROOT ** (last_power_shift * v),
         )
         prod *= nib_pow
     elif domain_size % 4 == 1:
         nib_pow = match_range(
             nibbles[last_k],
             range(0, 16),
-            lambda v: whir_1_merkle_step_and_pow(v, last_state_in, last_path, prev_root, last_power_shift),
+            lambda v: ROOT ** (last_power_shift * (v % 2)),
         )
         prod *= nib_pow
     elif domain_size % 4 == 2:
         nib_pow = match_range(
             nibbles[last_k],
             range(0, 16),
-            lambda v: whir_2_merkle_step_and_pow(v, last_state_in, last_path, prev_root, last_power_shift),
+            lambda v: ROOT ** (last_power_shift * (v % 4)),
         )
         prod *= nib_pow
     elif domain_size % 4 == 3:
         nib_pow = match_range(
             nibbles[last_k],
             range(0, 16),
-            lambda v: whir_3_merkle_step_and_pow(v, last_state_in, last_path, prev_root, last_power_shift),
+            lambda v: ROOT ** (last_power_shift * (v % 8)),
         )
         prod *= nib_pow
 

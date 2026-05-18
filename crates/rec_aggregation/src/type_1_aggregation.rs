@@ -323,8 +323,8 @@ pub fn aggregate_type_1(
         pubkeys_blob.extend_from_slice(&pk.flaten());
     }
 
-    let (merkle_leaf_blobs, merkle_path_blobs) =
-        extract_merkle_hint_blobs(verified_children.iter().map(|v| &v.raw_proof));
+    let merkle_leaf_blobs =
+        extract_merkle_leaf_blobs(verified_children.iter().map(|v| &v.raw_proof));
 
     let aggregate_sizes: Vec<F> = sub_indices_blobs.iter().map(|b| F::from_usize(b.len())).collect();
 
@@ -363,7 +363,6 @@ pub fn aggregate_type_1(
     hints.insert("wots".to_string(), wots_blobs);
     hints.insert("xmss_merkle_node".to_string(), xmss_merkle_node_blobs);
     hints.insert("merkle_leaf".to_string(), merkle_leaf_blobs);
-    hints.insert("merkle_path".to_string(), merkle_path_blobs);
     hints.insert("aggregate_sizes".to_string(), vec![aggregate_sizes]);
     hints.insert("tweak_table".to_string(), vec![tweak_table]);
     if n_recursions > 0 {
@@ -390,17 +389,12 @@ pub fn aggregate_type_1(
     })
 }
 
-/// return `([merkle_leafs], [merkle_paths])`
-pub(crate) fn extract_merkle_hint_blobs<'a>(
+pub(crate) fn extract_merkle_leaf_blobs<'a>(
     raw_proofs: impl IntoIterator<Item = &'a RawProof<F>>,
-) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+) -> Vec<Vec<F>> {
     raw_proofs
         .into_iter()
         .flat_map(|p| p.merkle_openings.iter())
-        .map(|o| {
-            let leaf = o.leaf_data.clone();
-            let path: Vec<F> = o.path.iter().flat_map(|d| d.iter().copied()).collect();
-            (leaf, path)
-        })
-        .unzip()
+        .map(|o| o.leaf_data.clone())
+        .collect()
 }

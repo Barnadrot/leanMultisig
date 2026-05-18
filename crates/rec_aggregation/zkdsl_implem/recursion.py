@@ -21,6 +21,10 @@ EXECUTION_TABLE_INDEX = EXECUTION_TABLE_INDEX_PLACEHOLDER
 
 LOOKUPS_INDEXES = LOOKUPS_INDEXES_PLACEHOLDER  # [[_; ?]; N_TABLES]
 LOOKUPS_VALUES = LOOKUPS_VALUES_PLACEHOLDER  # [[[_; ?]; ?]; N_TABLES]
+LOOKUPS_INDEX_IS_NEW = LOOKUPS_INDEX_IS_NEW_PLACEHOLDER  # [[0|1; ?]; N_TABLES]
+LOOKUPS_ADDRESS_OFFSETS = LOOKUPS_ADDRESS_OFFSETS_PLACEHOLDER  # [[_; ?]; N_TABLES]
+LOOKUPS_CONDITIONALS = LOOKUPS_CONDITIONALS_PLACEHOLDER  # [[[_; ?]; ?]; N_TABLES]
+LOOKUPS_CONDITIONAL_IS_NEW = LOOKUPS_CONDITIONAL_IS_NEW_PLACEHOLDER  # [[[0|1; ?]; ?]; N_TABLES]
 
 NUM_COLS_AIR = NUM_COLS_AIR_PLACEHOLDER
 
@@ -344,21 +348,25 @@ def continue_recursion_ordered(
 
         for lookup_f_index in unroll(0, len(LOOKUPS_INDEXES[table_index])):
             col_index = LOOKUPS_INDEXES[table_index][lookup_f_index]
-            fs, index_eval = fs_receive_ef_inlined(fs, 1)
-            debug_assert(len(pcs_values[table_index][0][col_index]) == 0)
-            pcs_values[table_index][0][col_index].push(index_eval)
+            index_eval: Imu
+            if LOOKUPS_INDEX_IS_NEW[table_index][lookup_f_index] == 1:
+                fs, index_eval = fs_receive_ef_inlined(fs, 1)
+                pcs_values[table_index][0][col_index].push(index_eval)
+            if LOOKUPS_INDEX_IS_NEW[table_index][lookup_f_index] == 0:
+                index_eval = pcs_values[table_index][0][col_index][0]
+            addr_offset = LOOKUPS_ADDRESS_OFFSETS[table_index][lookup_f_index]
             for i in unroll(0, len(LOOKUPS_VALUES[table_index][lookup_f_index])):
                 fs, value_eval = fs_receive_ef_inlined(fs, 1)
-                col_index = LOOKUPS_VALUES[table_index][lookup_f_index][i]
-                debug_assert(len(pcs_values[table_index][0][col_index]) == 0)
-                pcs_values[table_index][0][col_index].push(value_eval)
+                value_col_index = LOOKUPS_VALUES[table_index][lookup_f_index][i]
+                debug_assert(len(pcs_values[table_index][0][value_col_index]) == 0)
+                pcs_values[table_index][0][value_col_index].push(value_eval)
 
-                pref = multilinear_location_prefix(offset / n_rows, n_vars_logup_gkr - log_n_rows, point_gkr)  # TODO there is some duplication here
-                retrieved_numerators_value = add_extension_ret(retrieved_numerators_value, pref)
+                pref = multilinear_location_prefix(offset / n_rows, n_vars_logup_gkr - log_n_rows, point_gkr)
+                addr = add_base_extension_ret(addr_offset + i, index_eval)
                 fingerp = fingerprint_2(
                     LOGUP_MEMORY_DOMAINSEP,
                     value_eval,
-                    add_base_extension_ret(i, index_eval),
+                    addr,
                     logup_alphas_eq_poly,
                 )
                 retrieved_denominators_value = add_extension_ret(
@@ -367,6 +375,36 @@ def continue_recursion_ordered(
                 )
 
                 offset += n_rows
+
+            n_conds = len(LOOKUPS_CONDITIONALS[table_index][lookup_f_index])
+            n_values = len(LOOKUPS_VALUES[table_index][lookup_f_index])
+            if n_conds == 0:
+                base_offset = offset - n_values * n_rows
+                for i in unroll(0, n_values):
+                    pref = multilinear_location_prefix((base_offset + i * n_rows) / n_rows, n_vars_logup_gkr - log_n_rows, point_gkr)
+                    retrieved_numerators_value = add_extension_ret(retrieved_numerators_value, pref)
+            else:
+                first_cond_col = LOOKUPS_CONDITIONALS[table_index][lookup_f_index][0]
+                first_cond_eval: Imu
+                if LOOKUPS_CONDITIONAL_IS_NEW[table_index][lookup_f_index][0] == 1:
+                    fs, first_cond_eval = fs_receive_ef_inlined(fs, 1)
+                    pcs_values[table_index][0][first_cond_col].push(first_cond_eval)
+                if LOOKUPS_CONDITIONAL_IS_NEW[table_index][lookup_f_index][0] == 0:
+                    first_cond_eval = pcs_values[table_index][0][first_cond_col][0]
+                numerator_eval: Mut = one_minus_self_extension_ret(first_cond_eval)
+                for cond_idx in unroll(1, n_conds):
+                    cond_col = LOOKUPS_CONDITIONALS[table_index][lookup_f_index][cond_idx]
+                    cond_eval: Imu
+                    if LOOKUPS_CONDITIONAL_IS_NEW[table_index][lookup_f_index][cond_idx] == 1:
+                        fs, cond_eval = fs_receive_ef_inlined(fs, 1)
+                        pcs_values[table_index][0][cond_col].push(cond_eval)
+                    if LOOKUPS_CONDITIONAL_IS_NEW[table_index][lookup_f_index][cond_idx] == 0:
+                        cond_eval = pcs_values[table_index][0][cond_col][0]
+                    numerator_eval = sub_extension_ret(numerator_eval, cond_eval)
+                base_offset = offset - n_values * n_rows
+                for i in unroll(0, n_values):
+                    pref = multilinear_location_prefix((base_offset + i * n_rows) / n_rows, n_vars_logup_gkr - log_n_rows, point_gkr)
+                    retrieved_numerators_value = add_extension_ret(retrieved_numerators_value, mul_extension_ret(pref, numerator_eval))
 
     retrieved_denominators_value = add_extension_ret(
         retrieved_denominators_value,

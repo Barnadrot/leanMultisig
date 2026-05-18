@@ -17,7 +17,7 @@ use crate::bytecode_claims::reduce_bytecode_claims;
 use crate::compilation::{
     BYTECODE_CLAIM_OFFSET, MAX_RECURSIONS, PREAMBLE_MEMORY_LEN, TYPE2_FLAG, get_aggregation_bytecode,
 };
-use crate::type_1_aggregation::{TypeOneInfo, TypeOneMultiSignature, extract_merkle_hint_blobs, verify_type_1};
+use crate::type_1_aggregation::{TypeOneInfo, TypeOneMultiSignature, extract_merkle_leaf_blobs, verify_type_1};
 use crate::verify_inner;
 
 /// A bundle of `n` type-1 multi-signatures with potentially distinct (message, slot) per component, attested by a single snark.
@@ -123,8 +123,8 @@ pub fn merge_many_type_1(
         .iter()
         .map(|v| v.raw_proof.transcript.clone())
         .collect();
-    let (merkle_leaf_blobs, merkle_path_blobs) =
-        extract_merkle_hint_blobs(verified_children.iter().map(|v| &v.raw_proof));
+    let merkle_leaf_blobs =
+        extract_merkle_leaf_blobs(verified_children.iter().map(|v| &v.raw_proof));
 
     let mut hints: HashMap<String, Vec<Vec<F>>> = HashMap::new();
     hints.insert(
@@ -143,7 +143,6 @@ pub fn merge_many_type_1(
     );
     hints.insert("proof_transcript".to_string(), proof_transcript_blobs);
     hints.insert("merkle_leaf".to_string(), merkle_leaf_blobs);
-    hints.insert("merkle_path".to_string(), merkle_path_blobs);
     hints.insert(
         "bytecode_sumcheck_proof".to_string(),
         vec![reduced_claims.sumcheck_transcript],
@@ -217,8 +216,8 @@ pub fn split_type_2(
 
     let inner_input_data: Vec<F> = type_2.info[index].build_input_data();
 
-    let (merkle_leaf_blobs, merkle_path_blobs) =
-        extract_merkle_hint_blobs(std::slice::from_ref(&outer_verified.raw_proof));
+    let merkle_leaf_blobs =
+        extract_merkle_leaf_blobs(std::slice::from_ref(&outer_verified.raw_proof));
     let proof_transcript = outer_verified.raw_proof.transcript;
     let proof_transcript_size = vec![F::from_usize(proof_transcript.len())];
 
@@ -239,7 +238,6 @@ pub fn split_type_2(
     hints.insert("proof_transcript_size".to_string(), vec![proof_transcript_size]);
     hints.insert("proof_transcript".to_string(), vec![proof_transcript]);
     hints.insert("merkle_leaf".to_string(), merkle_leaf_blobs);
-    hints.insert("merkle_path".to_string(), merkle_path_blobs);
     hints.insert(
         "bytecode_sumcheck_proof".to_string(),
         vec![reduced_claims.sumcheck_transcript],

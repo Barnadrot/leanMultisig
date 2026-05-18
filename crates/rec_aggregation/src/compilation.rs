@@ -5,7 +5,7 @@ use lean_prover::{
     WHIR_SUBSEQUENT_FOLDING_FACTOR, default_whir_config,
 };
 use lean_vm::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::OnceLock;
 use sub_protocols::{N_VARS_TO_SEND_GKR_COEFFS, min_stacked_n_vars, total_whir_statements};
 use tracing::instrument;
@@ -272,20 +272,48 @@ fn build_replacements(inner_program_log_size: usize, bytecode_zero_eval: F) -> B
 
     let mut lookup_indexes_str = vec![];
     let mut lookup_values_str = vec![];
+    let mut lookup_index_is_new_str = vec![];
+    let mut lookup_address_offsets_str = vec![];
+    let mut lookup_conditionals_str = vec![];
+    let mut lookup_conditional_is_new_str = vec![];
     let mut num_cols_air = vec![];
     let mut air_degrees = vec![];
     let mut n_air_columns = vec![];
     let mut air_down_columns = vec![];
     for table in ALL_TABLES {
-        let this_look_f_indexes_str = table
-            .lookups()
+        let lookups = table.lookups();
+        let mut seen_cols: BTreeSet<usize> = BTreeSet::new();
+        let this_look_f_indexes_str = lookups
             .iter()
             .map(|lookup_f| lookup_f.index.to_string())
             .collect::<Vec<_>>();
         lookup_indexes_str.push(format!("[{}]", this_look_f_indexes_str.join(", ")));
+
+        let mut this_index_is_new = vec![];
+        let mut this_addr_offsets = vec![];
+        let mut this_conditionals = vec![];
+        let mut this_conditional_is_new = vec![];
+        for lookup_f in &lookups {
+            let is_new = if seen_cols.insert(lookup_f.index) { 1 } else { 0 };
+            this_index_is_new.push(is_new.to_string());
+            this_addr_offsets.push(lookup_f.address_offset.to_string());
+            let mut cond_cols = vec![];
+            let mut cond_is_new = vec![];
+            for &cond_col in &lookup_f.conditional_inactive {
+                cond_cols.push(cond_col.to_string());
+                let c_new = if seen_cols.insert(cond_col) { 1 } else { 0 };
+                cond_is_new.push(c_new.to_string());
+            }
+            this_conditionals.push(format!("[{}]", cond_cols.join(", ")));
+            this_conditional_is_new.push(format!("[{}]", cond_is_new.join(", ")));
+        }
+        lookup_index_is_new_str.push(format!("[{}]", this_index_is_new.join(", ")));
+        lookup_address_offsets_str.push(format!("[{}]", this_addr_offsets.join(", ")));
+        lookup_conditionals_str.push(format!("[{}]", this_conditionals.join(", ")));
+        lookup_conditional_is_new_str.push(format!("[{}]", this_conditional_is_new.join(", ")));
+
         num_cols_air.push(table.n_columns().to_string());
-        let this_lookup_f_values_str = table
-            .lookups()
+        let this_lookup_f_values_str = lookups
             .iter()
             .map(|lookup_f| {
                 format!(
@@ -319,6 +347,22 @@ fn build_replacements(inner_program_log_size: usize, bytecode_zero_eval: F) -> B
     replacements.insert(
         "LOOKUPS_VALUES_PLACEHOLDER".to_string(),
         format!("[{}]", lookup_values_str.join(", ")),
+    );
+    replacements.insert(
+        "LOOKUPS_INDEX_IS_NEW_PLACEHOLDER".to_string(),
+        format!("[{}]", lookup_index_is_new_str.join(", ")),
+    );
+    replacements.insert(
+        "LOOKUPS_ADDRESS_OFFSETS_PLACEHOLDER".to_string(),
+        format!("[{}]", lookup_address_offsets_str.join(", ")),
+    );
+    replacements.insert(
+        "LOOKUPS_CONDITIONALS_PLACEHOLDER".to_string(),
+        format!("[{}]", lookup_conditionals_str.join(", ")),
+    );
+    replacements.insert(
+        "LOOKUPS_CONDITIONAL_IS_NEW_PLACEHOLDER".to_string(),
+        format!("[{}]", lookup_conditional_is_new_str.join(", ")),
     );
     replacements.insert(
         "NUM_COLS_AIR_PLACEHOLDER".to_string(),
