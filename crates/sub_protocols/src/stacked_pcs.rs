@@ -129,16 +129,25 @@ pub fn stack_polynomials_and_commit(
     }
     offset += bytecode_slot;
 
+    let mut copy_tasks: Vec<(usize, usize, usize)> = Vec::new();
     for (table, log_n_rows) in &tables_heights_sorted {
         let n_rows = 1 << *log_n_rows;
         for col_index in 0..table.n_columns() {
             let col = &traces[table].columns[col_index];
-            global_polynomial[offset..][..n_rows].copy_from_slice(&col[..n_rows]);
+            copy_tasks.push((offset, n_rows, col.as_ptr() as usize));
             offset += n_rows;
         }
     }
     assert_eq!(log2_ceil_usize(offset), stacked_n_vars);
-    global_polynomial[offset..].fill(F::ZERO);
+    let tail_offset = offset;
+    let dst_base = global_polynomial.as_mut_ptr() as usize;
+    let total_len = global_polynomial.len();
+    copy_tasks.par_iter().for_each(|&(dst_offset, n, src_addr)| unsafe {
+        std::ptr::copy_nonoverlapping(src_addr as *const F, (dst_base as *mut F).add(dst_offset), n);
+    });
+    unsafe {
+        std::ptr::write_bytes((dst_base as *mut F).add(tail_offset), 0, total_len - tail_offset);
+    }
     tracing::info!(
         "{}",
         format!(
