@@ -932,57 +932,6 @@ fn eval_eq_with_packed_output_dual<F: Field, EF: ExtensionField<F>>(
     }
 }
 
-pub fn compute_eval_eq_packed_dual_tiled<EF>(
-    eval_a: &[EF],
-    eval_b: &[EF],
-    out: &mut [EF::ExtensionPacking],
-    scalar_a: EF,
-    scalar_b: EF,
-) where
-    EF: ExtensionField<PF<EF>>,
-{
-    let packing_width = packing_width::<EF>();
-    let log_packing_width = log2_strict_usize(packing_width);
-    let n = eval_a.len();
-    let n_packed = n - log_packing_width;
-
-    assert_eq!(eval_a.len(), eval_b.len());
-    assert!(log_packing_width <= n);
-    assert_eq!(out.len(), 1 << n_packed);
-
-    let k = LOG_BATCHED_TILE_SIZE;
-
-    if k >= n_packed {
-        compute_eval_eq_packed_dual(eval_a, eval_b, out, scalar_a, scalar_b);
-        return;
-    }
-
-    let n_prefix = n_packed - k;
-    let tile_packed_size = 1 << k;
-
-    let mut prefix_a: Vec<EF> = unsafe { uninitialized_vec(1 << n_prefix) };
-    eval_eq_basic::<PF<EF>, EF, EF, false>(&eval_a[..n_prefix], &mut prefix_a, scalar_a);
-
-    let mut prefix_b: Vec<EF> = unsafe { uninitialized_vec(1 << n_prefix) };
-    eval_eq_basic::<PF<EF>, EF, EF, false>(&eval_b[..n_prefix], &mut prefix_b, scalar_b);
-
-    let suffix_a = packed_eq_poly::<PF<EF>, EF>(&eval_a[n - log_packing_width..], EF::ONE);
-    let suffix_b = packed_eq_poly::<PF<EF>, EF>(&eval_b[n - log_packing_width..], EF::ONE);
-
-    let middle_a = &eval_a[n_prefix..n - log_packing_width];
-    let middle_b = &eval_b[n_prefix..n - log_packing_width];
-
-    out.par_chunks_exact_mut(tile_packed_size)
-        .enumerate()
-        .for_each(|(tile_idx, out_tile)| {
-            let scaled_a = suffix_a * prefix_a[tile_idx];
-            let scaled_b = suffix_b * prefix_b[tile_idx];
-            eval_eq_with_packed_output_dual::<PF<EF>, EF>(
-                middle_a, middle_b, out_tile, scaled_a, scaled_b,
-            );
-        });
-}
-
 pub fn compute_eval_eq_packed_dual<EF>(
     eval_a: &[EF],
     eval_b: &[EF],

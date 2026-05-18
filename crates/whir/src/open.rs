@@ -551,7 +551,7 @@ where
 
         if second_is_full_domain {
             let second = &statements[1];
-            compute_eval_eq_packed_dual_tiled::<EF>(
+            compute_eval_eq_packed_dual::<EF>(
                 &first.point.0,
                 &second.point.0,
                 &mut combined_weights,
