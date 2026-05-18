@@ -1,10 +1,8 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::*;
 use lean_vm::*;
 
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sub_protocols::*;
 use tracing::info_span;
@@ -89,54 +87,32 @@ pub fn prove_execution(
     table_log = table_log.trim_end_matches(" | ").to_string();
     tracing::info!("Trace tables sizes: {}", table_log.magenta());
 
-    let mut memory_acc = info_span!("Building memory access count").in_scope(|| {
-        let mem_len = memory.len();
-        let counts: Vec<AtomicU32> = (0..mem_len).map(|_| AtomicU32::new(0)).collect();
+    // TODO parrallelize
+    let mut memory_acc = F::zero_vec(memory.len());
+    info_span!("Building memory access count").in_scope(|| {
         for (table, trace) in &traces {
             for lookup in table.lookups() {
                 let inactive_cols: Vec<&[F]> = lookup.conditional_inactive.iter()
                     .map(|&col| &trace.columns[col][..])
                     .collect();
-                let index_col = &trace.columns[lookup.index];
-                let address_offset = lookup.address_offset;
-                let values_len = lookup.values.len();
-                index_col.par_iter().enumerate().for_each(|(row, i)| {
+                for (row, i) in trace.columns[lookup.index].iter().enumerate() {
                     if inactive_cols.iter().any(|col| col[row] == F::ONE) {
-                        return;
+                        continue;
                     }
-                    let base = i.to_usize() + address_offset;
-                    for j in 0..values_len {
-                        counts[base + j].fetch_add(1, Ordering::Relaxed);
+                    for j in 0..lookup.values.len() {
+                        memory_acc[i.to_usize() + lookup.address_offset + j] += F::ONE;
                     }
-                });
+                }
             }
         }
-        let mut acc = F::zero_vec(mem_len);
-        acc.par_iter_mut().enumerate().for_each(|(i, slot)| {
-            let c = counts[i].load(Ordering::Relaxed);
-            if c != 0 {
-                *slot = F::from_usize(c as usize);
-            }
-        });
-        acc
     });
 
-    let mut bytecode_acc = info_span!("Building bytecode access count").in_scope(|| {
-        let bc_len = bytecode.padded_size();
-        let counts: Vec<AtomicU32> = (0..bc_len).map(|_| AtomicU32::new(0)).collect();
-        traces[&Table::execution()].columns[COL_PC]
-            .par_iter()
-            .for_each(|pc| {
-                counts[pc.to_usize()].fetch_add(1, Ordering::Relaxed);
-            });
-        let mut acc = F::zero_vec(bc_len);
-        acc.par_iter_mut().enumerate().for_each(|(i, slot)| {
-            let c = counts[i].load(Ordering::Relaxed);
-            if c != 0 {
-                *slot = F::from_usize(c as usize);
-            }
-        });
-        acc
+    // // TODO parrallelize
+    let mut bytecode_acc = F::zero_vec(bytecode.padded_size());
+    info_span!("Building bytecode access count").in_scope(|| {
+        for pc in traces[&Table::execution()].columns[COL_PC].iter() {
+            bytecode_acc[pc.to_usize()] += F::ONE;
+        }
     });
 
     // 1st Commitment
