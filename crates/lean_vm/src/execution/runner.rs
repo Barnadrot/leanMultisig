@@ -7,7 +7,9 @@ use crate::execution::{ExecutionHistory, Memory};
 use crate::isa::Bytecode;
 use crate::isa::hint::{DiagnosticState, Hint, HintState, NamedHintCursor};
 use crate::isa::instruction::{InstructionContext, InstructionCounts};
-use crate::{ALL_TABLES, CodeAddress, HintExecutionContext, MemOrConstant, N_TABLES, STARTING_PC, Table, TableTrace};
+use crate::{
+    ALL_TABLES, CodeAddress, ENDING_PC, HintExecutionContext, MemOrConstant, N_TABLES, STARTING_PC, Table, TableTrace,
+};
 use backend::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use utils::{ToUsize, padd_with_zero_to_next_power_of_two};
@@ -129,7 +131,7 @@ fn run_loop<M: MemoryAccess>(
     let mut parallel_batch: Option<ParallelBatchInfo> = None;
 
     loop {
-        if *pc == bytecode.ending_pc {
+        if *pc == ENDING_PC {
             return Ok(LoopExit::Halted);
         }
         if *pc >= bytecode.code.len() {
@@ -301,7 +303,7 @@ fn execute_bytecode_helper(
     }
 
     resolve_deref_hints(&mut memory, &trace.pending_deref_hints);
-    assert_eq!(pc, bytecode.ending_pc);
+    assert_eq!(pc, ENDING_PC);
     for (name, cursor) in &named_hints {
         assert_eq!(
             cursor.index,

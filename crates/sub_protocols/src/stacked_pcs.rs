@@ -1,7 +1,7 @@
 use backend::*;
 use lean_vm::{
-    ALL_TABLES, COL_PC, CommittedStatements, MIN_LOG_MEMORY_SIZE, MIN_LOG_N_ROWS_PER_TABLE, N_INSTRUCTION_COLUMNS,
-    STARTING_PC, sort_tables_by_height,
+    ALL_TABLES, COL_PC, CommittedStatements, ENDING_PC, MIN_LOG_MEMORY_SIZE, MIN_LOG_N_ROWS_PER_TABLE,
+    N_INSTRUCTION_COLUMNS, STARTING_PC, sort_tables_by_height,
 };
 use lean_vm::{EF, F, Table, TableT, TableTrace};
 use std::collections::BTreeMap;
@@ -41,7 +41,6 @@ pub fn stacked_pcs_global_statements(
     stacked_n_vars: VarCount,
     memory_n_vars: VarCount,
     bytecode_n_vars: VarCount,
-    ending_pc: usize,
     previous_statements: Vec<SparseStatement<EF>>,
     tables_heights: &BTreeMap<Table, VarCount>,
     committed_statements: &CommittedStatements,
@@ -67,7 +66,7 @@ pub fn stacked_pcs_global_statements(
             global_statements.push(SparseStatement::unique_value(
                 stacked_n_vars,
                 offset + ((COL_PC + 1) << n_vars) - 1,
-                EF::from_usize(ending_pc),
+                EF::from_usize(ENDING_PC),
             ));
         }
         for (point, eq_values, next_values) in &committed_statements[&table] {
@@ -115,7 +114,8 @@ pub fn stack_polynomials_and_commit(
         log2_strict_usize(bytecode_acc.len()),
         &tables_heights_sorted.iter().cloned().collect(),
     );
-    let mut global_polynomial = F::zero_vec(1 << stacked_n_vars); // TODO avoid cloning all witness data
+    let total_len = 1 << stacked_n_vars;
+    let mut global_polynomial: Vec<F> = unsafe { uninitialized_vec(total_len) };
     global_polynomial[..memory.len()].copy_from_slice(memory);
     let mut offset = memory.len();
     global_polynomial[offset..][..memory_acc.len()].copy_from_slice(memory_acc);
@@ -123,17 +123,31 @@ pub fn stack_polynomials_and_commit(
 
     global_polynomial[offset..][..bytecode_acc.len()].copy_from_slice(bytecode_acc);
     let largest_table_height = 1 << tables_heights_sorted[0].1;
-    offset += largest_table_height.max(bytecode_acc.len()); // we may pad bytecode_acc to match largest table height
+    let bytecode_slot = largest_table_height.max(bytecode_acc.len());
+    if bytecode_slot > bytecode_acc.len() {
+        global_polynomial[offset + bytecode_acc.len()..offset + bytecode_slot].fill(F::ZERO);
+    }
+    offset += bytecode_slot;
 
+    let mut copy_tasks: Vec<(usize, usize, usize)> = Vec::new();
     for (table, log_n_rows) in &tables_heights_sorted {
         let n_rows = 1 << *log_n_rows;
         for col_index in 0..table.n_columns() {
             let col = &traces[table].columns[col_index];
-            global_polynomial[offset..][..n_rows].copy_from_slice(&col[..n_rows]);
+            copy_tasks.push((offset, n_rows, col.as_ptr() as usize));
             offset += n_rows;
         }
     }
     assert_eq!(log2_ceil_usize(offset), stacked_n_vars);
+    let tail_offset = offset;
+    let dst_base = global_polynomial.as_mut_ptr() as usize;
+    let total_len = global_polynomial.len();
+    copy_tasks.par_iter().for_each(|&(dst_offset, n, src_addr)| unsafe {
+        std::ptr::copy_nonoverlapping(src_addr as *const F, (dst_base as *mut F).add(dst_offset), n);
+    });
+    unsafe {
+        std::ptr::write_bytes((dst_base as *mut F).add(tail_offset), 0, total_len - tail_offset);
+    }
     tracing::info!(
         "{}",
         format!(
@@ -204,15 +218,25 @@ pub fn min_stacked_n_vars(log_bytecode: usize) -> usize {
 }
 
 pub fn total_whir_statements() -> usize {
+    use std::collections::BTreeSet;
     6 // memory + memory_acc + public_memory + bytecode_acc + pc_start + pc_end
      + ALL_TABLES
         .iter()
         .map(|table| {
             // AIR
-            table.n_columns()
-            + table.n_shift_columns()
-            // Lookups into memory
-            + table.lookups().iter().map(|lookup| 1 + lookup.values.len()).sum::<usize>()
+            let air_count = table.n_columns() + table.n_down_columns();
+            // Lookups into memory: count unique columns (index + values + conditionals)
+            let mut logup_cols = BTreeSet::new();
+            for lookup in table.lookups() {
+                logup_cols.insert(lookup.index);
+                for &v in &lookup.values {
+                    logup_cols.insert(v);
+                }
+                for &c in &lookup.conditional_inactive {
+                    logup_cols.insert(c);
+                }
+            }
+            air_count + logup_cols.len()
         })
         .sum::<usize>()
         // bytecode lookup

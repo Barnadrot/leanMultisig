@@ -249,25 +249,25 @@ impl<F: Field, T: Into<Self>> Product<T> for SymbolicExpression<F> {
 
 #[derive(Debug)]
 struct SymbolicAirBuilder<F: Field> {
-    flat: Vec<SymbolicExpression<F>>,
-    shift: Vec<SymbolicExpression<F>>,
+    up: Vec<SymbolicExpression<F>>,
+    down: Vec<SymbolicExpression<F>>,
     constraints: Vec<SymbolicExpression<F>>,
     bus_flag_value: Option<SymbolicExpression<F>>,
     bus_data_values: Option<Vec<SymbolicExpression<F>>>,
 }
 
 impl<F: Field> SymbolicAirBuilder<F> {
-    pub fn new(n_flat_columns: usize, n_shift_columns: usize) -> Self {
-        let flat = (0..n_flat_columns)
+    pub fn new(n_columns_up: usize, n_columns_down: usize) -> Self {
+        let up = (0..n_columns_up)
             .map(|i| SymbolicExpression::Variable(SymbolicVariable::new(i)))
             .collect();
-        let shift = (0..n_shift_columns)
-            .map(|i| SymbolicExpression::Variable(SymbolicVariable::new(n_flat_columns + i)))
+        let down = (0..n_columns_down)
+            .map(|i| SymbolicExpression::Variable(SymbolicVariable::new(n_columns_up + i)))
             .collect();
 
         Self {
-            flat,
-            shift,
+            up,
+            down,
             constraints: Vec::new(),
             bus_flag_value: None,
             bus_data_values: None,
@@ -284,12 +284,12 @@ impl<F: Field> AirBuilder for SymbolicAirBuilder<F> {
     type IF = SymbolicExpression<F>;
     type EF = SymbolicExpression<F>;
 
-    fn flat(&self) -> &[Self::IF] {
-        &self.flat
+    fn up(&self) -> &[Self::IF] {
+        &self.up
     }
 
-    fn shift(&self) -> &[Self::IF] {
-        &self.shift
+    fn down(&self) -> &[Self::IF] {
+        &self.down
     }
 
     fn assert_zero(&mut self, x: Self::IF) {
@@ -324,7 +324,7 @@ where
     // Clear the arena before building constraints
     ARENA.with(|arena| arena.borrow_mut().clear());
 
-    let mut builder = SymbolicAirBuilder::<F>::new(air.n_columns(), air.n_shift_columns());
+    let mut builder = SymbolicAirBuilder::<F>::new(air.n_columns(), air.n_down_columns());
     air.eval(&mut builder, &Default::default());
     (
         builder.constraints(),

@@ -147,7 +147,7 @@ pub fn verify_execution(
 
     let mut my_air_final_value = EF::ZERO;
     for vd in &verify_data {
-        let n_cols_total = vd.table.n_columns() + vd.table.n_shift_columns();
+        let n_cols_total = vd.table.n_columns() + vd.table.n_down_columns();
         let col_evals = verifier_state.next_extension_scalars_vec(n_cols_total)?;
 
         macro_rules! eval_constraint {
@@ -166,7 +166,7 @@ pub fn verify_execution(
         );
 
         macro_rules! split {
-            ($t:expr) => {{ columns_evals_flat_and_shift($t, &col_evals, &natural_ordering_point) }};
+            ($t:expr) => {{ columns_evals_up_and_down($t, &col_evals, &natural_ordering_point) }};
         }
         let claim = delegate_to_inner!(&vd.table => split);
 
@@ -209,7 +209,6 @@ pub fn verify_execution(
         parsed_commitment.num_variables,
         log_memory,
         bytecode.log_size(),
-        bytecode.ending_pc,
         previous_statements,
         &table_n_vars,
         &committed_statements,

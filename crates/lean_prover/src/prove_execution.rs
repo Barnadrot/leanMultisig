@@ -92,9 +92,15 @@ pub fn prove_execution(
     info_span!("Building memory access count").in_scope(|| {
         for (table, trace) in &traces {
             for lookup in table.lookups() {
-                for i in &trace.columns[lookup.index] {
+                let inactive_cols: Vec<&[F]> = lookup.conditional_inactive.iter()
+                    .map(|&col| &trace.columns[col][..])
+                    .collect();
+                for (row, i) in trace.columns[lookup.index].iter().enumerate() {
+                    if inactive_cols.iter().any(|col| col[row] == F::ONE) {
+                        continue;
+                    }
                     for j in 0..lookup.values.len() {
-                        memory_acc[i.to_usize() + j] += F::ONE;
+                        memory_acc[i.to_usize() + lookup.address_offset + j] += F::ONE;
                     }
                 }
             }
@@ -173,7 +179,7 @@ pub fn prove_execution(
     let shifted_rows: Vec<Vec<Vec<F>>> = tables_sorted
         .par_iter()
         .zip(&column_refs)
-        .map(|((table, _), cols)| compute_shifted_columns(table.n_shift_columns(), cols))
+        .map(|((table, _), cols)| compute_shifted_columns(&table.down_column_indexes(), cols))
         .collect();
     std::mem::drop(_span);
     let mut sessions = Vec::with_capacity(tables_sorted.len());
@@ -191,9 +197,9 @@ pub fn prove_execution(
 
         let extra_data = ExtraDataForBuses::new(logup_alphas_eq_poly.clone(), bus_beta, air_alpha_powers.clone());
 
-        let mut flat_and_shift: Vec<&[PF<EF>]> = column_refs[idx].to_vec();
-        flat_and_shift.extend(shifted_rows[idx].iter().map(Vec::as_slice));
-        let packed = MleGroupRef::<EF>::Base(flat_and_shift).pack();
+        let mut up_down: Vec<&[PF<EF>]> = column_refs[idx].to_vec();
+        up_down.extend(shifted_rows[idx].iter().map(Vec::as_slice));
+        let packed = MleGroupRef::<EF>::Base(up_down).pack();
 
         let non_padded = traces[table].non_padded_n_rows;
 
@@ -216,7 +222,7 @@ pub fn prove_execution(
         let natural_ordering_point =
             natural_ordering_point_for_session(&sumcheck_air_point.0, traces[table].log_n_rows);
         macro_rules! split {
-            ($t:expr) => {{ columns_evals_flat_and_shift($t, &col_evals, &natural_ordering_point) }};
+            ($t:expr) => {{ columns_evals_up_and_down($t, &col_evals, &natural_ordering_point) }};
         }
         let claim = delegate_to_inner!(table => split);
         committed_statements.get_mut(table).unwrap().push(claim);
@@ -253,7 +259,6 @@ pub fn prove_execution(
         stacked_pcs_witness.stacked_n_vars,
         log2_strict_usize(memory.len()),
         bytecode.log_size(),
-        bytecode.ending_pc,
         previous_statements,
         &tables_log_heights,
         &committed_statements,

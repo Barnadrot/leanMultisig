@@ -92,14 +92,20 @@ impl<const BUS: bool> TableT for ExtensionOpPrecompile<BUS> {
             LookupIntoMemory {
                 index: COL_IDX_A,
                 values: (COL_VA..COL_VA + DIMENSION).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
             },
             LookupIntoMemory {
                 index: COL_IDX_B,
                 values: (COL_VB..COL_VB + DIMENSION).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
             },
             LookupIntoMemory {
                 index: COL_IDX_RES,
                 values: (COL_VRES..COL_VRES + DIMENSION).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
             },
         ]
     }
@@ -122,7 +128,7 @@ impl<const BUS: bool> TableT for ExtensionOpPrecompile<BUS> {
         self.n_columns() + 2 // +2 for COL_ACTIVATION_FLAG and COL_AUX_EXTENSION_OP (non-AIR, used in bus logup)
     }
 
-    fn padding_row(&self, zero_vec_ptr: usize, _null_hash_ptr: usize, _ending_pc: usize) -> Vec<F> {
+    fn padding_row(&self, zero_vec_ptr: usize, _null_hash_ptr: usize) -> Vec<F> {
         let mut row = vec![F::ZERO; self.n_columns_total()];
         row[COL_START] = F::ONE;
         row[COL_LEN] = F::ONE;
