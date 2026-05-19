@@ -57,3 +57,20 @@ impl Permutation<[koala_bear::PackedKoalaBearAVX2; WIDTH]> for Blake3Permutation
         }
     }
 }
+
+#[cfg(target_arch = "aarch64")]
+impl Permutation<[koala_bear::PackedMontyField31Neon<koala_bear::KoalaBearParameters>; WIDTH]> for Blake3Permutation {
+    fn permute_mut(&self, state: &mut [koala_bear::PackedMontyField31Neon<koala_bear::KoalaBearParameters>; WIDTH]) {
+        type P = koala_bear::PackedMontyField31Neon<koala_bear::KoalaBearParameters>;
+        let lanes = <P as field::PackedValue>::WIDTH;
+        let mut scalar_states: Vec<[KoalaBear; WIDTH]> = (0..lanes)
+            .map(|lane| std::array::from_fn(|i| state[i].as_slice()[lane]))
+            .collect();
+        for s in &mut scalar_states {
+            Permutation::<[KoalaBear; WIDTH]>::permute_mut(self, s);
+        }
+        for i in 0..WIDTH {
+            state[i] = P::from_fn(|lane| scalar_states[lane][i]);
+        }
+    }
+}
