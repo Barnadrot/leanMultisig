@@ -8,9 +8,16 @@ use crate::{
     *,
 };
 use field::PrimeCharacteristicRing;
-use field::{ExtensionField, PrimeField64};
+use field::{ExtensionField, PrimeField32, PrimeField64};
 use koala_bear::symmetric::Permutation;
 use koala_bear::{KoalaBear, default_koalabear_poseidon1_16};
+
+fn blake3_digest_to_field(hash_bytes: &[u8; 32]) -> [KoalaBear; DIGEST_LEN_FE] {
+    std::array::from_fn(|j| {
+        let val = u32::from_le_bytes(hash_bytes[j * 4..j * 4 + 4].try_into().unwrap());
+        KoalaBear::new(val % KoalaBear::ORDER_U32)
+    })
+}
 
 pub struct VerifierState<EF: ExtensionField<PF<EF>>, P> {
     challenger: Challenger<PF<EF>, P>,
@@ -71,12 +78,33 @@ where
         assert_eq!(TypeId::of::<PF<EF>>(), TypeId::of::<KoalaBear>());
         // SAFETY: We've confirmed PF<EF> == KoalaBear
         let paths: PrunedMerklePaths<KoalaBear, KoalaBear> = unsafe { std::mem::transmute(paths) };
-        let perm = default_koalabear_poseidon1_16();
-        let hash_fn = |data: &[KoalaBear]| symetric::hash_slice::<_, _, 16, 8, DIGEST_LEN_FE>(&perm, data);
-        let combine_fn = |left: &[KoalaBear; DIGEST_LEN_FE], right: &[KoalaBear; DIGEST_LEN_FE]| {
-            symetric::compress(&perm, [*left, *right])
+
+        let restored: MerklePaths<KoalaBear, KoalaBear> = if symetric::use_blake3_merkle() {
+            let hash_fn = |data: &[KoalaBear]| -> [KoalaBear; DIGEST_LEN_FE] {
+                let bytes: &[u8] =
+                    unsafe { std::slice::from_raw_parts(data.as_ptr().cast::<u8>(), data.len() * 4) };
+                let hash = blake3::hash(bytes);
+                blake3_digest_to_field(hash.as_bytes())
+            };
+            let combine_fn = |left: &[KoalaBear; DIGEST_LEN_FE], right: &[KoalaBear; DIGEST_LEN_FE]| -> [KoalaBear; DIGEST_LEN_FE] {
+                let left_bytes: &[u8; DIGEST_LEN_FE * 4] = unsafe { &*(left as *const _ as *const _) };
+                let right_bytes: &[u8; DIGEST_LEN_FE * 4] = unsafe { &*(right as *const _ as *const _) };
+                let mut buf = [0u8; DIGEST_LEN_FE * 2 * 4];
+                buf[..DIGEST_LEN_FE * 4].copy_from_slice(left_bytes);
+                buf[DIGEST_LEN_FE * 4..].copy_from_slice(right_bytes);
+                let hash = blake3::hash(&buf);
+                blake3_digest_to_field(hash.as_bytes())
+            };
+            paths.restore(&hash_fn, &combine_fn)?
+        } else {
+            let perm = default_koalabear_poseidon1_16();
+            let hash_fn = |data: &[KoalaBear]| symetric::hash_slice::<_, _, 16, 8, DIGEST_LEN_FE>(&perm, data);
+            let combine_fn = |left: &[KoalaBear; DIGEST_LEN_FE], right: &[KoalaBear; DIGEST_LEN_FE]| {
+                symetric::compress(&perm, [*left, *right])
+            };
+            paths.restore(&hash_fn, &combine_fn)?
         };
-        let restored: MerklePaths<KoalaBear, KoalaBear> = paths.restore(&hash_fn, &combine_fn)?;
+
         let openings: Vec<MerkleOpening<KoalaBear>> = restored
             .0
             .into_iter()

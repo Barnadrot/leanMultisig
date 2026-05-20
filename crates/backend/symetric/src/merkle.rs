@@ -34,6 +34,26 @@ impl<F: Clone + Copy + Default + Send + Sync, const DIGEST_ELEMS: usize> MerkleT
         Self { digest_layers }
     }
 
+    pub fn from_first_layer_with_fn(
+        first_layer: Vec<[F; DIGEST_ELEMS]>,
+        compress_fn: &(impl Fn([F; DIGEST_ELEMS], [F; DIGEST_ELEMS]) -> [F; DIGEST_ELEMS] + Sync),
+    ) -> Self {
+        let mut digest_layers = vec![first_layer];
+        loop {
+            let prev_layer = digest_layers.last().unwrap();
+            if prev_layer.len() == 1 {
+                break;
+            }
+            let next_len = prev_layer.len() / 2;
+            let next: Vec<_> = (0..next_len)
+                .into_par_iter()
+                .map(|i| compress_fn(prev_layer[2 * i], prev_layer[2 * i + 1]))
+                .collect();
+            digest_layers.push(next);
+        }
+        Self { digest_layers }
+    }
+
     #[must_use]
     pub fn root(&self) -> [F; DIGEST_ELEMS] {
         self.digest_layers.last().unwrap()[0]

@@ -8,12 +8,14 @@ use field::BasedVectorSpace;
 use field::ExtensionField;
 use field::Field;
 use field::PackedValue;
+use field::PrimeField32;
 use koala_bear::{KoalaBear, QuinticExtensionFieldKB, default_koalabear_poseidon1_16};
 use poly::*;
 
 use rayon::prelude::*;
 use symetric::Compression;
 use symetric::merkle::unpack_array;
+use symetric::use_blake3_merkle;
 use tracing::instrument;
 use utils::log2_ceil_usize;
 
@@ -21,6 +23,86 @@ use crate::DenseMatrix;
 use crate::Dimensions;
 use crate::Matrix;
 pub use symetric::DIGEST_ELEMS;
+pub use symetric::set_use_blake3_merkle;
+
+fn blake3_digest_to_field(hash_bytes: &[u8; 32]) -> [KoalaBear; DIGEST_ELEMS] {
+    std::array::from_fn(|j| {
+        let val = u32::from_le_bytes(hash_bytes[j * 4..j * 4 + 4].try_into().unwrap());
+        KoalaBear::new(val % KoalaBear::ORDER_U32)
+    })
+}
+
+fn blake3_leaf_hash(row: &[KoalaBear], full_base_width: usize) -> [KoalaBear; DIGEST_ELEMS] {
+    let row_bytes: &[u8] =
+        unsafe { std::slice::from_raw_parts(row.as_ptr() as *const u8, row.len() * 4) };
+    let padding_bytes = (full_base_width - row.len()) * 4;
+    let hash = if padding_bytes == 0 {
+        blake3::hash(row_bytes)
+    } else {
+        let byte_len = full_base_width * 4;
+        const STACK_LIMIT: usize = 4096;
+        if byte_len <= STACK_LIMIT {
+            let mut buf = [0u8; STACK_LIMIT];
+            buf[..row_bytes.len()].copy_from_slice(row_bytes);
+            blake3::hash(&buf[..byte_len])
+        } else {
+            let mut buf = vec![0u8; byte_len];
+            buf[..row_bytes.len()].copy_from_slice(row_bytes);
+            blake3::hash(&buf)
+        }
+    };
+    blake3_digest_to_field(hash.as_bytes())
+}
+
+fn blake3_compress_internal(left: [KoalaBear; DIGEST_ELEMS], right: [KoalaBear; DIGEST_ELEMS]) -> [KoalaBear; DIGEST_ELEMS] {
+    let left_bytes: &[u8; DIGEST_ELEMS * 4] = unsafe { &*(&left as *const _ as *const _) };
+    let right_bytes: &[u8; DIGEST_ELEMS * 4] = unsafe { &*(&right as *const _ as *const _) };
+    let mut buf = [0u8; DIGEST_ELEMS * 2 * 4];
+    buf[..DIGEST_ELEMS * 4].copy_from_slice(left_bytes);
+    buf[DIGEST_ELEMS * 4..].copy_from_slice(right_bytes);
+    let hash = blake3::hash(&buf);
+    blake3_digest_to_field(hash.as_bytes())
+}
+
+#[instrument(name = "first digest layer (blake3)", level = "debug", skip_all)]
+fn first_digest_layer_blake3(
+    matrix: &DenseMatrix<KoalaBear>,
+    full_base_width: usize,
+) -> Vec<[KoalaBear; DIGEST_ELEMS]> {
+    let height = matrix.height();
+    let matrix_width = matrix.width();
+    let mut digests = vec![[KoalaBear::default(); DIGEST_ELEMS]; height];
+
+    digests.par_iter_mut().enumerate().for_each(|(i, digest)| {
+        let row_slice = unsafe { matrix.row_subslice_unchecked(i, 0, matrix_width) };
+        *digest = blake3_leaf_hash(&row_slice, full_base_width);
+    });
+
+    digests
+}
+
+fn merkle_verify_blake3(
+    commit: &[KoalaBear; DIGEST_ELEMS],
+    log_height: usize,
+    mut index: usize,
+    opened_values: &[KoalaBear],
+    opening_proof: &[[KoalaBear; DIGEST_ELEMS]],
+) -> bool {
+    if opening_proof.len() != log_height {
+        return false;
+    }
+    let mut root = blake3_leaf_hash(opened_values, opened_values.len());
+    for &sibling in opening_proof.iter() {
+        let (left, right) = if index & 1 == 0 {
+            (root, sibling)
+        } else {
+            (sibling, root)
+        };
+        root = blake3_compress_internal(left, right);
+        index >>= 1;
+    }
+    commit == &root
+}
 
 pub(crate) type RoundMerkleTree<F> = WhirMerkleTree<F, DenseMatrix<F>, DIGEST_ELEMS>;
 
@@ -61,6 +143,15 @@ fn build_merkle_tree_koalabear(
     full_base_width: usize,
     effective_base_width: usize,
 ) -> RoundMerkleTree<KoalaBear> {
+    if use_blake3_merkle() {
+        let first_layer = first_digest_layer_blake3(&leaf, full_base_width);
+        let tree = symetric::merkle::MerkleTree::from_first_layer_with_fn(first_layer, &blake3_compress_internal);
+        return WhirMerkleTree {
+            leaf,
+            tree,
+            full_leaf_base_width: full_base_width,
+        };
+    }
     let perm = default_koalabear_poseidon1_16();
     let n_zero_suffix_rate_chunks = (full_base_width - effective_base_width) / 8;
     let first_layer = if n_zero_suffix_rate_chunks >= 2 {
@@ -119,8 +210,25 @@ pub(crate) fn merkle_verify<F: Field, EF: ExtensionField<F>>(
     data: Vec<EF>,
     proof: &Vec<[F; DIGEST_ELEMS]>,
 ) -> bool {
-    let perm = default_koalabear_poseidon1_16();
     let log_max_height = utils::log2_strict_usize(dimension.height.next_power_of_two());
+    if use_blake3_merkle() {
+        if TypeId::of::<(F, EF)>() == TypeId::of::<(KoalaBear, QuinticExtensionFieldKB)>() {
+            let merkle_root = unsafe { std::mem::transmute_copy::<_, [KoalaBear; DIGEST_ELEMS]>(&merkle_root) };
+            let data = unsafe { std::mem::transmute::<_, Vec<QuinticExtensionFieldKB>>(data) };
+            let proof = unsafe { std::mem::transmute::<_, &Vec<[KoalaBear; DIGEST_ELEMS]>>(proof) };
+            let base_data = QuinticExtensionFieldKB::flatten_to_base(data);
+            return merkle_verify_blake3(&merkle_root, log_max_height, index, &base_data, proof);
+        } else if TypeId::of::<(F, EF)>() == TypeId::of::<(KoalaBear, KoalaBear)>() {
+            let merkle_root = unsafe { std::mem::transmute_copy::<_, [KoalaBear; DIGEST_ELEMS]>(&merkle_root) };
+            let data = unsafe { std::mem::transmute::<_, Vec<KoalaBear>>(data) };
+            let proof = unsafe { std::mem::transmute::<_, &Vec<[KoalaBear; DIGEST_ELEMS]>>(proof) };
+            let base_data = KoalaBear::flatten_to_base(data);
+            return merkle_verify_blake3(&merkle_root, log_max_height, index, &base_data, proof);
+        } else {
+            unimplemented!()
+        }
+    }
+    let perm = default_koalabear_poseidon1_16();
     if TypeId::of::<(F, EF)>() == TypeId::of::<(KoalaBear, QuinticExtensionFieldKB)>() {
         let merkle_root = unsafe { std::mem::transmute_copy::<_, [KoalaBear; DIGEST_ELEMS]>(&merkle_root) };
         let data = unsafe { std::mem::transmute::<_, Vec<QuinticExtensionFieldKB>>(data) };
