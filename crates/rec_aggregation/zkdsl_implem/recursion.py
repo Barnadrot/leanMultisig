@@ -181,68 +181,27 @@ def recursion(inner_public_memory, bytecode_hash_domsep):
     offset += two_exp(log_bytecode_padded)
 
     # Dispatch based on table height ordering (sorted by descending height)
-    if maximum(table_log_heights[1], table_log_heights[2]) == table_log_heights[1]:
-        continue_recursion_ordered(
-            1,
-            2,
-            fs,
-            offset,
-            retrieved_numerators_value,
-            retrieved_denominators_value,
-            table_heights,
-            table_log_heights,
-            point_gkr,
-            n_vars_logup_gkr,
-            logup_alphas_eq_poly,
-            logup_c,
-            numerators_value,
-            denominators_value,
-            log_memory,
-            inner_public_memory,
-            stacked_n_vars,
-            whir_log_inv_rate,
-            whir_base_root,
-            whir_base_ood_points,
-            whir_base_ood_evals,
-            num_ood_at_commitment,
-            log_n_cycles,
-            log_bytecode_padded,
-            bytecode_and_acc_point,
-            value_memory,
-            value_acc,
-            value_bytecode_acc,
-        )
+    # 3 non-execution tables: indices 1, 2, 3. Sort descending by height.
+    # 6 permutations handled via nested comparisons.
+    h1 = table_log_heights[1]
+    h2 = table_log_heights[2]
+    h3 = table_log_heights[3]
+    if maximum(h1, maximum(h2, h3)) == h1:
+        if maximum(h2, h3) == h2:
+            continue_recursion_ordered(1, 2, 3, fs, offset, retrieved_numerators_value, retrieved_denominators_value, table_heights, table_log_heights, point_gkr, n_vars_logup_gkr, logup_alphas_eq_poly, logup_c, numerators_value, denominators_value, log_memory, inner_public_memory, stacked_n_vars, whir_log_inv_rate, whir_base_root, whir_base_ood_points, whir_base_ood_evals, num_ood_at_commitment, log_n_cycles, log_bytecode_padded, bytecode_and_acc_point, value_memory, value_acc, value_bytecode_acc)
+        else:
+            continue_recursion_ordered(1, 3, 2, fs, offset, retrieved_numerators_value, retrieved_denominators_value, table_heights, table_log_heights, point_gkr, n_vars_logup_gkr, logup_alphas_eq_poly, logup_c, numerators_value, denominators_value, log_memory, inner_public_memory, stacked_n_vars, whir_log_inv_rate, whir_base_root, whir_base_ood_points, whir_base_ood_evals, num_ood_at_commitment, log_n_cycles, log_bytecode_padded, bytecode_and_acc_point, value_memory, value_acc, value_bytecode_acc)
     else:
-        continue_recursion_ordered(
-            2,
-            1,
-            fs,
-            offset,
-            retrieved_numerators_value,
-            retrieved_denominators_value,
-            table_heights,
-            table_log_heights,
-            point_gkr,
-            n_vars_logup_gkr,
-            logup_alphas_eq_poly,
-            logup_c,
-            numerators_value,
-            denominators_value,
-            log_memory,
-            inner_public_memory,
-            stacked_n_vars,
-            whir_log_inv_rate,
-            whir_base_root,
-            whir_base_ood_points,
-            whir_base_ood_evals,
-            num_ood_at_commitment,
-            log_n_cycles,
-            log_bytecode_padded,
-            bytecode_and_acc_point,
-            value_memory,
-            value_acc,
-            value_bytecode_acc,
-        )
+        if maximum(h1, maximum(h2, h3)) == h2:
+            if maximum(h1, h3) == h1:
+                continue_recursion_ordered(2, 1, 3, fs, offset, retrieved_numerators_value, retrieved_denominators_value, table_heights, table_log_heights, point_gkr, n_vars_logup_gkr, logup_alphas_eq_poly, logup_c, numerators_value, denominators_value, log_memory, inner_public_memory, stacked_n_vars, whir_log_inv_rate, whir_base_root, whir_base_ood_points, whir_base_ood_evals, num_ood_at_commitment, log_n_cycles, log_bytecode_padded, bytecode_and_acc_point, value_memory, value_acc, value_bytecode_acc)
+            else:
+                continue_recursion_ordered(2, 3, 1, fs, offset, retrieved_numerators_value, retrieved_denominators_value, table_heights, table_log_heights, point_gkr, n_vars_logup_gkr, logup_alphas_eq_poly, logup_c, numerators_value, denominators_value, log_memory, inner_public_memory, stacked_n_vars, whir_log_inv_rate, whir_base_root, whir_base_ood_points, whir_base_ood_evals, num_ood_at_commitment, log_n_cycles, log_bytecode_padded, bytecode_and_acc_point, value_memory, value_acc, value_bytecode_acc)
+        else:
+            if maximum(h1, h2) == h1:
+                continue_recursion_ordered(3, 1, 2, fs, offset, retrieved_numerators_value, retrieved_denominators_value, table_heights, table_log_heights, point_gkr, n_vars_logup_gkr, logup_alphas_eq_poly, logup_c, numerators_value, denominators_value, log_memory, inner_public_memory, stacked_n_vars, whir_log_inv_rate, whir_base_root, whir_base_ood_points, whir_base_ood_evals, num_ood_at_commitment, log_n_cycles, log_bytecode_padded, bytecode_and_acc_point, value_memory, value_acc, value_bytecode_acc)
+            else:
+                continue_recursion_ordered(3, 2, 1, fs, offset, retrieved_numerators_value, retrieved_denominators_value, table_heights, table_log_heights, point_gkr, n_vars_logup_gkr, logup_alphas_eq_poly, logup_c, numerators_value, denominators_value, log_memory, inner_public_memory, stacked_n_vars, whir_log_inv_rate, whir_base_root, whir_base_ood_points, whir_base_ood_evals, num_ood_at_commitment, log_n_cycles, log_bytecode_padded, bytecode_and_acc_point, value_memory, value_acc, value_bytecode_acc)
 
     return bytecode_claim
 
@@ -251,6 +210,7 @@ def recursion(inner_public_memory, bytecode_hash_domsep):
 def continue_recursion_ordered(
     second_table,
     third_table,
+    fourth_table,
     fs,
     offset,
     retrieved_numerators_value,
@@ -303,6 +263,8 @@ def continue_recursion_ordered(
             table_index = second_table
         if sorted_pos == 2:
             table_index = third_table
+        if sorted_pos == 3:
+            table_index = fourth_table
         # I] Bus (data flow between tables)
 
         log_n_rows = table_log_heights[table_index]
@@ -421,6 +383,8 @@ def continue_recursion_ordered(
             table_index = second_table
         if sorted_pos == 2:
             table_index = third_table
+        if sorted_pos == 3:
+            table_index = fourth_table
         bus_numerator_value = bus_numerators_values[sorted_pos]
         bus_denominator_value = bus_denominators_values[sorted_pos]
 
@@ -446,6 +410,8 @@ def continue_recursion_ordered(
             table_index = second_table
         if sorted_pos == 2:
             table_index = third_table
+        if sorted_pos == 3:
+            table_index = fourth_table
         log_n_rows = table_log_heights[table_index]
         total_num_cols = NUM_COLS_AIR[table_index]
         n_up_columns = N_AIR_COLUMNS[table_index]
@@ -519,6 +485,8 @@ def continue_recursion_ordered(
             table_index = second_table
         if sorted_pos == 2:
             table_index = third_table
+        if sorted_pos == 3:
+            table_index = fourth_table
         debug_assert(len(pcs_points[table_index]) == len(pcs_values[table_index]))
         for i in unroll(0, len(pcs_values[table_index])):
             # next_mle-weighted (down) values come first
@@ -633,6 +601,8 @@ def continue_recursion_ordered(
             table_index = second_table
         if sorted_pos == 2:
             table_index = third_table
+        if sorted_pos == 3:
+            table_index = fourth_table
         log_n_rows = table_log_heights[table_index]
         n_rows = table_heights[table_index]
         total_num_cols = NUM_COLS_AIR[table_index]
@@ -806,6 +776,8 @@ def evaluate_air_constraints(table_index, inner_evals, air_alpha_powers, bus_bet
             res = evaluate_air_constraints_table_1(inner_evals, air_alpha_powers, bus_beta, logup_alphas_eq_poly)
         case 2:
             res = evaluate_air_constraints_table_2(inner_evals, air_alpha_powers, bus_beta, logup_alphas_eq_poly)
+        case 3:
+            res = evaluate_air_constraints_table_3(inner_evals, air_alpha_powers, bus_beta, logup_alphas_eq_poly)
     return res
 
 

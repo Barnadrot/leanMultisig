@@ -75,6 +75,7 @@ pub enum PrecompileCompTimeArgs<S> {
         size: S,
         mode: ExtensionOpMode,
     },
+    Blake3Compress,
 }
 
 impl<S> PrecompileCompTimeArgs<S> {
@@ -82,6 +83,7 @@ impl<S> PrecompileCompTimeArgs<S> {
         match self {
             Self::Poseidon16 { .. } => Table::poseidon16(),
             Self::ExtensionOp { .. } => Table::extension_op(),
+            Self::Blake3Compress => Table::blake3(),
         }
     }
 
@@ -97,6 +99,7 @@ impl<S> PrecompileCompTimeArgs<S> {
                 permute,
             },
             Self::ExtensionOp { size, mode } => PrecompileCompTimeArgs::ExtensionOp { size: f(size), mode },
+            Self::Blake3Compress => PrecompileCompTimeArgs::Blake3Compress,
         }
     }
 }
@@ -277,6 +280,9 @@ impl<V: Display, S: Display> Display for PrecompileArgs<V, S> {
             }
             PrecompileCompTimeArgs::ExtensionOp { size, mode } => {
                 write!(f, "{}({arg_0}, {arg_1}, {res}, {size})", mode.name())
+            }
+            PrecompileCompTimeArgs::Blake3Compress => {
+                write!(f, "blake3_compress({arg_0}, {arg_1}, {res})")
             }
         }
     }

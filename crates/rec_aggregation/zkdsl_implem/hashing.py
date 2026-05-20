@@ -54,9 +54,9 @@ def batch_hash_slice_rtl_const(num_queries, all_data_to_hash, all_resulting_hash
 def slice_hash_rtl(data, num_chunks):
     states = Array((num_chunks - 1) * DIGEST_LEN)
 
-    poseidon16_compress(data + (num_chunks - 2) * DIGEST_LEN, data + (num_chunks - 1) * DIGEST_LEN, states)
+    blake3_compress(data + (num_chunks - 2) * DIGEST_LEN, data + (num_chunks - 1) * DIGEST_LEN, states)
     for j in unroll(1, num_chunks - 1):
-        poseidon16_compress(states + (j - 1) * DIGEST_LEN, data + (num_chunks - 2 - j) * DIGEST_LEN, states + j * DIGEST_LEN)
+        blake3_compress(states + (j - 1) * DIGEST_LEN, data + (num_chunks - 2 - j) * DIGEST_LEN, states + j * DIGEST_LEN)
     return states + (num_chunks - 2) * DIGEST_LEN
 
 
@@ -124,24 +124,24 @@ def whir_do_4_merkle_levels(b, state_in, path_chunk, state_out):
     temps = Array(3 * DIGEST_LEN)
 
     if b0 == 0:
-        poseidon16_compress(state_in, path_chunk, temps)
+        blake3_compress(state_in, path_chunk, temps)
     else:
-        poseidon16_compress(path_chunk, state_in, temps)
+        blake3_compress(path_chunk, state_in, temps)
 
     if b1 == 0:
-        poseidon16_compress(temps, path_chunk + DIGEST_LEN, temps + DIGEST_LEN)
+        blake3_compress(temps, path_chunk + DIGEST_LEN, temps + DIGEST_LEN)
     else:
-        poseidon16_compress(path_chunk + DIGEST_LEN, temps, temps + DIGEST_LEN)
+        blake3_compress(path_chunk + DIGEST_LEN, temps, temps + DIGEST_LEN)
 
     if b2 == 0:
-        poseidon16_compress(temps + DIGEST_LEN, path_chunk + 2 * DIGEST_LEN, temps + 2 * DIGEST_LEN)
+        blake3_compress(temps + DIGEST_LEN, path_chunk + 2 * DIGEST_LEN, temps + 2 * DIGEST_LEN)
     else:
-        poseidon16_compress(path_chunk + 2 * DIGEST_LEN, temps + DIGEST_LEN, temps + 2 * DIGEST_LEN)
+        blake3_compress(path_chunk + 2 * DIGEST_LEN, temps + DIGEST_LEN, temps + 2 * DIGEST_LEN)
 
     if b3 == 0:
-        poseidon16_compress(temps + 2 * DIGEST_LEN, path_chunk + 3 * DIGEST_LEN, state_out)
+        blake3_compress(temps + 2 * DIGEST_LEN, path_chunk + 3 * DIGEST_LEN, state_out)
     else:
-        poseidon16_compress(path_chunk + 3 * DIGEST_LEN, temps + 2 * DIGEST_LEN, state_out)
+        blake3_compress(path_chunk + 3 * DIGEST_LEN, temps + 2 * DIGEST_LEN, state_out)
     return
 
 
@@ -156,19 +156,19 @@ def whir_do_3_merkle_levels(b, state_in, path_chunk, state_out):
     temps = Array(2 * DIGEST_LEN)
 
     if b0 == 0:
-        poseidon16_compress(state_in, path_chunk, temps)
+        blake3_compress(state_in, path_chunk, temps)
     else:
-        poseidon16_compress(path_chunk, state_in, temps)
+        blake3_compress(path_chunk, state_in, temps)
 
     if b1 == 0:
-        poseidon16_compress(temps, path_chunk + DIGEST_LEN, temps + DIGEST_LEN)
+        blake3_compress(temps, path_chunk + DIGEST_LEN, temps + DIGEST_LEN)
     else:
-        poseidon16_compress(path_chunk + DIGEST_LEN, temps, temps + DIGEST_LEN)
+        blake3_compress(path_chunk + DIGEST_LEN, temps, temps + DIGEST_LEN)
 
     if b2 == 0:
-        poseidon16_compress(temps + DIGEST_LEN, path_chunk + 2 * DIGEST_LEN, state_out)
+        blake3_compress(temps + DIGEST_LEN, path_chunk + 2 * DIGEST_LEN, state_out)
     else:
-        poseidon16_compress(path_chunk + 2 * DIGEST_LEN, temps + DIGEST_LEN, state_out)
+        blake3_compress(path_chunk + 2 * DIGEST_LEN, temps + DIGEST_LEN, state_out)
     return
 
 
@@ -181,14 +181,14 @@ def whir_do_2_merkle_levels(b, state_in, path_chunk, state_out):
     temp = Array(DIGEST_LEN)
 
     if b0 == 0:
-        poseidon16_compress(state_in, path_chunk, temp)
+        blake3_compress(state_in, path_chunk, temp)
     else:
-        poseidon16_compress(path_chunk, state_in, temp)
+        blake3_compress(path_chunk, state_in, temp)
 
     if b1 == 0:
-        poseidon16_compress(temp, path_chunk + DIGEST_LEN, state_out)
+        blake3_compress(temp, path_chunk + DIGEST_LEN, state_out)
     else:
-        poseidon16_compress(path_chunk + DIGEST_LEN, temp, state_out)
+        blake3_compress(path_chunk + DIGEST_LEN, temp, state_out)
     return
 
 
@@ -197,9 +197,9 @@ def whir_do_1_merkle_level(b, state_in, path_chunk, state_out):
     b0 = b % 2
 
     if b0 == 0:
-        poseidon16_compress(state_in, path_chunk, state_out)
+        blake3_compress(state_in, path_chunk, state_out)
     else:
-        poseidon16_compress(path_chunk, state_in, state_out)
+        blake3_compress(path_chunk, state_in, state_out)
     return
 
 
@@ -244,22 +244,22 @@ def merkle_verify(leaf_digest, merkle_path, leaf_position_bits, root, height: Co
     # First merkle round
     match leaf_position_bits[0]:
         case 0:
-            poseidon16_compress(leaf_digest, merkle_path, states)
+            blake3_compress(leaf_digest, merkle_path, states)
         case 1:
-            poseidon16_compress(merkle_path, leaf_digest, states)
+            blake3_compress(merkle_path, leaf_digest, states)
 
     # Remaining merkle rounds
     for j in unroll(1, height):
         # Warning: this works only if leaf_position_bits[i] is known to be boolean:
         match leaf_position_bits[j]:
             case 0:
-                poseidon16_compress(
+                blake3_compress(
                     states + (j - 1) * DIGEST_LEN,
                     merkle_path + j * DIGEST_LEN,
                     states + j * DIGEST_LEN,
                 )
             case 1:
-                poseidon16_compress(
+                blake3_compress(
                     merkle_path + j * DIGEST_LEN,
                     states + (j - 1) * DIGEST_LEN,
                     states + j * DIGEST_LEN,

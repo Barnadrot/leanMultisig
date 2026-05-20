@@ -1319,6 +1319,7 @@ name = "utils"
 version = "0.1.0"
 dependencies = [
  "backend",
+ "blake3",
  "rand",
  "tracing",
  "tracing-forest",

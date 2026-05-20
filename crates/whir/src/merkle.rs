@@ -31,25 +31,29 @@ fn blake3_digest_to_field(hash_bytes: &[u8; 32]) -> [KoalaBear; DIGEST_ELEMS] {
 }
 
 fn blake3_leaf_hash(row: &[KoalaBear], full_base_width: usize) -> [KoalaBear; DIGEST_ELEMS] {
-    let row_bytes: &[u8] =
-        unsafe { std::slice::from_raw_parts(row.as_ptr() as *const u8, row.len() * 4) };
-    let padding_bytes = (full_base_width - row.len()) * 4;
-    let hash = if padding_bytes == 0 {
-        blake3::hash(row_bytes)
-    } else {
-        let byte_len = full_base_width * 4;
-        const STACK_LIMIT: usize = 4096;
-        if byte_len <= STACK_LIMIT {
-            let mut buf = [0u8; STACK_LIMIT];
-            buf[..row_bytes.len()].copy_from_slice(row_bytes);
-            blake3::hash(&buf[..byte_len])
+    assert!(full_base_width % DIGEST_ELEMS == 0, "full_base_width must be a multiple of DIGEST_ELEMS");
+    let n_chunks = full_base_width / DIGEST_ELEMS;
+    assert!(n_chunks >= 2, "need at least 2 chunks for blake3 leaf hash");
+
+    let chunk = |i: usize| -> [KoalaBear; DIGEST_ELEMS] {
+        let start = i * DIGEST_ELEMS;
+        let end = start + DIGEST_ELEMS;
+        if end <= row.len() {
+            row[start..end].try_into().unwrap()
+        } else if start >= row.len() {
+            [KoalaBear::default(); DIGEST_ELEMS]
         } else {
-            let mut buf = vec![0u8; byte_len];
-            buf[..row_bytes.len()].copy_from_slice(row_bytes);
-            blake3::hash(&buf)
+            let mut c = [KoalaBear::default(); DIGEST_ELEMS];
+            c[..row.len() - start].copy_from_slice(&row[start..]);
+            c
         }
     };
-    blake3_digest_to_field(hash.as_bytes())
+
+    let mut state = blake3_compress_internal(chunk(n_chunks - 2), chunk(n_chunks - 1));
+    for j in 1..n_chunks - 1 {
+        state = blake3_compress_internal(state, chunk(n_chunks - 2 - j));
+    }
+    state
 }
 
 fn blake3_compress_internal(left: [KoalaBear; DIGEST_ELEMS], right: [KoalaBear; DIGEST_ELEMS]) -> [KoalaBear; DIGEST_ELEMS] {

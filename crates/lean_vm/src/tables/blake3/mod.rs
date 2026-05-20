@@ -1,0 +1,167 @@
+use crate::*;
+use crate::execution::memory::MemoryAccess;
+use backend::*;
+use utils::{ToUsize, blake3_compress};
+
+pub const BLAKE3_PRECOMPILE_DATA: usize = 7;
+
+pub const BLAKE3_NAME: &str = "blake3_compress";
+
+pub const BLAKE3_COL_FLAG: ColIndex = 0;
+pub const BLAKE3_COL_INDEX_LEFT: ColIndex = 1;
+pub const BLAKE3_COL_INDEX_RIGHT: ColIndex = 2;
+pub const BLAKE3_COL_INDEX_RES: ColIndex = 3;
+pub const BLAKE3_COL_INPUT_START: ColIndex = 4;
+pub const BLAKE3_COL_OUTPUT_START: ColIndex = BLAKE3_COL_INPUT_START + DIGEST_LEN * 2;
+pub const BLAKE3_N_COMMITTED_COLS: usize = BLAKE3_COL_OUTPUT_START + DIGEST_LEN;
+pub const BLAKE3_COL_PRECOMPILE_DATA: ColIndex = BLAKE3_N_COMMITTED_COLS;
+pub const BLAKE3_N_TOTAL_COLS: usize = BLAKE3_N_COMMITTED_COLS + 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Blake3CompressPrecompile<const BUS: bool>;
+
+impl<const BUS: bool> TableT for Blake3CompressPrecompile<BUS> {
+    fn name(&self) -> &'static str {
+        BLAKE3_NAME
+    }
+
+    fn table(&self) -> Table {
+        Table::blake3()
+    }
+
+    fn lookups(&self) -> Vec<LookupIntoMemory> {
+        vec![
+            LookupIntoMemory {
+                index: BLAKE3_COL_INDEX_LEFT,
+                values: (BLAKE3_COL_INPUT_START..BLAKE3_COL_INPUT_START + DIGEST_LEN).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
+            },
+            LookupIntoMemory {
+                index: BLAKE3_COL_INDEX_RIGHT,
+                values: (BLAKE3_COL_INPUT_START + DIGEST_LEN..BLAKE3_COL_INPUT_START + DIGEST_LEN * 2).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
+            },
+            LookupIntoMemory {
+                index: BLAKE3_COL_INDEX_RES,
+                values: (BLAKE3_COL_OUTPUT_START..BLAKE3_COL_OUTPUT_START + DIGEST_LEN).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
+            },
+        ]
+    }
+
+    fn n_columns_total(&self) -> usize {
+        BLAKE3_N_TOTAL_COLS
+    }
+
+    fn bus(&self) -> Bus {
+        let mut data = Vec::with_capacity(4);
+        data.push(BusData::Column(BLAKE3_COL_PRECOMPILE_DATA));
+        data.push(BusData::Column(BLAKE3_COL_INDEX_LEFT));
+        data.push(BusData::Column(BLAKE3_COL_INDEX_RIGHT));
+        data.push(BusData::Column(BLAKE3_COL_INDEX_RES));
+        Bus {
+            direction: BusDirection::Pull,
+            selector: BLAKE3_COL_FLAG,
+            data,
+        }
+    }
+
+    fn padding_row(&self, zero_vec_ptr: usize, _null_hash_ptr: usize, null_blake3_hash_ptr: usize) -> Vec<F> {
+        let mut row = vec![F::ZERO; BLAKE3_N_TOTAL_COLS];
+        row[BLAKE3_COL_FLAG] = F::ZERO;
+        row[BLAKE3_COL_INDEX_LEFT] = F::from_usize(zero_vec_ptr);
+        row[BLAKE3_COL_INDEX_RIGHT] = F::from_usize(zero_vec_ptr);
+        row[BLAKE3_COL_INDEX_RES] = F::from_usize(null_blake3_hash_ptr);
+        let null_output = blake3_compress(&[F::ZERO; 8], &[F::ZERO; 8]);
+        for (i, &val) in null_output.iter().enumerate() {
+            row[BLAKE3_COL_OUTPUT_START + i] = val;
+        }
+        row[BLAKE3_COL_PRECOMPILE_DATA] = F::from_usize(BLAKE3_PRECOMPILE_DATA);
+        row
+    }
+
+    #[inline(always)]
+    fn execute<M: MemoryAccess>(
+        &self,
+        arg_a: F,
+        arg_b: F,
+        index_res: F,
+        args: PrecompileCompTimeArgs<usize>,
+        ctx: &mut InstructionContext<'_, M>,
+    ) -> Result<(), RunnerError> {
+        let PrecompileCompTimeArgs::Blake3Compress = args else {
+            unreachable!("Blake3 table called with non-Blake3 args");
+        };
+        let trace = ctx.traces.get_mut(&self.table()).unwrap();
+
+        let left = ctx.memory.get_slice(arg_a.to_usize(), DIGEST_LEN)?;
+        let right = ctx.memory.get_slice(arg_b.to_usize(), DIGEST_LEN)?;
+
+        let left_arr: &[F; 8] = left.as_slice().try_into().unwrap();
+        let right_arr: &[F; 8] = right.as_slice().try_into().unwrap();
+        let output = blake3_compress(left_arr, right_arr);
+
+        ctx.memory.set_slice(index_res.to_usize(), &output)?;
+
+        trace.columns[BLAKE3_COL_FLAG].push(F::ONE);
+        trace.columns[BLAKE3_COL_INDEX_LEFT].push(arg_a);
+        trace.columns[BLAKE3_COL_INDEX_RIGHT].push(arg_b);
+        trace.columns[BLAKE3_COL_INDEX_RES].push(index_res);
+        for (i, &val) in left_arr.iter().chain(right_arr.iter()).enumerate() {
+            trace.columns[BLAKE3_COL_INPUT_START + i].push(val);
+        }
+        for (i, &val) in output.iter().enumerate() {
+            trace.columns[BLAKE3_COL_OUTPUT_START + i].push(val);
+        }
+        trace.columns[BLAKE3_COL_PRECOMPILE_DATA].push(F::from_usize(BLAKE3_PRECOMPILE_DATA));
+
+        Ok(())
+    }
+}
+
+impl<const BUS: bool> Air for Blake3CompressPrecompile<BUS> {
+    type ExtraData = ExtraDataForBuses<EF>;
+
+    fn n_columns(&self) -> usize {
+        BLAKE3_N_COMMITTED_COLS
+    }
+
+    fn degree_air(&self) -> usize {
+        3
+    }
+
+    fn down_column_indexes(&self) -> Vec<usize> {
+        vec![]
+    }
+
+    fn n_constraints(&self) -> usize {
+        BUS as usize + 1
+    }
+
+    fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
+        let flag_active = builder.up()[BLAKE3_COL_FLAG];
+        let precompile_data_reconstructed = AB::F::from_usize(BLAKE3_PRECOMPILE_DATA).into();
+
+        if BUS {
+            let index_left = builder.up()[BLAKE3_COL_INDEX_LEFT];
+            let index_right = builder.up()[BLAKE3_COL_INDEX_RIGHT];
+            let index_res = builder.up()[BLAKE3_COL_INDEX_RES];
+            builder.assert_zero_ef(eval_virtual_bus_column::<AB, EF>(
+                extra_data,
+                flag_active,
+                &[precompile_data_reconstructed, index_left, index_right, index_res],
+            ));
+        } else {
+            builder.declare_values(std::slice::from_ref(&flag_active));
+            let index_left = builder.up()[BLAKE3_COL_INDEX_LEFT];
+            let index_right = builder.up()[BLAKE3_COL_INDEX_RIGHT];
+            let index_res = builder.up()[BLAKE3_COL_INDEX_RES];
+            builder.declare_values(&[precompile_data_reconstructed, index_left, index_right, index_res]);
+        }
+
+        builder.assert_bool(flag_active);
+    }
+}

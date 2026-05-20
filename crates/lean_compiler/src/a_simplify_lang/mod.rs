@@ -6,7 +6,7 @@ use crate::{
 };
 use backend::PrimeCharacteristicRing;
 use lean_vm::{
-    ALL_POSEIDON16_NAMES, Boolean, BooleanExpr, CustomHint, ExtensionOpMode, FunctionName,
+    ALL_POSEIDON16_NAMES, BLAKE3_NAME, Boolean, BooleanExpr, CustomHint, ExtensionOpMode, FunctionName,
     POSEIDON16_HALF_HARDCODED_LEFT_NAME, POSEIDON16_HALF_NAME, POSEIDON16_HARDCODED_LEFT_NAME, POSEIDON16_PERMUTE_NAME,
     PrecompileArgs, PrecompileCompTimeArgs, SourceLocation,
 };
@@ -2307,6 +2307,32 @@ fn simplify_lines(
                                     hardcoded_offset_left,
                                     permute,
                                 },
+                            }));
+                            continue;
+                        }
+
+                        // Special handling for blake3_compress precompile
+                        if function_name.as_str() == BLAKE3_NAME {
+                            if !targets.is_empty() {
+                                return Err(format!(
+                                    "Precompile {function_name} should not return values, at {location}"
+                                ));
+                            }
+                            if args.len() != 3 {
+                                return Err(format!(
+                                    "Precompile {function_name} expects 3 arguments (ptr_left, ptr_right, ptr_res), got {}, at {location}",
+                                    args.len()
+                                ));
+                            }
+                            let simplified_args = args
+                                .iter()
+                                .map(|arg| simplify_expr(ctx, state, const_malloc, arg, &mut res))
+                                .collect::<Result<Vec<_>, _>>()?;
+                            res.push(SimpleLine::Precompile(PrecompileArgs {
+                                arg_0: simplified_args[0].clone(),
+                                arg_1: simplified_args[1].clone(),
+                                res: simplified_args[2].clone(),
+                                data: PrecompileCompTimeArgs::Blake3Compress,
                             }));
                             continue;
                         }

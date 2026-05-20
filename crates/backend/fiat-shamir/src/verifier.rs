@@ -79,12 +79,6 @@ where
         // SAFETY: We've confirmed PF<EF> == KoalaBear
         let paths: PrunedMerklePaths<KoalaBear, KoalaBear> = unsafe { std::mem::transmute(paths) };
 
-        let hash_fn = |data: &[KoalaBear]| -> [KoalaBear; DIGEST_LEN_FE] {
-            let bytes: &[u8] =
-                unsafe { std::slice::from_raw_parts(data.as_ptr().cast::<u8>(), data.len() * 4) };
-            let hash = blake3::hash(bytes);
-            blake3_digest_to_field(hash.as_bytes())
-        };
         let combine_fn = |left: &[KoalaBear; DIGEST_LEN_FE], right: &[KoalaBear; DIGEST_LEN_FE]| -> [KoalaBear; DIGEST_LEN_FE] {
             let left_bytes: &[u8; DIGEST_LEN_FE * 4] = unsafe { &*(left as *const _ as *const _) };
             let right_bytes: &[u8; DIGEST_LEN_FE * 4] = unsafe { &*(right as *const _ as *const _) };
@@ -93,6 +87,29 @@ where
             buf[DIGEST_LEN_FE * 4..].copy_from_slice(right_bytes);
             let hash = blake3::hash(&buf);
             blake3_digest_to_field(hash.as_bytes())
+        };
+        let hash_fn = |data: &[KoalaBear]| -> [KoalaBear; DIGEST_LEN_FE] {
+            assert!(data.len() % DIGEST_LEN_FE == 0, "leaf data must be a multiple of DIGEST_LEN");
+            let n_chunks = data.len() / DIGEST_LEN_FE;
+            assert!(n_chunks >= 2, "need at least 2 chunks for blake3 leaf hash");
+            let chunk = |i: usize| -> [KoalaBear; DIGEST_LEN_FE] {
+                data[i * DIGEST_LEN_FE..(i + 1) * DIGEST_LEN_FE].try_into().unwrap()
+            };
+            let left_bytes_fn = |arr: &[KoalaBear; DIGEST_LEN_FE]| -> [u8; DIGEST_LEN_FE * 4] {
+                unsafe { *(arr as *const _ as *const [u8; DIGEST_LEN_FE * 4]) }
+            };
+            let blake3_pair = |left: [KoalaBear; DIGEST_LEN_FE], right: [KoalaBear; DIGEST_LEN_FE]| -> [KoalaBear; DIGEST_LEN_FE] {
+                let mut buf = [0u8; DIGEST_LEN_FE * 2 * 4];
+                buf[..DIGEST_LEN_FE * 4].copy_from_slice(&left_bytes_fn(&left));
+                buf[DIGEST_LEN_FE * 4..].copy_from_slice(&left_bytes_fn(&right));
+                let hash = blake3::hash(&buf);
+                blake3_digest_to_field(hash.as_bytes())
+            };
+            let mut state = blake3_pair(chunk(n_chunks - 2), chunk(n_chunks - 1));
+            for j in 1..n_chunks - 1 {
+                state = blake3_pair(state, chunk(n_chunks - 2 - j));
+            }
+            state
         };
         let restored: MerklePaths<KoalaBear, KoalaBear> = paths.restore(&hash_fn, &combine_fn)?;
 
