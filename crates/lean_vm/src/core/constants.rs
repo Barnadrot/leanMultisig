@@ -25,7 +25,7 @@ pub const MAX_LOG_N_ROWS_PER_TABLE: [(Table, usize); 4] = [
     (Table::execution(), 24),
     (Table::extension_op(), 21),
     (Table::poseidon16(), 21),
-    (Table::blake3(), 17),
+    (Table::blake3(), 21),
 ];
 
 pub fn max_log_n_rows_per_table(table: &Table) -> usize {

@@ -95,6 +95,22 @@ def poseidon16_permute(left, right, output):
     _ = left, right, output
 
 
+def blake3_compress(left, right, output):
+    _ = left, right, output
+
+
+def blake3_compress_half(left, right, output):
+    _ = left, right, output
+
+
+def blake3_compress_hardcoded_left(left, right, output, offset):
+    _ = left, right, output, offset
+
+
+def blake3_compress_half_hardcoded_left(left, right, output, offset):
+    _ = left, right, output, offset
+
+
 def add_be(a, b, result, length=None):
     _ = a, b, result, length
 

@@ -65,7 +65,17 @@ pub fn field_representation(instr: &Instruction) -> [F; N_INSTRUCTION_COLUMNS] {
                     assert!(*size >= 1, "invalid extension_op size={size}");
                     mode.flag_encoding() + EXT_OP_LEN_MULTIPLIER * size
                 }
-                PrecompileCompTimeArgs::Blake3Compress => BLAKE3_PRECOMPILE_DATA,
+                PrecompileCompTimeArgs::Blake3Compress {
+                    half_output,
+                    hardcoded_offset_left,
+                } => {
+                    let flag_left = hardcoded_offset_left.is_some() as usize;
+                    let hardcoded_offset_left_val = hardcoded_offset_left.unwrap_or(0);
+                    BLAKE3_PRECOMPILE_DATA
+                        + BLAKE3_HALF_OUTPUT_SHIFT * (*half_output as usize)
+                        + BLAKE3_HARDCODED_LEFT_FLAG_SHIFT * flag_left
+                        + BLAKE3_HARDCODED_LEFT_OFFSET_SHIFT * hardcoded_offset_left_val
+                }
             };
             fields[instr_idx(COL_PRECOMPILE_DATA)] = F::from_usize(precompile_data);
             match (precompile.arg_0, precompile.arg_1) {

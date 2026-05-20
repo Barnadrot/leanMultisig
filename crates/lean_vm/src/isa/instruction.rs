@@ -7,7 +7,10 @@ use crate::diagnostics::RunnerError;
 use crate::execution::memory::MemoryAccess;
 use crate::tables::TableT;
 use crate::{ExtensionOpMode, Table, TableTrace};
-use crate::{POSEIDON16_NAME, POSEIDON16_PERMUTE_NAME};
+use crate::{
+    BLAKE3_HALF_HARDCODED_LEFT_NAME, BLAKE3_HALF_NAME, BLAKE3_HARDCODED_LEFT_NAME, BLAKE3_NAME,
+    POSEIDON16_NAME, POSEIDON16_PERMUTE_NAME,
+};
 use backend::*;
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
@@ -75,7 +78,10 @@ pub enum PrecompileCompTimeArgs<S> {
         size: S,
         mode: ExtensionOpMode,
     },
-    Blake3Compress,
+    Blake3Compress {
+        half_output: bool,
+        hardcoded_offset_left: Option<S>,
+    },
 }
 
 impl<S> PrecompileCompTimeArgs<S> {
@@ -83,7 +89,7 @@ impl<S> PrecompileCompTimeArgs<S> {
         match self {
             Self::Poseidon16 { .. } => Table::poseidon16(),
             Self::ExtensionOp { .. } => Table::extension_op(),
-            Self::Blake3Compress => Table::blake3(),
+            Self::Blake3Compress { .. } => Table::blake3(),
         }
     }
 
@@ -99,7 +105,13 @@ impl<S> PrecompileCompTimeArgs<S> {
                 permute,
             },
             Self::ExtensionOp { size, mode } => PrecompileCompTimeArgs::ExtensionOp { size: f(size), mode },
-            Self::Blake3Compress => PrecompileCompTimeArgs::Blake3Compress,
+            Self::Blake3Compress {
+                half_output,
+                hardcoded_offset_left,
+            } => PrecompileCompTimeArgs::Blake3Compress {
+                half_output,
+                hardcoded_offset_left: hardcoded_offset_left.map(&mut f),
+            },
         }
     }
 }
@@ -281,9 +293,20 @@ impl<V: Display, S: Display> Display for PrecompileArgs<V, S> {
             PrecompileCompTimeArgs::ExtensionOp { size, mode } => {
                 write!(f, "{}({arg_0}, {arg_1}, {res}, {size})", mode.name())
             }
-            PrecompileCompTimeArgs::Blake3Compress => {
-                write!(f, "blake3_compress({arg_0}, {arg_1}, {res})")
-            }
+            PrecompileCompTimeArgs::Blake3Compress {
+                half_output,
+                hardcoded_offset_left,
+            } => match (*half_output, hardcoded_offset_left) {
+                (false, None) => write!(f, "{BLAKE3_NAME}({arg_0}, {arg_1}, {res})"),
+                (true, None) => write!(f, "{BLAKE3_HALF_NAME}({arg_0}, {arg_1}, {res})"),
+                (false, Some(off)) => {
+                    write!(f, "{BLAKE3_HARDCODED_LEFT_NAME}({arg_0}, {arg_1}, {res}, hardcoded_left={off})")
+                }
+                (true, Some(off)) => write!(
+                    f,
+                    "{BLAKE3_HALF_HARDCODED_LEFT_NAME}({arg_0}, {arg_1}, {res}, hardcoded_left={off})"
+                ),
+            },
         }
     }
 }
