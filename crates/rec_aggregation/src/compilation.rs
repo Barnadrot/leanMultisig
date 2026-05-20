@@ -272,20 +272,21 @@ fn build_replacements(inner_program_log_size: usize, bytecode_zero_eval: F) -> B
 
     let mut lookup_indexes_str = vec![];
     let mut lookup_values_str = vec![];
+    let mut lookup_address_offsets_str = vec![];
+    let mut lookup_conditional_inactive_str = vec![];
     let mut num_cols_air = vec![];
     let mut air_degrees = vec![];
     let mut n_air_columns = vec![];
     let mut air_down_columns = vec![];
     for table in ALL_TABLES {
-        let this_look_f_indexes_str = table
-            .lookups()
+        let lookups = table.lookups();
+        let this_look_f_indexes_str = lookups
             .iter()
             .map(|lookup_f| lookup_f.index.to_string())
             .collect::<Vec<_>>();
         lookup_indexes_str.push(format!("[{}]", this_look_f_indexes_str.join(", ")));
         num_cols_air.push(table.n_columns().to_string());
-        let this_lookup_f_values_str = table
-            .lookups()
+        let this_lookup_f_values_str = lookups
             .iter()
             .map(|lookup_f| {
                 format!(
@@ -300,6 +301,25 @@ fn build_replacements(inner_program_log_size: usize, bytecode_zero_eval: F) -> B
             })
             .collect::<Vec<_>>();
         lookup_values_str.push(format!("[{}]", this_lookup_f_values_str.join(", ")));
+        let this_addr_offsets = lookups
+            .iter()
+            .map(|l| l.address_offset.to_string())
+            .collect::<Vec<_>>();
+        lookup_address_offsets_str.push(format!("[{}]", this_addr_offsets.join(", ")));
+        let this_cond_inactive = lookups
+            .iter()
+            .map(|l| {
+                format!(
+                    "[{}]",
+                    l.conditional_inactive
+                        .iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+            .collect::<Vec<_>>();
+        lookup_conditional_inactive_str.push(format!("[{}]", this_cond_inactive.join(", ")));
         air_degrees.push(table.degree_air().to_string());
         n_air_columns.push(table.n_columns().to_string());
         air_down_columns.push(format!(
@@ -319,6 +339,14 @@ fn build_replacements(inner_program_log_size: usize, bytecode_zero_eval: F) -> B
     replacements.insert(
         "LOOKUPS_VALUES_PLACEHOLDER".to_string(),
         format!("[{}]", lookup_values_str.join(", ")),
+    );
+    replacements.insert(
+        "LOOKUPS_ADDRESS_OFFSETS_PLACEHOLDER".to_string(),
+        format!("[{}]", lookup_address_offsets_str.join(", ")),
+    );
+    replacements.insert(
+        "LOOKUPS_CONDITIONAL_INACTIVE_PLACEHOLDER".to_string(),
+        format!("[{}]", lookup_conditional_inactive_str.join(", ")),
     );
     replacements.insert(
         "NUM_COLS_AIR_PLACEHOLDER".to_string(),

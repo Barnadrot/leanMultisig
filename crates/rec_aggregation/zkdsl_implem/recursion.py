@@ -21,6 +21,8 @@ EXECUTION_TABLE_INDEX = EXECUTION_TABLE_INDEX_PLACEHOLDER
 
 LOOKUPS_INDEXES = LOOKUPS_INDEXES_PLACEHOLDER  # [[_; ?]; N_TABLES]
 LOOKUPS_VALUES = LOOKUPS_VALUES_PLACEHOLDER  # [[[_; ?]; ?]; N_TABLES]
+LOOKUPS_ADDRESS_OFFSETS = LOOKUPS_ADDRESS_OFFSETS_PLACEHOLDER  # [[_; ?]; N_TABLES]
+LOOKUPS_CONDITIONAL_INACTIVE = LOOKUPS_CONDITIONAL_INACTIVE_PLACEHOLDER  # [[[_; ?]; ?]; N_TABLES]
 
 NUM_COLS_AIR = NUM_COLS_AIR_PLACEHOLDER
 
@@ -343,30 +345,50 @@ def continue_recursion_ordered(
         # II] Lookup into memory
 
         for lookup_f_index in unroll(0, len(LOOKUPS_INDEXES[table_index])):
-            col_index = LOOKUPS_INDEXES[table_index][lookup_f_index]
-            fs, index_eval = fs_receive_ef_inlined(fs, 1)
-            debug_assert(len(pcs_values[table_index][0][col_index]) == 0)
-            pcs_values[table_index][0][col_index].push(index_eval)
-            for i in unroll(0, len(LOOKUPS_VALUES[table_index][lookup_f_index])):
-                fs, value_eval = fs_receive_ef_inlined(fs, 1)
-                col_index = LOOKUPS_VALUES[table_index][lookup_f_index][i]
-                debug_assert(len(pcs_values[table_index][0][col_index]) == 0)
-                pcs_values[table_index][0][col_index].push(value_eval)
+            idx_col = LOOKUPS_INDEXES[table_index][lookup_f_index]
+            if len(pcs_values[table_index][0][idx_col]) == 0:
+                fs, index_eval = fs_receive_ef_inlined(fs, 1)
+                pcs_values[table_index][0][idx_col].push(index_eval)
+            index_eval = pcs_values[table_index][0][idx_col][0]
 
-                pref = multilinear_location_prefix(offset / n_rows, n_vars_logup_gkr - log_n_rows, point_gkr)  # TODO there is some duplication here
-                retrieved_numerators_value = add_extension_ret(retrieved_numerators_value, pref)
-                fingerp = fingerprint_2(
-                    LOGUP_MEMORY_DOMAINSEP,
-                    value_eval,
-                    add_base_extension_ret(i, index_eval),
-                    logup_alphas_eq_poly,
-                )
+            addr_offset = LOOKUPS_ADDRESS_OFFSETS[table_index][lookup_f_index]
+            n_lookup_values = len(LOOKUPS_VALUES[table_index][lookup_f_index])
+            base_offset_lookup: Mut = offset
+
+            for i in unroll(0, n_lookup_values):
+                fs, value_eval = fs_receive_ef_inlined(fs, 1)
+                val_col = LOOKUPS_VALUES[table_index][lookup_f_index][i]
+                debug_assert(len(pcs_values[table_index][0][val_col]) == 0)
+                pcs_values[table_index][0][val_col].push(value_eval)
+
+                pref = multilinear_location_prefix(offset / n_rows, n_vars_logup_gkr - log_n_rows, point_gkr)
+                addr = add_base_extension_ret(addr_offset + i, index_eval)
+                fingerp = fingerprint_2(LOGUP_MEMORY_DOMAINSEP, value_eval, addr, logup_alphas_eq_poly)
                 retrieved_denominators_value = add_extension_ret(
                     retrieved_denominators_value,
                     mul_extension_ret(pref, sub_extension_ret(logup_c, fingerp)),
                 )
-
                 offset += n_rows
+
+            if len(LOOKUPS_CONDITIONAL_INACTIVE[table_index][lookup_f_index]) == 0:
+                for i in unroll(0, n_lookup_values):
+                    pref = multilinear_location_prefix(base_offset_lookup / n_rows + i, n_vars_logup_gkr - log_n_rows, point_gkr)
+                    retrieved_numerators_value = add_extension_ret(retrieved_numerators_value, pref)
+            else:
+                numerator_eval: Mut = ONE_EF_PTR
+                for cond_i in unroll(0, len(LOOKUPS_CONDITIONAL_INACTIVE[table_index][lookup_f_index])):
+                    cond_col = LOOKUPS_CONDITIONAL_INACTIVE[table_index][lookup_f_index][cond_i]
+                    if len(pcs_values[table_index][0][cond_col]) == 0:
+                        fs, cond_eval = fs_receive_ef_inlined(fs, 1)
+                        pcs_values[table_index][0][cond_col].push(cond_eval)
+                    cond_eval = pcs_values[table_index][0][cond_col][0]
+                    numerator_eval = sub_extension_ret(numerator_eval, cond_eval)
+                for i in unroll(0, n_lookup_values):
+                    pref = multilinear_location_prefix(base_offset_lookup / n_rows + i, n_vars_logup_gkr - log_n_rows, point_gkr)
+                    retrieved_numerators_value = add_extension_ret(
+                        retrieved_numerators_value,
+                        mul_extension_ret(pref, numerator_eval),
+                    )
 
     retrieved_denominators_value = add_extension_ret(
         retrieved_denominators_value,
