@@ -1,7 +1,7 @@
 use backend::*;
 use rand::{CryptoRng, RngExt};
 use serde::{Deserialize, Serialize};
-use utils::{ToUsize, blake3_compress};
+use utils::{ToUsize, poseidon16_compress_pair};
 
 use crate::*;
 
@@ -102,13 +102,13 @@ impl WotsPublicKey {
         state[4..4 + PUBLIC_PARAM_LEN_FE].copy_from_slice(&public_param);
 
         let zeros = [F::ZERO; 8]; // for snark-friendliless (not necessary for security)
-        state = blake3_compress(&state, &zeros);
+        state = poseidon16_compress_pair(&state, &zeros);
 
         for i in (0..V).step_by(2) {
             let mut chunk = [F::default(); 8];
             chunk[..XMSS_DIGEST_LEN].copy_from_slice(&self.0[i]);
             chunk[XMSS_DIGEST_LEN..].copy_from_slice(&self.0[i + 1]);
-            state = blake3_compress(&state, &chunk);
+            state = poseidon16_compress_pair(&state, &chunk);
         }
         state[..XMSS_DIGEST_LEN].try_into().unwrap()
     }
@@ -127,7 +127,7 @@ pub fn iterate_hash(
     (0..n).fold(*a, |acc, j| {
         let tweak = make_tweak(TWEAK_TYPE_CHAIN, chain_index * CHAIN_LENGTH + start_step + j, slot);
         let left = build_left_chain_input(tweak, &acc);
-        blake3_compress(&left, &right)[..XMSS_DIGEST_LEN]
+        poseidon16_compress_pair(&left, &right)[..XMSS_DIGEST_LEN]
             .try_into()
             .unwrap()
     })
@@ -159,11 +159,11 @@ pub fn wots_encode(
     let mut first_input_right = [F::default(); DIGEST_LEN_FE];
     first_input_right[..RANDOMNESS_LEN_FE].copy_from_slice(randomness);
     first_input_right[RANDOMNESS_LEN_FE..][..TWEAK_LEN].copy_from_slice(&make_tweak(TWEAK_TYPE_ENCODING, 0, slot));
-    let pre_compressed = blake3_compress(first_input_left, &first_input_right);
+    let pre_compressed = poseidon16_compress_pair(first_input_left, &first_input_right);
 
     let mut second_input_right = [F::default(); DIGEST_LEN_FE];
     second_input_right[..PUBLIC_PARAM_LEN_FE].copy_from_slice(&xmss_pub_key.public_param);
-    let compressed = blake3_compress(&pre_compressed, &second_input_right);
+    let compressed = poseidon16_compress_pair(&pre_compressed, &second_input_right);
 
     if compressed.iter().any(|&kb| kb == -F::ONE) {
         // ensures uniformity of encoding
