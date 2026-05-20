@@ -18,7 +18,6 @@ pub use config::*;
 
 mod merkle;
 pub use merkle::DIGEST_ELEMS;
-pub use merkle::set_use_blake3_merkle;
 pub(crate) use merkle::*;
 
 mod utils;

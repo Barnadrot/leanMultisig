@@ -9,13 +9,12 @@ use field::ExtensionField;
 use field::Field;
 use field::PackedValue;
 use field::PrimeField32;
-use koala_bear::{KoalaBear, QuinticExtensionFieldKB, default_koalabear_poseidon1_16};
+use koala_bear::{KoalaBear, QuinticExtensionFieldKB};
 use poly::*;
 
 use rayon::prelude::*;
 use symetric::Compression;
 use symetric::merkle::unpack_array;
-use symetric::use_blake3_merkle;
 use tracing::instrument;
 use utils::log2_ceil_usize;
 
@@ -23,7 +22,6 @@ use crate::DenseMatrix;
 use crate::Dimensions;
 use crate::Matrix;
 pub use symetric::DIGEST_ELEMS;
-pub use symetric::set_use_blake3_merkle;
 
 fn blake3_digest_to_field(hash_bytes: &[u8; 32]) -> [KoalaBear; DIGEST_ELEMS] {
     std::array::from_fn(|j| {
@@ -141,36 +139,10 @@ pub(crate) fn merkle_commit<F: Field, EF: ExtensionField<F>>(
 fn build_merkle_tree_koalabear(
     leaf: DenseMatrix<KoalaBear>,
     full_base_width: usize,
-    effective_base_width: usize,
+    _effective_base_width: usize,
 ) -> RoundMerkleTree<KoalaBear> {
-    if use_blake3_merkle() {
-        let first_layer = first_digest_layer_blake3(&leaf, full_base_width);
-        let tree = symetric::merkle::MerkleTree::from_first_layer_with_fn(first_layer, &blake3_compress_internal);
-        return WhirMerkleTree {
-            leaf,
-            tree,
-            full_leaf_base_width: full_base_width,
-        };
-    }
-    let perm = default_koalabear_poseidon1_16();
-    let n_zero_suffix_rate_chunks = (full_base_width - effective_base_width) / 8;
-    let first_layer = if n_zero_suffix_rate_chunks >= 2 {
-        let scalar_state = symetric::precompute_zero_suffix_state::<KoalaBear, _, 16, 8, DIGEST_ELEMS>(
-            &perm,
-            n_zero_suffix_rate_chunks,
-        );
-        let packed_state: [PFPacking<KoalaBear>; 16] =
-            std::array::from_fn(|i| PFPacking::<KoalaBear>::from_fn(|_| scalar_state[i]));
-        first_digest_layer_with_initial_state::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(
-            &perm,
-            &leaf,
-            &packed_state,
-            effective_base_width,
-        )
-    } else {
-        first_digest_layer::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(&perm, &leaf, full_base_width)
-    };
-    let tree = symetric::merkle::MerkleTree::from_first_layer::<PFPacking<KoalaBear>, _, 16>(&perm, first_layer);
+    let first_layer = first_digest_layer_blake3(&leaf, full_base_width);
+    let tree = symetric::merkle::MerkleTree::from_first_layer_with_fn(first_layer, &blake3_compress_internal);
     WhirMerkleTree {
         leaf,
         tree,
@@ -211,50 +183,18 @@ pub(crate) fn merkle_verify<F: Field, EF: ExtensionField<F>>(
     proof: &Vec<[F; DIGEST_ELEMS]>,
 ) -> bool {
     let log_max_height = utils::log2_strict_usize(dimension.height.next_power_of_two());
-    if use_blake3_merkle() {
-        if TypeId::of::<(F, EF)>() == TypeId::of::<(KoalaBear, QuinticExtensionFieldKB)>() {
-            let merkle_root = unsafe { std::mem::transmute_copy::<_, [KoalaBear; DIGEST_ELEMS]>(&merkle_root) };
-            let data = unsafe { std::mem::transmute::<_, Vec<QuinticExtensionFieldKB>>(data) };
-            let proof = unsafe { std::mem::transmute::<_, &Vec<[KoalaBear; DIGEST_ELEMS]>>(proof) };
-            let base_data = QuinticExtensionFieldKB::flatten_to_base(data);
-            return merkle_verify_blake3(&merkle_root, log_max_height, index, &base_data, proof);
-        } else if TypeId::of::<(F, EF)>() == TypeId::of::<(KoalaBear, KoalaBear)>() {
-            let merkle_root = unsafe { std::mem::transmute_copy::<_, [KoalaBear; DIGEST_ELEMS]>(&merkle_root) };
-            let data = unsafe { std::mem::transmute::<_, Vec<KoalaBear>>(data) };
-            let proof = unsafe { std::mem::transmute::<_, &Vec<[KoalaBear; DIGEST_ELEMS]>>(proof) };
-            let base_data = KoalaBear::flatten_to_base(data);
-            return merkle_verify_blake3(&merkle_root, log_max_height, index, &base_data, proof);
-        } else {
-            unimplemented!()
-        }
-    }
-    let perm = default_koalabear_poseidon1_16();
     if TypeId::of::<(F, EF)>() == TypeId::of::<(KoalaBear, QuinticExtensionFieldKB)>() {
         let merkle_root = unsafe { std::mem::transmute_copy::<_, [KoalaBear; DIGEST_ELEMS]>(&merkle_root) };
         let data = unsafe { std::mem::transmute::<_, Vec<QuinticExtensionFieldKB>>(data) };
         let proof = unsafe { std::mem::transmute::<_, &Vec<[KoalaBear; DIGEST_ELEMS]>>(proof) };
         let base_data = QuinticExtensionFieldKB::flatten_to_base(data);
-        symetric::merkle::merkle_verify::<_, _, DIGEST_ELEMS, 16, 8>(
-            &perm,
-            &merkle_root,
-            log_max_height,
-            index,
-            &base_data,
-            proof,
-        )
+        merkle_verify_blake3(&merkle_root, log_max_height, index, &base_data, proof)
     } else if TypeId::of::<(F, EF)>() == TypeId::of::<(KoalaBear, KoalaBear)>() {
         let merkle_root = unsafe { std::mem::transmute_copy::<_, [KoalaBear; DIGEST_ELEMS]>(&merkle_root) };
         let data = unsafe { std::mem::transmute::<_, Vec<KoalaBear>>(data) };
         let proof = unsafe { std::mem::transmute::<_, &Vec<[KoalaBear; DIGEST_ELEMS]>>(proof) };
         let base_data = KoalaBear::flatten_to_base(data);
-        symetric::merkle::merkle_verify::<_, _, DIGEST_ELEMS, 16, 8>(
-            &perm,
-            &merkle_root,
-            log_max_height,
-            index,
-            &base_data,
-            proof,
-        )
+        merkle_verify_blake3(&merkle_root, log_max_height, index, &base_data, proof)
     } else {
         unimplemented!()
     }
