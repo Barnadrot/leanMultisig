@@ -1,4 +1,5 @@
 pub mod g_function;
+pub mod constrained_cols;
 
 use crate::*;
 use crate::execution::memory::MemoryAccess;
