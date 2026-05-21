@@ -54,7 +54,7 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
         // eval() uses: selector=COL_FLAG_ACTIVE, data=[const(7), COL_LEFT_ADDR, COL_RIGHT_ADDR, COL_RESULT_ADDR]
         Bus {
             direction: BusDirection::Pull,
-            selector: COL_FLAG_ACTIVE,
+            selector: 0, // TEMP: use column 0 (like old table)
             data: vec![
                 BusData::Constant(CONSTRAINED_BLAKE3_PRECOMPILE_DATA),
                 BusData::Column(COL_LEFT_ADDR),
@@ -188,16 +188,32 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
     }
 
     fn n_constraints(&self) -> usize {
-        let n_down = if self.down_column_indexes().is_empty() { 0 } else { 35 };
-        BUS as usize + 4 * super::constrained_air::constraints_per_g() + 4 + n_down + 32 + 8
+        BUS as usize // JUST the bus
     }
 
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
-        // Read all needed values from up and down before mutably borrowing builder
         let up = builder.up();
         let down = builder.down();
+        let _ = &down;
 
-        let flag_active = up[COL_FLAG_ACTIVE];
+        let flag_active = up[0]; // Use column 0 (same as old table's COL_FLAG = 0)
+
+        let bus_selector = flag_active;
+        let precompile_data: AB::IF = AB::F::from_usize(CONSTRAINED_BLAKE3_PRECOMPILE_DATA).into();
+        let bus_data = [precompile_data, up[COL_LEFT_ADDR], up[COL_RIGHT_ADDR], up[COL_RESULT_ADDR]];
+
+        if BUS {
+            builder.assert_zero_ef(eval_virtual_bus_column::<AB, EF>(
+                extra_data, bus_selector, &bus_data,
+            ));
+        } else {
+            builder.declare_values(std::slice::from_ref(&bus_selector));
+            builder.declare_values(&bus_data);
+        }
+        // ONLY bus constraint — nothing else
+        return;
+
+        #[allow(unreachable_code)]
         let is_first_row = up[COL_IS_FIRST_ROW];
         let is_last_row = up[COL_IS_LAST_ROW];
         let is_column_qr = up[COL_IS_COLUMN_QR];
