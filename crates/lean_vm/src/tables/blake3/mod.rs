@@ -2,6 +2,8 @@ pub mod g_function;
 pub mod constrained_cols;
 pub mod constrained_trace;
 pub mod constrained_air;
+pub mod constrained_table;
+pub use constrained_table::ConstrainedBlake3Precompile;
 
 use crate::*;
 use crate::execution::memory::MemoryAccess;

@@ -11,13 +11,12 @@
 use backend::*;
 use super::constrained_cols::*;
 
-/// Evaluate AIR constraints for one G-function within a half-round row.
+/// Compute AIR constraint expressions for one G-function within a half-round row.
 ///
+/// Returns a Vec of expressions that must all be zero.
 /// `up` is the current row, `g` is the G-function index (0..3).
 /// `a_idx, b_idx, c_idx, d_idx` are state word indices.
-/// Returns the number of constraints asserted.
-fn eval_g_function<AB: AirBuilder>(
-    builder: &mut AB,
+pub fn g_function_constraints<AB: AirBuilder>(
     up: &[AB::IF],
     g: usize,
     a_idx: usize,
@@ -25,7 +24,18 @@ fn eval_g_function<AB: AirBuilder>(
     c_idx: usize,
     d_idx: usize,
     xor_table_base: AB::F,
-) {
+) -> Vec<AB::IF> {
+    let mut constraints = Vec::new();
+    // Macro to add a constraint
+    macro_rules! assert_zero {
+        ($e:expr) => { constraints.push($e) };
+        ($e:expr,) => { constraints.push($e) };
+    }
+    macro_rules! assert_bool {
+        ($e:expr) => { let v = $e; constraints.push(v * (v - AB::IF::ONE)) };
+    }
+    // Re-export for the old function body
+    let _builder_placeholder = &constraints; // just to avoid unused warnings
     let gc = |offset: usize| -> AB::IF { up[g_col(g, offset)] };
     let sl = |word: usize, limb: usize| -> AB::IF { up[state_col(word, limb)] };
 
@@ -46,7 +56,7 @@ fn eval_g_function<AB: AirBuilder>(
     let mx_b1 = gc(G_MX_BYTES + 1);
     let mx_b2 = gc(G_MX_BYTES + 2);
     let mx_b3 = gc(G_MX_BYTES + 3);
-    builder.assert_zero(
+    assert_zero!(
         mx_value - mx_b0
             - mx_b1 * AB::F::from_u32(256)
             - mx_b2 * AB::F::from_u32(65536)
@@ -58,7 +68,7 @@ fn eval_g_function<AB: AirBuilder>(
     let my_b1 = gc(G_MY_BYTES + 1);
     let my_b2 = gc(G_MY_BYTES + 2);
     let my_b3 = gc(G_MY_BYTES + 3);
-    builder.assert_zero(
+    assert_zero!(
         my_value - my_b0
             - my_b1 * AB::F::from_u32(256)
             - my_b2 * AB::F::from_u32(65536)
@@ -81,10 +91,10 @@ fn eval_g_function<AB: AirBuilder>(
     let carry1_lo = (a_lo + b_lo + mx_lo - add1_lo) * inv65536;
     // carry_lo ∈ {0, 1, 2}
     let two: AB::IF = AB::F::from_u32(2).into();
-    builder.assert_zero(carry1_lo * (carry1_lo - AB::IF::ONE) * (carry1_lo - two));
+    assert_zero!(carry1_lo * (carry1_lo - AB::IF::ONE) * (carry1_lo - two));
     // carry_hi = (a_hi + b_hi + mx_hi + carry_lo - add1_hi) / 65536
     let carry1_hi = (a_hi + b_hi + mx_hi + carry1_lo - add1_hi) * inv65536;
-    builder.assert_zero(carry1_hi * (carry1_hi - AB::IF::ONE) * (carry1_hi - two));
+    assert_zero!(carry1_hi * (carry1_hi - AB::IF::ONE) * (carry1_hi - two));
 
     // ─── Step 2: d' = (d ^ a') >>> 16 ────────────────────────────────────
     // d byte decomposition
@@ -92,8 +102,8 @@ fn eval_g_function<AB: AirBuilder>(
     let d_b1 = gc(G_D_BYTES + 1);
     let d_b2 = gc(G_D_BYTES + 2);
     let d_b3 = gc(G_D_BYTES + 3);
-    builder.assert_zero(d_lo - d_b0 - d_b1 * AB::F::from_u32(256));
-    builder.assert_zero(d_hi - d_b2 - d_b3 * AB::F::from_u32(256));
+    assert_zero!(d_lo - d_b0 - d_b1 * AB::F::from_u32(256));
+    assert_zero!(d_hi - d_b2 - d_b3 * AB::F::from_u32(256));
 
     // XOR address constraints: addr = XOR_TABLE_BASE + 256 * a_byte + b_byte
     // For d ^ a' (byte-wise), with >>>16 rotation (swap halves):
@@ -102,7 +112,7 @@ fn eval_g_function<AB: AirBuilder>(
         let d_byte = gc(G_D_BYTES + i);
         let a_byte = gc(G_ADD1_BYTES + i);
         let addr = gc(G_XOR2_ADDRS + i);
-        builder.assert_zero(addr - xor_table_base - d_byte * AB::F::from_u32(256) - a_byte);
+        assert_zero!(addr - xor_table_base - d_byte * AB::F::from_u32(256) - a_byte);
     }
 
     // >>>16 rotation: result_lo = xor_hi, result_hi = xor_lo
@@ -123,33 +133,33 @@ fn eval_g_function<AB: AirBuilder>(
     let c_lo = sl(c_idx, 0);
     let c_hi = sl(c_idx, 1);
     let carry2_lo = (c_lo + d1_lo - add2_lo) * inv65536;
-    builder.assert_zero(carry2_lo * (carry2_lo - AB::IF::ONE)); // double-add: carry ∈ {0,1}
+    assert_zero!(carry2_lo * (carry2_lo - AB::IF::ONE)); // double-add: carry ∈ {0,1}
     let carry2_hi = (c_hi + d1_hi + carry2_lo - add2_hi) * inv65536;
-    builder.assert_zero(carry2_hi * (carry2_hi - AB::IF::ONE));
+    assert_zero!(carry2_hi * (carry2_hi - AB::IF::ONE));
 
     // ─── Step 4: b' = (b ^ c') >>> 12 ───────────────────────────────────
     let b_b0 = gc(G_B_BYTES);
     let b_b1 = gc(G_B_BYTES + 1);
     let b_b2 = gc(G_B_BYTES + 2);
     let b_b3 = gc(G_B_BYTES + 3);
-    builder.assert_zero(b_lo - b_b0 - b_b1 * AB::F::from_u32(256));
-    builder.assert_zero(b_hi - b_b2 - b_b3 * AB::F::from_u32(256));
+    assert_zero!(b_lo - b_b0 - b_b1 * AB::F::from_u32(256));
+    assert_zero!(b_hi - b_b2 - b_b3 * AB::F::from_u32(256));
 
     for i in 0..4 {
         let b_byte = gc(G_B_BYTES + i);
         let c_byte = gc(G_ADD2_BYTES + i);
         let addr = gc(G_XOR4_ADDRS + i);
-        builder.assert_zero(addr - xor_table_base - b_byte * AB::F::from_u32(256) - c_byte);
+        assert_zero!(addr - xor_table_base - b_byte * AB::F::from_u32(256) - c_byte);
     }
 
     // >>>12 split: xor4_b1 = split_lo_nibble + 16 * split_hi_nibble
     let xor4_b1 = gc(G_XOR4_BYTES + 1);
     let split4_lo = gc(G_XOR4_SPLIT);
     let split4_hi = gc(G_XOR4_SPLIT + 1);
-    builder.assert_zero(xor4_b1 - split4_lo - split4_hi * AB::F::from_u32(16));
+    assert_zero!(xor4_b1 - split4_lo - split4_hi * AB::F::from_u32(16));
     // Range check split4_lo ∈ [0, 16) — via nibble XOR lookup or degree-16 polynomial
     // For now: declare_values to mark them as used (range checked via separate mechanism)
-    builder.declare_values(&[split4_lo, split4_hi]);
+    // split4_lo, split4_hi range-checked via separate mechanism
 
     // ─── Step 5: a'' = (a' + b' + my) mod 2^32 ─────────────────────────
     let add3_b0 = gc(G_ADD3_BYTES);
@@ -258,7 +268,7 @@ fn eval_g_function<AB: AirBuilder>(
         let d1_byte = gc(G_XOR2_BYTES + (i + 2) % 4);
         let a2_byte = gc(G_ADD3_BYTES + i);
         let addr = gc(G_XOR6_ADDRS + i);
-        builder.assert_zero(addr - xor_table_base - d1_byte * AB::F::from_u32(256) - a2_byte);
+        assert_zero!(addr - xor_table_base - d1_byte * AB::F::from_u32(256) - a2_byte);
     }
 
     // ─── Step 8: b'' = (b' ^ c'') >>> 7 ─────────────────────────────────
@@ -271,15 +281,15 @@ fn eval_g_function<AB: AirBuilder>(
         let b1_byte = gc(G_XOR4_BYTES + (i + 1) % 4); // approximate, needs correction
         let c2_byte = gc(G_ADD4_BYTES + i);
         let addr = gc(G_XOR8_ADDRS + i);
-        builder.assert_zero(addr - xor_table_base - b1_byte * AB::F::from_u32(256) - c2_byte);
+        assert_zero!(addr - xor_table_base - b1_byte * AB::F::from_u32(256) - c2_byte);
     }
 
     // >>>7 split: xor8_b0 = split_lo_7bits + 128 * split_hi_bit
     let xor8_b0 = gc(G_XOR8_BYTES);
     let split8_lo = gc(G_XOR8_SPLIT);
     let split8_hi = gc(G_XOR8_SPLIT + 1);
-    builder.assert_zero(xor8_b0 - split8_lo - split8_hi * AB::F::from_u32(128));
-    builder.assert_bool(split8_hi); // 1 bit
+    assert_zero!(xor8_b0 - split8_lo - split8_hi * AB::F::from_u32(128));
+    assert_bool!(split8_hi); // 1 bit
 
     // Step 7 (c'' = c' + d'') carry constraints
     let add4_b0 = gc(G_ADD4_BYTES);
@@ -292,9 +302,11 @@ fn eval_g_function<AB: AirBuilder>(
     let d2_lo = gc(G_XOR6_BYTES + 1) + gc(G_XOR6_BYTES + 2) * AB::F::from_u32(256);
     let d2_hi = gc(G_XOR6_BYTES + 3) + gc(G_XOR6_BYTES) * AB::F::from_u32(256);
     let carry4_lo = (add2_lo + d2_lo - add4_lo) * inv65536; // c' + d'' (double-add)
-    builder.assert_zero(carry4_lo * (carry4_lo - AB::IF::ONE));
+    assert_zero!(carry4_lo * (carry4_lo - AB::IF::ONE));
     let carry4_hi = (add2_hi + d2_hi + carry4_lo - add4_hi) * inv65536;
-    builder.assert_zero(carry4_hi * (carry4_hi - AB::IF::ONE));
+    assert_zero!(carry4_hi * (carry4_hi - AB::IF::ONE));
+
+    constraints
 }
 
 /// Count constraints per G-function.
