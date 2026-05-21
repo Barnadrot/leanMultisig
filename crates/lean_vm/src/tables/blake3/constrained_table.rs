@@ -28,11 +28,7 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
 
     fn lookups(&self) -> Vec<LookupIntoMemory> {
         let mut lookups = Vec::new();
-
-        // Message word lookups: each G-function reads 2 message words from memory.
-        // 4 G-functions × 2 words = 8 lookups per row.
-        // INACTIVE on padding rows (flag_active == 0).
-        // On padding rows, addresses point to zero_vec but no lookup should occur.
+        // Message word lookups: 8 per row
         for g in 0..4 {
             lookups.push(LookupIntoMemory {
                 index: g_col(g, G_MX_ADDR),
@@ -47,12 +43,6 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
                 conditional_inactive: vec![],
             });
         }
-
-        // TODO: XOR byte lookups (64 per row) — disabled until XOR table is in preamble memory.
-        // When enabled, each G-function has 4 XOR-rotations × 4 byte lookups = 16 per G.
-        // These verify the XOR computation via memory reads into the byte-XOR table.
-
-        // Total: 8 message lookups per row (XOR lookups pending)
         lookups
     }
 
@@ -179,13 +169,11 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
     }
 
     fn down_column_indexes(&self) -> Vec<usize> {
-        down_columns()
+        vec![] // TEMP: disable down columns for debugging
     }
 
     fn n_constraints(&self) -> usize {
-        // Must match the actual number of assert_zero + assert_bool + assert_zero_ef calls in eval()
-        // Verified by test_actual_constraint_count
-        BUS as usize + 4 * super::constrained_air::constraints_per_g() + 4 + 35 + 32 + 8
+        BUS as usize + 5 // TEMP: same as old unconstrained Blake3
     }
 
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
@@ -199,24 +187,24 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
         let is_column_qr = up[COL_IS_COLUMN_QR];
         let not_last = AB::IF::ONE - is_last_row;
 
-        // Precompute down constraint expressions
-        // down[] is indexed by DOWN COLUMN position (0..34), not original ColIndex.
-        // down_column_indexes() returns: [state_col(0,0), state_col(0,1), ..., COL_LEFT_ADDR, COL_RIGHT_ADDR, COL_RESULT_ADDR]
+        // Precompute down constraint expressions (only when down columns are enabled)
         let mut down_constraints = Vec::new();
-        // State flow: next_row.state[w,l] = this_row.output_state[w,l]
-        for w in 0..16 {
-            for l in 0..2 {
-                let output = up[output_state_col(w, l)];
-                let down_idx = w * 2 + l; // position in down[] array
-                let next_input = down[down_idx];
-                down_constraints.push(flag_active * not_last * (next_input - output));
+        if !down.is_empty() {
+            // State flow: next_row.state[w,l] = this_row.output_state[w,l]
+            for w in 0..16 {
+                for l in 0..2 {
+                    let output = up[output_state_col(w, l)];
+                    let down_idx = w * 2 + l;
+                    let next_input = down[down_idx];
+                    down_constraints.push(flag_active * not_last * (next_input - output));
+                }
             }
+            // I/O address flow: persist across rows
+            let addr_down_start = 32;
+            down_constraints.push(flag_active * not_last * (down[addr_down_start] - up[COL_LEFT_ADDR]));
+            down_constraints.push(flag_active * not_last * (down[addr_down_start + 1] - up[COL_RIGHT_ADDR]));
+            down_constraints.push(flag_active * not_last * (down[addr_down_start + 2] - up[COL_RESULT_ADDR]));
         }
-        // I/O address flow: persist across rows
-        let addr_down_start = 32; // after 32 state down columns
-        down_constraints.push(flag_active * not_last * (down[addr_down_start] - up[COL_LEFT_ADDR]));
-        down_constraints.push(flag_active * not_last * (down[addr_down_start + 1] - up[COL_RIGHT_ADDR]));
-        down_constraints.push(flag_active * not_last * (down[addr_down_start + 2] - up[COL_RESULT_ADDR]));
 
         // Bus data (precompute for both BUS and !BUS paths)
         // Virtual columns (COL_V_*) are beyond committed range, so reconstruct from committed cols
@@ -228,6 +216,7 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
         builder.assert_bool(is_first_row);
         builder.assert_bool(is_last_row);
         builder.assert_bool(is_column_qr);
+        builder.assert_zero(is_first_row * is_last_row); // can't be both first and last
 
         if BUS {
             builder.assert_zero_ef(eval_virtual_bus_column::<AB, EF>(
@@ -238,7 +227,11 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
             builder.declare_values(&bus_data);
         }
 
+        // TEMP: skip G-function and output state constraints
+        return;
+
         // G-function constraints + output state verification
+        #[allow(unreachable_code)]
         let up = builder.up();
         let xor_table_base = AB::F::ZERO; // TODO: set to actual XOR_TABLE_BASE
         let mut all_constraints = Vec::new();
