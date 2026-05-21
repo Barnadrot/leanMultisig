@@ -1,6 +1,7 @@
 pub mod g_function;
 pub mod constrained_cols;
 pub mod constrained_trace;
+pub mod constrained_air;
 
 use crate::*;
 use crate::execution::memory::MemoryAccess;
