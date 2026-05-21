@@ -20,6 +20,8 @@ MERKLE_LEVELS_PER_CHUNK = MERKLE_LEVELS_PER_CHUNK_PLACEHOLDER
 N_MERKLE_CHUNKS = LOG_LIFETIME / MERKLE_LEVELS_PER_CHUNK
 INNER_PUB_MEM_SIZE = 2**INNER_PUBLIC_MEMORY_LOG_SIZE  # = DIGEST_LEN
 TWEAK_TABLE_ADDR = PREAMBLE_MEMORY_END
+# XOR byte lookup table: placed after the tweak table
+XOR_TABLE_ADDR = XOR_TABLE_ADDR_PLACEHOLDER
 
 # Tweak table layout: all tweaks are stored as a 4-FE slot [tw[0], tw[1], 0, 0]
 TWEAK_LEN = 4  # stride / slot size for non-encoding tweaks

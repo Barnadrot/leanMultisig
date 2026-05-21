@@ -366,6 +366,11 @@ pub fn aggregate_type_1(
     hints.insert("merkle_path".to_string(), merkle_path_blobs);
     hints.insert("aggregate_sizes".to_string(), vec![aggregate_sizes]);
     hints.insert("tweak_table".to_string(), vec![tweak_table]);
+    // XOR byte lookup table: 65536 entries, xor_table[256*a + b] = a ^ b
+    let xor_table: Vec<F> = (0..65536u32)
+        .map(|i| F::from_u32((i >> 8) ^ (i & 0xFF)))
+        .collect();
+    hints.insert("xor_table".to_string(), vec![xor_table]);
     if n_recursions > 0 {
         hints.insert(
             "bytecode_sumcheck_proof".to_string(),

@@ -147,7 +147,9 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
 
         // Generate the 14-row constrained trace
         let trace = ctx.traces.get_mut(&self.table()).unwrap();
-        let xor_table_base = 0; // TODO: set this to actual XOR table address in preamble
+        // XOR table base address: end of preamble minus XOR_TABLE_SIZE
+        // This is passed via the preamble memory layout
+        let xor_table_base = 0; // TODO: compute from preamble layout
         let _trace_output = generate_compression_trace(
             left_addr,
             right_addr,
