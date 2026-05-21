@@ -251,6 +251,41 @@ pub fn generate_compression_trace<M: MemoryAccess>(
                 columns[gc(G_CARRY_ROT7)].push(F::from_u32(carry_rot7));
             }
 
+            // Verify constraint: mx_value * R_CONST = byte_sum for G0
+            if cfg!(debug_assertions) {
+                let row_idx = columns[0].len() - 1;
+                let r_const = F::from_u32(2_164_260_863);
+                let mx_val = columns[g_col(0, G_MX_VALUE)][row_idx];
+                let mx_b0 = columns[g_col(0, G_MX_BYTES)][row_idx];
+                let mx_b1 = columns[g_col(0, G_MX_BYTES + 1)][row_idx];
+                let mx_b2 = columns[g_col(0, G_MX_BYTES + 2)][row_idx];
+                let mx_b3 = columns[g_col(0, G_MX_BYTES + 3)][row_idx];
+                let byte_sum = mx_b0 + mx_b1 * F::from_u32(256) + mx_b2 * F::from_u32(65536) + mx_b3 * F::from_u32(16777216);
+                let constraint_val = mx_val * r_const - byte_sum;
+                assert_eq!(constraint_val, F::ZERO, "Message decomp constraint failed at row {row_idx}");
+
+                // Check carry constraint: (a_lo + b_lo + mx_lo - result_lo) / 65536 ∈ {0,1,2}
+                let a_lo = columns[state_col(0, 0)][row_idx]; // state[0].lo
+                let b_b0 = columns[g_col(0, G_B_BYTES)][row_idx];
+                let b_b1 = columns[g_col(0, G_B_BYTES + 1)][row_idx];
+                let b_lo = b_b0 + b_b1 * F::from_u32(256);
+                let mx_lo = mx_b0 + mx_b1 * F::from_u32(256);
+                let add1_b0 = columns[g_col(0, G_ADD1_BYTES)][row_idx];
+                let add1_b1 = columns[g_col(0, G_ADD1_BYTES + 1)][row_idx];
+                let result_lo = add1_b0 + add1_b1 * F::from_u32(256);
+                let inv65536 = F::from_u32(2_130_673_921);
+                let carry_lo = (a_lo + b_lo + mx_lo - result_lo) * inv65536;
+                let two = F::from_u32(2);
+                let carry_check = carry_lo * (carry_lo - F::ONE) * (carry_lo - two);
+                if carry_check != F::ZERO {
+                    eprintln!("CARRY CONSTRAINT FAILED at row {row_idx}!");
+                    eprintln!("  a_lo={:?} b_lo={:?} mx_lo={:?} result_lo={:?} carry_lo={:?}",
+                        a_lo, b_lo, mx_lo, result_lo, carry_lo);
+                    eprintln!("  carry_check={:?}", carry_check);
+                    panic!("Carry constraint failed");
+                }
+            }
+
             // Fill output state columns (state has been updated by G-functions above)
             for w in 0..16 {
                 let lo = state[w] & 0xFFFF;
