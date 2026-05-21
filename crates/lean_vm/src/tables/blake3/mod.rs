@@ -1,3 +1,5 @@
+pub mod g_function;
+
 use crate::*;
 use crate::execution::memory::MemoryAccess;
 use backend::*;
