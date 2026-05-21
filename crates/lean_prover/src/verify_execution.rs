@@ -83,7 +83,7 @@ pub fn verify_execution(
         log_memory,
         &bytecode.instructions_multilinear,
         &table_n_vars,
-    )?;
+    ).map_err(|e| { eprintln!("VERIFY FAILED at logup: {:?}", e); e })?;
     let gkr_point = &logup_statements.gkr_point;
     let mut committed_statements: CommittedStatements = Default::default();
     for table in ALL_TABLES {
@@ -174,6 +174,7 @@ pub fn verify_execution(
     }
 
     if my_air_final_value != claimed_air_final_value {
+        eprintln!("VERIFY FAILED: AIR final value mismatch");
         return Err(ProofError::InvalidProof);
     }
 

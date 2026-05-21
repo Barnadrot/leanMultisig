@@ -85,6 +85,7 @@ pub fn prove_execution(
         ));
     }
     table_log = table_log.trim_end_matches(" | ").to_string();
+    eprintln!("Table sizes: {}", table_log);
     tracing::info!("Trace tables sizes: {}", table_log.magenta());
 
     // TODO parrallelize
