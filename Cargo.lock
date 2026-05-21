@@ -591,6 +591,7 @@ name = "lean_vm"
 version = "0.1.0"
 dependencies = [
  "backend",
+ "blake3",
  "itertools",
  "pest",
  "pest_derive",
