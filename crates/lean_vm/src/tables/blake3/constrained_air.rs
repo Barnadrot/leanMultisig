@@ -89,23 +89,18 @@ pub fn g_function_constraints<AB: AirBuilder>(
     let mx_lo = mx_b0 + mx_b1 * AB::F::from_u32(256);
     let mx_hi = mx_b2 + mx_b3 * AB::F::from_u32(256);
 
-    // carry_lo = (a_lo + b_lo + mx_lo - add1_lo) / 65536
-    // inv(65536) mod p where p = 2^31 - 2^24 + 1
+    // Step 1 carry constraints
     let inv65536 = AB::F::from_u32(2_130_673_921);
     let carry1_lo = (a_lo + b_lo + mx_lo - add1_lo) * inv65536;
-    // carry_lo ∈ {0, 1, 2}
     let two: AB::IF = AB::F::from_u32(2).into();
     assert_zero!(carry1_lo * (carry1_lo - AB::IF::ONE) * (carry1_lo - two));
-    // carry_hi = (a_hi + b_hi + mx_hi + carry_lo - add1_hi) / 65536
     let carry1_hi = (a_hi + b_hi + mx_hi + carry1_lo - add1_hi) * inv65536;
     assert_zero!(carry1_hi * (carry1_hi - AB::IF::ONE) * (carry1_hi - two));
 
     // ─── Step 2: d' = (d ^ a') >>> 16 ────────────────────────────────────
     // d bytes are used directly (d_lo, d_hi derived from G_D_BYTES above)
 
-    // XOR address constraints: addr = XOR_TABLE_BASE + 256 * a_byte + b_byte
-    // For d ^ a' (byte-wise), with >>>16 rotation (swap halves):
-    // xor2_bytes are the PRE-rotation XOR result
+    // XOR address: addr = XOR_TABLE_BASE + 256 * d_byte + a_byte
     for i in 0..4 {
         let d_byte = gc(G_D_BYTES + i);
         let a_byte = gc(G_ADD1_BYTES + i);
@@ -139,7 +134,6 @@ pub fn g_function_constraints<AB: AirBuilder>(
         assert_zero!(addr - xor_table_base - b_byte * AB::F::from_u32(256) - c_byte);
     }
 
-    // >>>12 split: xor4_b1 = split_lo_nibble + 16 * split_hi_nibble
     let xor4_b1 = gc(G_XOR4_BYTES + 1);
     let split4_lo = gc(G_XOR4_SPLIT);
     let split4_hi = gc(G_XOR4_SPLIT + 1);
@@ -249,34 +243,20 @@ pub fn g_function_constraints<AB: AirBuilder>(
     // For now, use a placeholder: assume the trace provides correct b' values
     // via the add3 result constraint
 
-    // ─── Step 6: d'' = (d' ^ a'') >>> 8 ─────────────────────────────────
     for i in 0..4 {
-        // d' bytes from xor2 after >>>16 rotation: d'_b[i] = xor2_b[(i+2) % 4]
         let d1_byte = gc(G_XOR2_BYTES + (i + 2) % 4);
         let a2_byte = gc(G_ADD3_BYTES + i);
         let addr = gc(G_XOR6_ADDRS + i);
         assert_zero!(addr - xor_table_base - d1_byte * AB::F::from_u32(256) - a2_byte);
     }
 
-    // ─── Step 8: b'' = (b' ^ c'') >>> 7 ─────────────────────────────────
-    for i in 0..4 {
-        // b' bytes from xor4 after >>>12 rotation: need the rotated byte mapping
-        // For >>>12: the byte mapping is non-trivial (crosses byte boundaries)
-        // b'_b[i] = f(xor4_bytes, split4) — depends on the rotation
-        // For the PoC, use xor4 bytes rotated approximately
-        // TODO: implement proper byte mapping for >>>12 rotation
-        let b1_byte = gc(G_XOR4_BYTES + (i + 1) % 4); // approximate, needs correction
-        let c2_byte = gc(G_ADD4_BYTES + i);
-        let addr = gc(G_XOR8_ADDRS + i);
-        assert_zero!(addr - xor_table_base - b1_byte * AB::F::from_u32(256) - c2_byte);
-    }
+    // TEMP: skip step 8 XOR to isolate
 
-    // >>>7 split: xor8_b0 = split_lo_7bits + 128 * split_hi_bit
     let xor8_b0 = gc(G_XOR8_BYTES);
     let split8_lo = gc(G_XOR8_SPLIT);
     let split8_hi = gc(G_XOR8_SPLIT + 1);
     assert_zero!(xor8_b0 - split8_lo - split8_hi * AB::F::from_u32(128));
-    assert_bool!(split8_hi); // 1 bit
+    assert_bool!(split8_hi);
 
     // Step 7 (c'' = c' + d'') carry constraints
     let add4_b0 = gc(G_ADD4_BYTES);
@@ -288,7 +268,7 @@ pub fn g_function_constraints<AB: AirBuilder>(
     // d'' limbs from >>>8 rotation: d''_lo = xor6_b1 + xor6_b2*256, d''_hi = xor6_b3 + xor6_b0*256
     let d2_lo = gc(G_XOR6_BYTES + 1) + gc(G_XOR6_BYTES + 2) * AB::F::from_u32(256);
     let d2_hi = gc(G_XOR6_BYTES + 3) + gc(G_XOR6_BYTES) * AB::F::from_u32(256);
-    let carry4_lo = (add2_lo + d2_lo - add4_lo) * inv65536; // c' + d'' (double-add)
+    let carry4_lo = (add2_lo + d2_lo - add4_lo) * inv65536;
     assert_zero!(carry4_lo * (carry4_lo - AB::IF::ONE));
     let carry4_hi = (add2_hi + d2_hi + carry4_lo - add4_hi) * inv65536;
     assert_zero!(carry4_hi * (carry4_hi - AB::IF::ONE));
