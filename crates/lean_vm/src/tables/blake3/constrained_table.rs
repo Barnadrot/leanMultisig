@@ -179,7 +179,8 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
     }
 
     fn degree_air(&self) -> usize {
-        3
+        3 // max constraint degree: carry*(carry-1)*(carry-2)
+        // NOTE: the sumcheck uses max_full_degree = max(degree_air+1 across all tables) = 10 (from Poseidon16)
     }
 
     fn down_column_indexes(&self) -> Vec<usize> {
