@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use crate::*;
-use crate::{execution::memory::MemoryAccess, tables::poseidon_16::trace_gen::generate_trace_rows_for_perm};
+use crate::{execution::memory::MemoryAccess, tables::poseidon::trace_gen::generate_trace_rows_for_perm};
 use backend::*;
 use utils::{ToUsize, poseidon16_compress, poseidon16_permute};
 
