@@ -57,11 +57,14 @@ fn blake3_leaf_hash(row: &[KoalaBear], full_base_width: usize) -> [KoalaBear; DI
 }
 
 fn blake3_compress_internal(left: [KoalaBear; DIGEST_ELEMS], right: [KoalaBear; DIGEST_ELEMS]) -> [KoalaBear; DIGEST_ELEMS] {
-    let left_bytes: &[u8; DIGEST_ELEMS * 4] = unsafe { &*(&left as *const _ as *const _) };
-    let right_bytes: &[u8; DIGEST_ELEMS * 4] = unsafe { &*(&right as *const _ as *const _) };
     let mut buf = [0u8; DIGEST_ELEMS * 2 * 4];
-    buf[..DIGEST_ELEMS * 4].copy_from_slice(left_bytes);
-    buf[DIGEST_ELEMS * 4..].copy_from_slice(right_bytes);
+    for (i, v) in left.iter().enumerate() {
+        buf[i * 4..(i + 1) * 4].copy_from_slice(&v.as_canonical_u32().to_le_bytes());
+    }
+    for (i, v) in right.iter().enumerate() {
+        let off = DIGEST_ELEMS * 4 + i * 4;
+        buf[off..off + 4].copy_from_slice(&v.as_canonical_u32().to_le_bytes());
+    }
     let hash = blake3::hash(&buf);
     blake3_digest_to_field(hash.as_bytes())
 }
