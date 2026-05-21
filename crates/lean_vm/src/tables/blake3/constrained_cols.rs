@@ -79,8 +79,14 @@ pub const COLS_PER_G: usize = 72;
 pub const COL_G_START: ColIndex = COL_STATE_START + N_STATE_COLS;
 pub const N_G_COLS: usize = 4 * COLS_PER_G; // = 288
 
-/// Control columns (after G-function region).
-pub const COL_CTRL_START: ColIndex = COL_G_START + N_G_COLS;
+/// Output state columns: 16 words × 2 limbs = 32 columns.
+/// These store the state AFTER the 4 G-functions have been applied.
+/// The DOWN constraint links: next_row.state[w] == this_row.output_state[w].
+pub const COL_OUTPUT_STATE_START: ColIndex = COL_G_START + N_G_COLS;
+pub const N_OUTPUT_STATE_COLS: usize = 32;
+
+/// Control columns (after output state).
+pub const COL_CTRL_START: ColIndex = COL_OUTPUT_STATE_START + N_OUTPUT_STATE_COLS;
 pub const COL_FLAG_ACTIVE: ColIndex = COL_CTRL_START;
 pub const COL_IS_FIRST_ROW: ColIndex = COL_CTRL_START + 1;
 pub const COL_IS_LAST_ROW: ColIndex = COL_CTRL_START + 2;
@@ -91,7 +97,7 @@ pub const COL_RESULT_ADDR: ColIndex = COL_CTRL_START + 6;  // down column: outpu
 pub const N_CTRL_COLS: usize = 7;
 
 /// Total committed columns.
-pub const N_COMMITTED_COLS: usize = COL_CTRL_START + N_CTRL_COLS; // 32 + 288 + 7 = 327
+pub const N_COMMITTED_COLS: usize = COL_CTRL_START + N_CTRL_COLS; // 32 + 288 + 32 + 7 = 359
 
 /// Virtual columns (not committed, used for bus interaction).
 pub const COL_V_INDEX_LEFT: ColIndex = N_COMMITTED_COLS;
@@ -123,11 +129,33 @@ pub const fn diag_qr_indices(g: usize) -> (usize, usize, usize, usize) {
 
 // ─── Compile-time verification ───────────────────────────────────────────────
 
+/// Get the output state column index for word `w` (0..15), limb `l` (0=lo, 1=hi).
+pub const fn output_state_col(word: usize, limb: usize) -> ColIndex {
+    COL_OUTPUT_STATE_START + word * 2 + limb
+}
+
+/// Down column indices: state (input) + I/O addresses.
+/// The down constraint links: next_row.state == this_row.output_state.
+pub fn down_columns() -> Vec<usize> {
+    let mut downs = Vec::new();
+    // State columns flow to next row
+    for w in 0..16 {
+        downs.push(state_col(w, 0));
+        downs.push(state_col(w, 1));
+    }
+    // I/O addresses persist across rows
+    downs.push(COL_LEFT_ADDR);
+    downs.push(COL_RIGHT_ADDR);
+    downs.push(COL_RESULT_ADDR);
+    downs
+}
+
 const _: () = {
     assert!(COLS_PER_G == 72);
     assert!(N_G_COLS == 288);
-    assert!(N_COMMITTED_COLS == 327);
-    assert!(N_TOTAL_COLS == 329);
+    assert!(N_OUTPUT_STATE_COLS == 32);
+    assert!(N_COMMITTED_COLS == 359);
+    assert!(N_TOTAL_COLS == 361);
 };
 
 #[cfg(test)]
