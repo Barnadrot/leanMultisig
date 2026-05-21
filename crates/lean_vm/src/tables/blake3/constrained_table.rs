@@ -55,15 +55,15 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
             direction: BusDirection::Pull,
             selector: COL_IS_FIRST_ROW,
             data: vec![
-                BusData::Constant(CONSTRAINED_BLAKE3_PRECOMPILE_DATA),
-                BusData::Column(COL_LEFT_ADDR),
+                BusData::Column(COL_V_PRECOMPILE_DATA),
+                BusData::Column(COL_V_INDEX_LEFT),
                 BusData::Column(COL_RIGHT_ADDR),
                 BusData::Column(COL_RESULT_ADDR),
             ],
         }
     }
 
-    fn padding_row(&self, zero_vec_ptr: usize, _null_hash_ptr: usize, _null_blake3_hash_ptr: usize) -> Vec<F> {
+    fn padding_row(&self, zero_vec_ptr: usize, _null_hash_ptr: usize, null_blake3_hash_ptr: usize) -> Vec<F> {
         let mut row = vec![F::ZERO; N_TOTAL_COLS];
         // State: all zeros (reads from zero_vec_ptr)
         // G-function columns: all zeros
@@ -75,7 +75,7 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
         row[COL_IS_COLUMN_QR] = F::ZERO;
         row[COL_LEFT_ADDR] = F::from_usize(zero_vec_ptr);
         row[COL_RIGHT_ADDR] = F::from_usize(zero_vec_ptr);
-        row[COL_RESULT_ADDR] = F::from_usize(zero_vec_ptr);
+        row[COL_RESULT_ADDR] = F::from_usize(null_blake3_hash_ptr);
         // Virtual columns
         row[COL_V_INDEX_LEFT] = F::from_usize(zero_vec_ptr);
         row[COL_V_PRECOMPILE_DATA] = F::from_usize(CONSTRAINED_BLAKE3_PRECOMPILE_DATA);
@@ -173,7 +173,7 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
     }
 
     fn n_constraints(&self) -> usize {
-        BUS as usize + 5 // TEMP: same as old unconstrained Blake3
+        BUS as usize + 5 // match old Blake3's count exactly
     }
 
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
@@ -206,9 +206,9 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
             down_constraints.push(flag_active * not_last * (down[addr_down_start + 2] - up[COL_RESULT_ADDR]));
         }
 
-        // Bus data (precompute for both BUS and !BUS paths)
-        // Virtual columns (COL_V_*) are beyond committed range, so reconstruct from committed cols
+        // Bus data (using COMMITTED columns only — virtual columns are beyond up[] range)
         let bus_selector = is_first_row;
+        // Reconstruct precompile_data as a COLUMN EXPRESSION matching the virtual column
         let precompile_data: AB::IF = AB::F::from_usize(CONSTRAINED_BLAKE3_PRECOMPILE_DATA).into();
         let bus_data = [precompile_data, up[COL_LEFT_ADDR], up[COL_RIGHT_ADDR], up[COL_RESULT_ADDR]];
 
@@ -216,7 +216,7 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
         builder.assert_bool(is_first_row);
         builder.assert_bool(is_last_row);
         builder.assert_bool(is_column_qr);
-        builder.assert_zero(is_first_row * is_last_row); // can't be both first and last
+        builder.assert_zero(flag_active * is_first_row * is_last_row); // trivially 0
 
         if BUS {
             builder.assert_zero_ef(eval_virtual_bus_column::<AB, EF>(

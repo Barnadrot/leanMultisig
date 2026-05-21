@@ -150,6 +150,11 @@ pub fn verify_execution(
         let n_cols_total = vd.table.n_columns() + vd.table.n_down_columns();
         let col_evals = verifier_state.next_extension_scalars_vec(n_cols_total)?;
 
+        if vd.table.name().contains("blake3") {
+            let n = col_evals.len();
+            eprintln!("VERIFIER blake3 col_evals len={} last_few={:?}",
+                n, &col_evals[n-7..]);
+        }
         macro_rules! eval_constraint {
             ($t:expr) => {{ <_ as SumcheckComputation<EF>>::eval_extension($t, &col_evals, &vd.extra_data) }};
         }
@@ -157,13 +162,15 @@ pub fn verify_execution(
 
         let bus_point = from_end(gkr_point, table_n_vars[&vd.table]);
         let natural_ordering_point = natural_ordering_point_for_session(&sumcheck_air_point.0, table_n_vars[&vd.table]);
-        my_air_final_value += back_loaded_table_contribution(
+        let table_contrib = back_loaded_table_contribution(
             bus_point,
             &sumcheck_air_point.0,
             &natural_ordering_point,
             constraint_eval,
             vd.eta_power,
         );
+        eprintln!("  table {} contribution: constraint_eval={:?}", vd.table.name(), constraint_eval);
+        my_air_final_value += table_contrib;
 
         macro_rules! split {
             ($t:expr) => {{ columns_evals_up_and_down($t, &col_evals, &natural_ordering_point) }};
@@ -175,6 +182,13 @@ pub fn verify_execution(
 
     if my_air_final_value != claimed_air_final_value {
         eprintln!("VERIFY FAILED: AIR final value mismatch");
+        eprintln!("  my_value:      {:?}", my_air_final_value);
+        eprintln!("  claimed_value: {:?}", claimed_air_final_value);
+        for vd in &verify_data {
+            let n_cols_total = vd.table.n_columns() + vd.table.n_down_columns();
+            eprintln!("  table {}: n_cols={} n_constraints={} n_down={}",
+                vd.table.name(), vd.table.n_columns(), vd.table.n_constraints(), vd.table.n_down_columns());
+        }
         return Err(ProofError::InvalidProof);
     }
 

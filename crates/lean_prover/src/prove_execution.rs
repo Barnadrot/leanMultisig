@@ -86,6 +86,23 @@ pub fn prove_execution(
     }
     table_log = table_log.trim_end_matches(" | ").to_string();
     eprintln!("Table sizes: {}", table_log);
+    // Debug: verify trace column counts
+    for (table, trace) in &traces {
+        if trace.columns.len() != table.n_columns_total() {
+            eprintln!("COLUMN COUNT MISMATCH: {} has {} columns but n_columns_total={}",
+                table.name(), trace.columns.len(), table.n_columns_total());
+        }
+        eprintln!("  {} non_padded={} log_n_rows={} cols={}",
+            table.name(), trace.non_padded_n_rows, trace.log_n_rows, trace.columns.len());
+        let expected_rows = 1 << trace.log_n_rows;
+        for (i, col) in trace.columns.iter().enumerate() {
+            if col.len() != expected_rows {
+                eprintln!("ROW COUNT MISMATCH: {} col {} has {} rows but expected {}",
+                    table.name(), i, col.len(), expected_rows);
+                break;
+            }
+        }
+    }
     tracing::info!("Trace tables sizes: {}", table_log.magenta());
 
     // TODO parrallelize
@@ -218,6 +235,11 @@ pub fn prove_execution(
 
     for (idx, (table, _)) in tables_sorted.iter().enumerate() {
         let col_evals = sessions[idx].final_column_evals();
+        if table.name().contains("blake3") {
+            let n = col_evals.len();
+            eprintln!("PROVER blake3 col_evals len={} last_few={:?}",
+                n, &col_evals[n-7..]);
+        }
         prover_state.add_extension_scalars(&col_evals);
 
         let natural_ordering_point =
