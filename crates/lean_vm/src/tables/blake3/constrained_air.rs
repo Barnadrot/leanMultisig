@@ -50,14 +50,18 @@ pub fn g_function_constraints<AB: AirBuilder>(
     let d_hi = sl(d_idx, 1);
 
     // ─── Message byte decomposition ──────────────────────────────────────
-    // mx_value = mx_b0 + 256*mx_b1 + 65536*mx_b2 + 16777216*mx_b3
+    // The native blake3 uses Montgomery-form bytes (unsafe transmute).
+    // The AIR converts field elements to Montgomery by multiplying by R_CONST:
+    // mx_value * R_CONST = mx_b0 + 256*mx_b1 + 65536*mx_b2 + 16777216*mx_b3
+    // R_CONST = 2^32 mod p = 2164260863
+    let r_const = AB::F::from_u32(2_164_260_863);
     let mx_value = gc(G_MX_VALUE);
     let mx_b0 = gc(G_MX_BYTES);
     let mx_b1 = gc(G_MX_BYTES + 1);
     let mx_b2 = gc(G_MX_BYTES + 2);
     let mx_b3 = gc(G_MX_BYTES + 3);
     assert_zero!(
-        mx_value - mx_b0
+        mx_value * r_const - mx_b0
             - mx_b1 * AB::F::from_u32(256)
             - mx_b2 * AB::F::from_u32(65536)
             - mx_b3 * AB::F::from_u32(16777216),
@@ -69,7 +73,7 @@ pub fn g_function_constraints<AB: AirBuilder>(
     let my_b2 = gc(G_MY_BYTES + 2);
     let my_b3 = gc(G_MY_BYTES + 3);
     assert_zero!(
-        my_value - my_b0
+        my_value * r_const - my_b0
             - my_b1 * AB::F::from_u32(256)
             - my_b2 * AB::F::from_u32(65536)
             - my_b3 * AB::F::from_u32(16777216),

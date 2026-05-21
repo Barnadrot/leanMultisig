@@ -11,16 +11,14 @@ fn blake3_digest_to_field(hash_bytes: &[u8; 32]) -> [KoalaBear; DIGEST_LEN_BLAKE
 
 #[inline(always)]
 pub fn blake3_compress(left: &[KoalaBear; 8], right: &[KoalaBear; 8]) -> [KoalaBear; 8] {
-    // Use canonical field values (as_canonical_u32) for AIR compatibility.
-    // The constrained Blake3 AIR operates on canonical values, so the native
-    // function must match.
+    // Zero-copy: transmute field elements to bytes (Montgomery representation).
+    // The constrained Blake3 AIR multiplies by R_CONST = 2^32 mod p in its
+    // byte decomposition constraints to match this Montgomery encoding.
+    let left_bytes: &[u8; 32] = unsafe { &*(left as *const _ as *const _) };
+    let right_bytes: &[u8; 32] = unsafe { &*(right as *const _ as *const _) };
     let mut buf = [0u8; 64];
-    for i in 0..8 {
-        buf[i * 4..(i + 1) * 4].copy_from_slice(&left[i].as_canonical_u32().to_le_bytes());
-    }
-    for i in 0..8 {
-        buf[32 + i * 4..32 + (i + 1) * 4].copy_from_slice(&right[i].as_canonical_u32().to_le_bytes());
-    }
+    buf[..32].copy_from_slice(left_bytes);
+    buf[32..].copy_from_slice(right_bytes);
     let hash = blake3::hash(&buf);
     blake3_digest_to_field(hash.as_bytes())
 }

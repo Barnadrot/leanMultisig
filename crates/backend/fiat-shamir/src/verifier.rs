@@ -79,19 +79,12 @@ where
         // SAFETY: We've confirmed PF<EF> == KoalaBear
         let paths: PrunedMerklePaths<KoalaBear, KoalaBear> = unsafe { std::mem::transmute(paths) };
 
-        let to_canonical_bytes = |arr: &[KoalaBear]| -> Vec<u8> {
-            let mut bytes = Vec::with_capacity(arr.len() * 4);
-            for elem in arr {
-                bytes.extend_from_slice(&elem.as_canonical_u32().to_le_bytes());
-            }
-            bytes
-        };
         let combine_fn = |left: &[KoalaBear; DIGEST_LEN_FE], right: &[KoalaBear; DIGEST_LEN_FE]| -> [KoalaBear; DIGEST_LEN_FE] {
+            let left_bytes: &[u8; DIGEST_LEN_FE * 4] = unsafe { &*(left as *const _ as *const _) };
+            let right_bytes: &[u8; DIGEST_LEN_FE * 4] = unsafe { &*(right as *const _ as *const _) };
             let mut buf = [0u8; DIGEST_LEN_FE * 2 * 4];
-            let left_bytes = to_canonical_bytes(left);
-            let right_bytes = to_canonical_bytes(right);
-            buf[..DIGEST_LEN_FE * 4].copy_from_slice(&left_bytes);
-            buf[DIGEST_LEN_FE * 4..].copy_from_slice(&right_bytes);
+            buf[..DIGEST_LEN_FE * 4].copy_from_slice(left_bytes);
+            buf[DIGEST_LEN_FE * 4..].copy_from_slice(right_bytes);
             let hash = blake3::hash(&buf);
             blake3_digest_to_field(hash.as_bytes())
         };
@@ -103,11 +96,11 @@ where
                 data[i * DIGEST_LEN_FE..(i + 1) * DIGEST_LEN_FE].try_into().unwrap()
             };
             let blake3_pair = |left: [KoalaBear; DIGEST_LEN_FE], right: [KoalaBear; DIGEST_LEN_FE]| -> [KoalaBear; DIGEST_LEN_FE] {
+                let left_bytes: &[u8; DIGEST_LEN_FE * 4] = unsafe { &*(&left as *const _ as *const _) };
+                let right_bytes: &[u8; DIGEST_LEN_FE * 4] = unsafe { &*(&right as *const _ as *const _) };
                 let mut buf = [0u8; DIGEST_LEN_FE * 2 * 4];
-                let left_bytes = to_canonical_bytes(&left);
-                let right_bytes = to_canonical_bytes(&right);
-                buf[..DIGEST_LEN_FE * 4].copy_from_slice(&left_bytes);
-                buf[DIGEST_LEN_FE * 4..].copy_from_slice(&right_bytes);
+                buf[..DIGEST_LEN_FE * 4].copy_from_slice(left_bytes);
+                buf[DIGEST_LEN_FE * 4..].copy_from_slice(right_bytes);
                 let hash = blake3::hash(&buf);
                 blake3_digest_to_field(hash.as_bytes())
             };

@@ -10,6 +10,13 @@ use crate::execution::memory::MemoryAccess;
 use backend::{PrimeCharacteristicRing, PrimeField32};
 use utils::ToUsize;
 
+/// Extract the raw Montgomery-form u32 from a KoalaBear field element.
+/// MontyField31 is #[repr(transparent)] over u32, so transmute is safe.
+#[inline(always)]
+fn monty_u32(f: F) -> u32 {
+    unsafe { std::mem::transmute::<F, u32>(f) }
+}
+
 use super::constrained_cols::*;
 use super::g_function::*;
 
@@ -91,11 +98,12 @@ pub fn generate_compression_trace<M: MemoryAccess>(
     let left = memory.get_slice(left_addr, 8)?;
     let right = memory.get_slice(right_addr, 8)?;
 
-    // Convert inputs to 32-bit message words
+    // Convert inputs to 32-bit message words (Montgomery form = raw u32)
+    // This matches the native blake3_compress which transmutes field elements to bytes
     let mut msg_u32 = [0u32; 16];
     for i in 0..8 {
-        msg_u32[i] = left[i].to_usize() as u32;
-        msg_u32[i + 8] = right[i].to_usize() as u32;
+        msg_u32[i] = monty_u32(left[i]);
+        msg_u32[i + 8] = monty_u32(right[i]);
     }
 
     // Initialize state
@@ -264,21 +272,7 @@ mod tests {
     use super::*;
     use backend::PrimeField32;
 
-    /// Canonical-value Blake3 compress: uses as_canonical_u32() to extract
-    /// input values, NOT the Montgomery-form transmute used by the native function.
-    /// This matches what the constrained AIR verifies.
-    fn blake3_compress_canonical(left: &[F; 8], right: &[F; 8]) -> [F; 8] {
-        let mut buf = [0u8; 64];
-        for i in 0..8 {
-            buf[i*4..(i+1)*4].copy_from_slice(&left[i].as_canonical_u32().to_le_bytes());
-            buf[32+i*4..32+(i+1)*4].copy_from_slice(&right[i].as_canonical_u32().to_le_bytes());
-        }
-        let hash = blake3::hash(&buf);
-        std::array::from_fn(|j| {
-            let val = u32::from_le_bytes(hash.as_bytes()[j*4..j*4+4].try_into().unwrap());
-            F::from_u32(val % F::ORDER_U32)
-        })
-    }
+    use utils::blake3_compress;
 
     struct SimpleMemory(Vec<F>);
     impl MemoryAccess for SimpleMemory {
@@ -299,8 +293,8 @@ mod tests {
         let right = [F::from_u32(9), F::from_u32(10), F::from_u32(11), F::from_u32(12),
                       F::from_u32(13), F::from_u32(14), F::from_u32(15), F::from_u32(16)];
 
-        // Canonical-value Blake3 (matches what the constrained AIR verifies)
-        let expected = blake3_compress_canonical(&left, &right);
+        // Native blake3_compress (Montgomery-form transmute) — trace must match
+        let expected = blake3_compress(&left, &right);
 
         // Trace-based blake3_compress
         let mut mem = SimpleMemory(vec![F::ZERO; 100]);
