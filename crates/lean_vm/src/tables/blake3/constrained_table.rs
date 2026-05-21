@@ -52,7 +52,7 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
     fn bus(&self) -> Bus {
         Bus {
             direction: BusDirection::Pull,
-            selector: COL_FLAG_ACTIVE,
+            selector: COL_IS_FIRST_ROW,
             data: vec![
                 BusData::Column(COL_V_PRECOMPILE_DATA),
                 BusData::Column(COL_V_INDEX_LEFT),
@@ -194,9 +194,10 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
         // Use NEW column indices for bus constraint
         let up = builder.up();
-        let flag_active = up[COL_FLAG_ACTIVE]; // column 364
+        let flag_active = up[COL_FLAG_ACTIVE];
+        let is_first_row = up[COL_IS_FIRST_ROW];
         let precompile_data: AB::IF = AB::F::from_usize(CONSTRAINED_BLAKE3_PRECOMPILE_DATA).into();
-        let bus_selector = flag_active;
+        let bus_selector = is_first_row; // Only first row pulls from bus
         let bus_data = [precompile_data, up[COL_LEFT_ADDR], up[COL_RIGHT_ADDR], up[COL_RESULT_ADDR]];
 
         if BUS {
