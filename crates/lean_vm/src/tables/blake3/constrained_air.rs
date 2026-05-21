@@ -313,6 +313,62 @@ pub fn g_function_constraints<AB: AirBuilder>(
     constraints
 }
 
+/// Compute the output state limbs for a G-function from its trace columns.
+/// Returns [(a''_lo, a''_hi), (b''_lo, b''_hi), (c''_lo, c''_hi), (d''_lo, d''_hi)]
+/// Also returns constraint expressions for the rotation reconstructions.
+pub fn g_function_outputs<AB: AirBuilder>(
+    up: &[AB::IF],
+    g: usize,
+) -> ([(AB::IF, AB::IF); 4], Vec<AB::IF>) {
+    let gc = |offset: usize| -> AB::IF { up[g_col(g, offset)] };
+    let mut constraints = Vec::new();
+
+    // a'' = step 5 addition result
+    let a_out_lo = gc(G_ADD3_BYTES) + gc(G_ADD3_BYTES + 1) * AB::F::from_u32(256);
+    let a_out_hi = gc(G_ADD3_BYTES + 2) + gc(G_ADD3_BYTES + 3) * AB::F::from_u32(256);
+
+    // c'' = step 7 addition result
+    let c_out_lo = gc(G_ADD4_BYTES) + gc(G_ADD4_BYTES + 1) * AB::F::from_u32(256);
+    let c_out_hi = gc(G_ADD4_BYTES + 2) + gc(G_ADD4_BYTES + 3) * AB::F::from_u32(256);
+
+    // d'' = step 6 XOR result >>>8 (byte rotation)
+    let d_out_lo = gc(G_XOR6_BYTES + 1) + gc(G_XOR6_BYTES + 2) * AB::F::from_u32(256);
+    let d_out_hi = gc(G_XOR6_BYTES + 3) + gc(G_XOR6_BYTES) * AB::F::from_u32(256);
+
+    // b'' = step 8 XOR result >>>7
+    // xor8 bytes: [xor8_b0, xor8_b1, xor8_b2, xor8_b3]
+    // xor8_b0 = split8_lo7 + 128 * split8_hi1
+    // After >>>7: result = (xor8 >> 7) | ((xor8 & 0x7F) << 25)
+    // result_lo = split8_hi1 + xor8_b1 * 2 + xor8_b2 * 512 - carry_rot7 * 65536
+    // result_hi = carry_rot7 + xor8_b3 * 2 + split8_lo7 * 512
+    let split8_lo7 = gc(G_XOR8_SPLIT);
+    let split8_hi1 = gc(G_XOR8_SPLIT + 1);
+    let xor8_b1 = gc(G_XOR8_BYTES + 1);
+    let xor8_b2 = gc(G_XOR8_BYTES + 2);
+    let xor8_b3 = gc(G_XOR8_BYTES + 3);
+    let carry_rot7 = gc(G_CARRY_ROT7);
+
+    let b_out_lo = split8_hi1 + xor8_b1 * AB::F::from_u32(2)
+        + xor8_b2 * AB::F::from_u32(512) - carry_rot7 * AB::F::from_u32(65536);
+    let b_out_hi = carry_rot7 + xor8_b3 * AB::F::from_u32(2)
+        + split8_lo7 * AB::F::from_u32(512);
+
+    // Constraint: carry_rot7 is boolean
+    constraints.push(carry_rot7 * (carry_rot7 - AB::IF::ONE));
+
+    // Constraint: xor4_b3 nibble split (for >>>12 — not used in output_state
+    // of this G-function, but needed for step 5's addition input b')
+    let xor4_b3 = gc(G_XOR4_BYTES + 3);
+    let xor4_b3_lo = gc(G_XOR4_B3_SPLIT);
+    let xor4_b3_hi = gc(G_XOR4_B3_SPLIT + 1);
+    constraints.push(xor4_b3 - xor4_b3_lo - xor4_b3_hi * AB::F::from_u32(16));
+
+    (
+        [(a_out_lo, a_out_hi), (b_out_lo, b_out_hi), (c_out_lo, c_out_hi), (d_out_lo, d_out_hi)],
+        constraints,
+    )
+}
+
 /// Count constraints per G-function.
 pub const fn constraints_per_g() -> usize {
     2  // message byte decomp (mx, my)

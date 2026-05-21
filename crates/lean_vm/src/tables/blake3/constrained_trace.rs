@@ -224,12 +224,31 @@ pub fn generate_compression_trace<M: MemoryAccess>(
                 } else {
                     right_addr + my_sigma_idx - 8
                 };
-                columns[gc(G_MX_VALUE)].push(F::from_u32(mx));
-                fill_word_bytes(columns, gc(G_MX_BYTES), mx);
+                // Message value columns: store the ORIGINAL field element from memory
+                // (not F::from_u32(monty) which would double-convert)
+                let mx_field = if mx_sigma_idx < 8 { left[mx_sigma_idx] } else { right[mx_sigma_idx - 8] };
+                let my_field = if my_sigma_idx < 8 { left[my_sigma_idx] } else { right[my_sigma_idx - 8] };
+                columns[gc(G_MX_VALUE)].push(mx_field);
+                fill_word_bytes(columns, gc(G_MX_BYTES), mx); // bytes of Montgomery u32
                 columns[gc(G_MX_ADDR)].push(F::from_usize(mx_addr));
-                columns[gc(G_MY_VALUE)].push(F::from_u32(my));
-                fill_word_bytes(columns, gc(G_MY_BYTES), my);
+                columns[gc(G_MY_VALUE)].push(my_field);
+                fill_word_bytes(columns, gc(G_MY_BYTES), my); // bytes of Montgomery u32
                 columns[gc(G_MY_ADDR)].push(F::from_usize(my_addr));
+
+                // Rotation reconstruction columns
+                // >>>12: xor4_b3 nibble split
+                let xor4_b3 = (xor4_val >> 24) & 0xFF;
+                columns[gc(G_XOR4_B3_SPLIT)].push(F::from_u32(xor4_b3 & 0x0F));     // lo nibble
+                columns[gc(G_XOR4_B3_SPLIT) + 1].push(F::from_u32(xor4_b3 >> 4));   // hi nibble
+
+                // >>>7: carry for limb reconstruction
+                // b''_lo_raw = split8_hi1 + xor8_b1*2 + xor8_b2*512
+                let xor8_b1 = (xor8_val >> 8) & 0xFF;
+                let xor8_b2 = (xor8_val >> 16) & 0xFF;
+                let split8_hi1 = xor8_b0 >> 7;
+                let b2_lo_raw = split8_hi1 + xor8_b1 * 2 + xor8_b2 * 512;
+                let carry_rot7 = b2_lo_raw >> 16;
+                columns[gc(G_CARRY_ROT7)].push(F::from_u32(carry_rot7));
             }
 
             // Fill output state columns (state has been updated by G-functions above)

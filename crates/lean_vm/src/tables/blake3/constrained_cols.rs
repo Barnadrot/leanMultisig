@@ -71,9 +71,12 @@ pub const G_MX_ADDR: usize = 65;       // 1 col: memory address for mx
 pub const G_MY_VALUE: usize = 66;      // 1 col: message word my (field element from memory)
 pub const G_MY_BYTES: usize = 67;      // 4 cols: byte decomp of my
 pub const G_MY_ADDR: usize = 71;       // 1 col: memory address for my
+// Rotation reconstruction columns
+pub const G_XOR4_B3_SPLIT: usize = 72; // 2 cols: xor4_b3 nibble split for >>>12 reconstruction
+pub const G_CARRY_ROT7: usize = 74;    // 1 col: carry boolean for >>>7 limb reconstruction
 
 /// Total columns per G-function.
-pub const COLS_PER_G: usize = 72;
+pub const COLS_PER_G: usize = 75;
 
 /// G-function region: 4 G-functions after the state columns.
 pub const COL_G_START: ColIndex = COL_STATE_START + N_STATE_COLS;
@@ -151,11 +154,11 @@ pub fn down_columns() -> Vec<usize> {
 }
 
 const _: () = {
-    assert!(COLS_PER_G == 72);
-    assert!(N_G_COLS == 288);
+    assert!(COLS_PER_G == 75);
+    assert!(N_G_COLS == 300);
     assert!(N_OUTPUT_STATE_COLS == 32);
-    assert!(N_COMMITTED_COLS == 359);
-    assert!(N_TOTAL_COLS == 361);
+    assert!(N_COMMITTED_COLS == 371);
+    assert!(N_TOTAL_COLS == 373);
 };
 
 #[cfg(test)]

@@ -182,8 +182,9 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
         // Control booleans: 4
         // Bus interaction: 1 (if BUS)
         // Down constraints: 32 (state) + 3 (addresses) = 35
-        // Output state vs G-function output: 32
-        BUS as usize + 4 * super::constrained_air::constraints_per_g() + 4 + 35 + 32
+        // Output state vs G-function output: 32 (8 per G × 4 G)
+        // Rotation reconstruction: carry_rot7 boolean (1 per G) + xor4_b3 split (1 per G) = 8
+        BUS as usize + 4 * super::constrained_air::constraints_per_g() + 4 + 35 + 32 + 8
     }
 
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
@@ -237,19 +238,90 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
             builder.declare_values(&bus_data);
         }
 
-        // G-function constraints
-        // Precompute all G-function constraint expressions from up columns
+        // G-function constraints + output state verification
         let up = builder.up();
         let xor_table_base = AB::F::ZERO; // TODO: set to actual XOR_TABLE_BASE
-        let mut g_constraints = Vec::new();
+        let mut all_constraints = Vec::new();
+
+        // G-function AIR constraints (addition carries, byte decomposition, XOR addresses)
+        // NOTE: g_function_constraints references state words via col_qr_indices.
+        // The state columns contain the CORRECT values for each QR type (filled by trace gen).
+        // The G-function constraints verify the COMPUTATION (a+b+m, d^a>>>r, etc.)
+        // using state values directly — they don't need QR multiplexing since they
+        // reference the G-function's own columns, not the global state mapping.
         for g in 0..4 {
             let (a_idx, b_idx, c_idx, d_idx) = col_qr_indices(g);
             let exprs = super::constrained_air::g_function_constraints::<AB>(
                 up, g, a_idx, b_idx, c_idx, d_idx, xor_table_base,
             );
-            g_constraints.extend(exprs);
+            all_constraints.extend(exprs);
+
+            // Output reconstruction constraints + carry/split constraints
+            let (outputs, rot_constraints) = super::constrained_air::g_function_outputs::<AB>(up, g);
+            all_constraints.extend(rot_constraints);
+
+            // Map G-function outputs to output_state columns using QR multiplexing.
+            // Column QR G_i: a=i, b=i+4, c=i+8, d=i+12
+            // Diagonal QR G_i: a=i, b=(i+1)%4+4, c=(i+2)%4+8, d=(i+3)%4+12
+            let (a_w, b_w_col, c_w_col, d_w_col) = col_qr_indices(g);
+            let (_a_w2, b_w_diag, c_w_diag, d_w_diag) = diag_qr_indices(g);
+
+            // a'' always goes to word g (same for both QR types)
+            let (a_out_lo, a_out_hi) = outputs[0];
+            all_constraints.push(up[output_state_col(a_w, 0)] - a_out_lo);
+            all_constraints.push(up[output_state_col(a_w, 1)] - a_out_hi);
+
+            // b'': column QR → word b_w_col, diagonal QR → word b_w_diag
+            let (b_out_lo, b_out_hi) = outputs[1];
+            if b_w_col == b_w_diag {
+                all_constraints.push(up[output_state_col(b_w_col, 0)] - b_out_lo);
+                all_constraints.push(up[output_state_col(b_w_col, 1)] - b_out_hi);
+            } else {
+                // Multiplexed: is_col * (out[col_w] - b'') + (1-is_col) * (out[diag_w] - b'')
+                all_constraints.push(
+                    is_column_qr * (up[output_state_col(b_w_col, 0)] - b_out_lo)
+                    + (AB::IF::ONE - is_column_qr) * (up[output_state_col(b_w_diag, 0)] - b_out_lo)
+                );
+                all_constraints.push(
+                    is_column_qr * (up[output_state_col(b_w_col, 1)] - b_out_hi)
+                    + (AB::IF::ONE - is_column_qr) * (up[output_state_col(b_w_diag, 1)] - b_out_hi)
+                );
+            }
+
+            // c'': same multiplexing pattern
+            let (c_out_lo, c_out_hi) = outputs[2];
+            if c_w_col == c_w_diag {
+                all_constraints.push(up[output_state_col(c_w_col, 0)] - c_out_lo);
+                all_constraints.push(up[output_state_col(c_w_col, 1)] - c_out_hi);
+            } else {
+                all_constraints.push(
+                    is_column_qr * (up[output_state_col(c_w_col, 0)] - c_out_lo)
+                    + (AB::IF::ONE - is_column_qr) * (up[output_state_col(c_w_diag, 0)] - c_out_lo)
+                );
+                all_constraints.push(
+                    is_column_qr * (up[output_state_col(c_w_col, 1)] - c_out_hi)
+                    + (AB::IF::ONE - is_column_qr) * (up[output_state_col(c_w_diag, 1)] - c_out_hi)
+                );
+            }
+
+            // d'': same multiplexing pattern
+            let (d_out_lo, d_out_hi) = outputs[3];
+            if d_w_col == d_w_diag {
+                all_constraints.push(up[output_state_col(d_w_col, 0)] - d_out_lo);
+                all_constraints.push(up[output_state_col(d_w_col, 1)] - d_out_hi);
+            } else {
+                all_constraints.push(
+                    is_column_qr * (up[output_state_col(d_w_col, 0)] - d_out_lo)
+                    + (AB::IF::ONE - is_column_qr) * (up[output_state_col(d_w_diag, 0)] - d_out_lo)
+                );
+                all_constraints.push(
+                    is_column_qr * (up[output_state_col(d_w_col, 1)] - d_out_hi)
+                    + (AB::IF::ONE - is_column_qr) * (up[output_state_col(d_w_diag, 1)] - d_out_hi)
+                );
+            }
         }
-        for constraint in g_constraints {
+
+        for constraint in all_constraints {
             builder.assert_zero(constraint);
         }
 
