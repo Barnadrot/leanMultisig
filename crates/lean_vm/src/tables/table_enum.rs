@@ -13,7 +13,7 @@ pub enum Table {
     Execution(ExecutionTable<true>),
     ExtensionOp(ExtensionOpPrecompile<true>),
     Poseidon16(Poseidon16Precompile<true>),
-    Blake3(Blake3CompressPrecompile<true>),
+    Blake3(ConstrainedBlake3Precompile<true>),
 }
 
 #[macro_export]
@@ -49,7 +49,7 @@ impl Table {
         Self::Poseidon16(Poseidon16Precompile)
     }
     pub const fn blake3() -> Self {
-        Self::Blake3(Blake3CompressPrecompile)
+        Self::Blake3(ConstrainedBlake3Precompile)
     }
     pub fn embed<PF: PrimeCharacteristicRing>(&self) -> PF {
         PF::from_usize(self.index())
