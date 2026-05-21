@@ -19,3 +19,5 @@ pub use poseidon::*;
 
 mod blake3_hash;
 pub use blake3_hash::*;
+
+pub mod xor_table;

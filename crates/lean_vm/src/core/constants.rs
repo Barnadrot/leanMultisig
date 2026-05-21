@@ -4,6 +4,13 @@ use crate::Table;
 pub const LOGUP_MEMORY_DOMAINSEP: usize = 0;
 pub const LOGUP_PRECOMPILE_DOMAINSEP: usize = 1;
 pub const LOGUP_BYTECODE_DOMAINSEP: usize = 2;
+pub const LOGUP_XOR_DOMAINSEP: usize = 3;
+
+/// Byte-level XOR lookup table: 256×256 entries, deterministic (a^b).
+/// Values are NOT committed — computed on-the-fly by prover and verifier.
+/// Only the XOR accumulator (access counts) is committed in the stacked PCS.
+pub const XOR_TABLE_LOG_SIZE: usize = 16; // 2^16 = 65,536 entries
+pub const XOR_TABLE_SIZE: usize = 1 << XOR_TABLE_LOG_SIZE;
 
 /// Large field = extension field of degree DIMENSION over koala-bear
 pub const DIMENSION: usize = 5;
