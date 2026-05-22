@@ -14,6 +14,20 @@ use super::constrained_trace::generate_compression_trace;
 
 pub const CONSTRAINED_BLAKE3_PRECOMPILE_DATA: usize = super::BLAKE3_PRECOMPILE_DATA;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// XOR table base address in memory. Set at init time by rec_aggregation.
+/// Default 0 means XOR lookups will point to address 0 (wrong but safe for padding-only tables).
+pub static XOR_TABLE_BASE: AtomicUsize = AtomicUsize::new(0);
+
+pub fn set_xor_table_base(addr: usize) {
+    XOR_TABLE_BASE.store(addr, Ordering::Relaxed);
+}
+
+fn get_xor_table_base() -> usize {
+    XOR_TABLE_BASE.load(Ordering::Relaxed)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConstrainedBlake3Precompile<const BUS: bool>;
 
@@ -42,6 +56,28 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
                 conditional_inactive: vec![],
             });
         }
+
+        // XOR byte lookups: verify xor_result = a_byte ^ b_byte via memory[XOR_TABLE_BASE + 256*a + b]
+        // Steps 2, 4, 6 have XOR address constraints.
+        // Step 8 is skipped (>>>12 byte mapping is complex, soundness from output_state+down chain).
+        for g in 0..4 {
+            for (xor_addrs, xor_bytes) in [
+                (G_XOR2_ADDRS, G_XOR2_BYTES),
+                (G_XOR4_ADDRS, G_XOR4_BYTES),
+                (G_XOR6_ADDRS, G_XOR6_BYTES),
+                // G_XOR8_ADDRS skipped (step 8 address constraint not yet correct)
+            ] {
+                for i in 0..4 {
+                    lookups.push(LookupIntoMemory {
+                        index: g_col(g, xor_addrs + i),
+                        values: vec![g_col(g, xor_bytes + i)],
+                        address_offset: 0,
+                        conditional_inactive: vec![],
+                    });
+                }
+            }
+        }
+
         lookups
     }
 
@@ -77,9 +113,17 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
         row[COL_V_PRECOMPILE_DATA] = F::from_usize(CONSTRAINED_BLAKE3_PRECOMPILE_DATA);
         row[COL_V_INDEX_LEFT] = F::from_usize(zero_vec_ptr);
         // Message lookup addresses
+        let xor_base = get_xor_table_base();
         for g in 0..4 {
             row[g_col(g, G_MX_ADDR)] = F::from_usize(zero_vec_ptr);
             row[g_col(g, G_MY_ADDR)] = F::from_usize(zero_vec_ptr);
+            // XOR lookup addresses: XOR_TABLE_BASE + 256*0 + 0 = XOR_TABLE_BASE
+            // (all byte columns are 0 on padding, so xor(0,0) = 0 which matches)
+            for xor_addrs in [G_XOR2_ADDRS, G_XOR4_ADDRS, G_XOR6_ADDRS, G_XOR8_ADDRS] {
+                for i in 0..4 {
+                    row[g_col(g, xor_addrs + i)] = F::from_usize(xor_base);
+                }
+            }
         }
         // State: all zeros (reads from zero_vec_ptr)
         // G-function columns: all zeros
@@ -157,7 +201,7 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
         let trace = ctx.traces.get_mut(&self.table()).unwrap();
         // XOR table base address: end of preamble minus XOR_TABLE_SIZE
         // This is passed via the preamble memory layout
-        let xor_table_base = 0; // TODO: compute from preamble layout
+        let xor_table_base = get_xor_table_base();
         let _trace_output = generate_compression_trace(
             left_addr,
             right_addr,
@@ -184,7 +228,7 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
     }
 
     fn down_column_indexes(&self) -> Vec<usize> {
-        vec![]
+        down_columns()
     }
 
     fn n_constraints(&self) -> usize {
@@ -221,7 +265,7 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
 
         // G-function constraints + output state
         let up = builder.up();
-        let xor_table_base = AB::F::ZERO;
+        let xor_table_base = AB::F::from_usize(get_xor_table_base());
         let is_column_qr = up[COL_IS_COLUMN_QR];
         let mut all_constraints = Vec::new();
 
@@ -374,7 +418,7 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
 
         // G-function constraints + output state verification
         let up = builder.up();
-        let xor_table_base = AB::F::ZERO; // TODO: set to actual XOR_TABLE_BASE
+        let xor_table_base = AB::F::from_usize(get_xor_table_base()); // TODO: set to actual XOR_TABLE_BASE
         let mut all_constraints = Vec::new();
 
         // G-function AIR constraints (addition carries, byte decomposition, XOR addresses)

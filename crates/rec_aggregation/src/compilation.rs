@@ -35,6 +35,9 @@ pub fn get_aggregation_bytecode() -> &'static Bytecode {
 }
 
 pub fn init_aggregation_bytecode() {
+    // Set XOR table base address for the constrained Blake3 table
+    let xor_table_addr = DIGEST_LEN + PREAMBLE_MEMORY_LEN - XOR_TABLE_SIZE;
+    lean_vm::set_xor_table_base(xor_table_addr);
     BYTECODE.get_or_init(compile_main_program_self_referential);
 }
 

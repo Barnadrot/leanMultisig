@@ -19,6 +19,8 @@ pub use execution::*;
 mod utils;
 pub(crate) use utils::*;
 
+pub use blake3::constrained_table::set_xor_table_base;
+
 // `PRECOMPILE_DATA` is the bus discriminator separating the precompile
 // tables. Disjointness is by value range:
 //
