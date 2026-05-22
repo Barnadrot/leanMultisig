@@ -60,30 +60,35 @@ impl<const BUS: bool> TableT for Blake3CompressPrecompile<BUS> {
                 values: (BLAKE3_COL_INPUT_START..BLAKE3_COL_INPUT_START + HALF_DIGEST_LEN).collect(),
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             },
             LookupIntoMemory {
                 index: BLAKE3_COL_EFFECTIVE_INDEX_LEFT_SECOND,
                 values: (BLAKE3_COL_INPUT_START + HALF_DIGEST_LEN..BLAKE3_COL_INPUT_START + DIGEST_LEN).collect(),
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             },
             LookupIntoMemory {
                 index: BLAKE3_COL_INDEX_RIGHT,
                 values: (BLAKE3_COL_INPUT_START + DIGEST_LEN..BLAKE3_COL_INPUT_START + DIGEST_LEN * 2).collect(),
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             },
             LookupIntoMemory {
                 index: BLAKE3_COL_INDEX_RES,
                 values: (BLAKE3_COL_OUTPUT_START..BLAKE3_COL_OUTPUT_START + HALF_DIGEST_LEN).collect(),
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             },
             LookupIntoMemory {
                 index: BLAKE3_COL_INDEX_RES,
                 values: (BLAKE3_COL_OUTPUT_START + HALF_DIGEST_LEN..BLAKE3_COL_OUTPUT_START + DIGEST_LEN).collect(),
                 address_offset: HALF_DIGEST_LEN,
                 conditional_inactive: vec![BLAKE3_COL_FLAG_HALF_OUTPUT],
+                computed_address: None,
             },
         ]
     }

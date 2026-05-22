@@ -94,18 +94,21 @@ impl<const BUS: bool> TableT for ExtensionOpPrecompile<BUS> {
                 values: (COL_VA..COL_VA + DIMENSION).collect(),
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             },
             LookupIntoMemory {
                 index: COL_IDX_B,
                 values: (COL_VB..COL_VB + DIMENSION).collect(),
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             },
             LookupIntoMemory {
                 index: COL_IDX_RES,
                 values: (COL_VRES..COL_VRES + DIMENSION).collect(),
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             },
         ]
     }

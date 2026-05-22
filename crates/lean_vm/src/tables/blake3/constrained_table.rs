@@ -48,12 +48,14 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
                 values: vec![g_col(g, G_MX_VALUE)],
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             });
             lookups.push(LookupIntoMemory {
                 index: g_col(g, G_MY_ADDR),
                 values: vec![g_col(g, G_MY_VALUE)],
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             });
         }
 
@@ -73,6 +75,7 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
                         values: vec![g_col(g, xor_bytes + i)],
                         address_offset: 0,
                         conditional_inactive: vec![],
+                        computed_address: None, // TODO: use ComputedAddress to eliminate address columns
                     });
                 }
             }

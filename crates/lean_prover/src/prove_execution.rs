@@ -113,12 +113,19 @@ pub fn prove_execution(
                 let inactive_cols: Vec<&[F]> = lookup.conditional_inactive.iter()
                     .map(|&col| &trace.columns[col][..])
                     .collect();
-                for (row, i) in trace.columns[lookup.index].iter().enumerate() {
+                for row in 0..trace.columns[0].len() {
                     if inactive_cols.iter().any(|col| col[row] == F::ONE) {
                         continue;
                     }
+                    let base_addr = if let Some(ref ca) = lookup.computed_address {
+                        ca.base
+                            + trace.columns[ca.hi_col][row].to_usize() * ca.hi_coeff
+                            + trace.columns[ca.lo_col][row].to_usize()
+                    } else {
+                        trace.columns[lookup.index][row].to_usize()
+                    };
                     for j in 0..lookup.values.len() {
-                        memory_acc[i.to_usize() + lookup.address_offset + j] += F::ONE;
+                        memory_acc[base_addr + lookup.address_offset + j] += F::ONE;
                     }
                 }
             }

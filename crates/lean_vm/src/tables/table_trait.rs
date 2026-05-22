@@ -11,9 +11,19 @@ pub type ColIndex = usize;
 pub type CommittedStatements =
     BTreeMap<Table, Vec<(MultilinearPoint<EF>, BTreeMap<ColIndex, EF>, BTreeMap<ColIndex, EF>)>>;
 
+/// Computed address for XOR-style lookups: address = base + hi_coeff * col[hi_col] + col[lo_col]
+/// Eliminates the need for dedicated address columns.
+#[derive(Debug, Clone)]
+pub struct ComputedAddress {
+    pub base: usize,
+    pub hi_col: ColIndex,
+    pub hi_coeff: usize,
+    pub lo_col: ColIndex,
+}
+
 #[derive(Debug)]
 pub struct LookupIntoMemory {
-    pub index: ColIndex, // should be in base field columns
+    pub index: ColIndex, // should be in base field columns (ignored when computed_address is Some)
     /// For (i, col_index) in values.iter().enumerate(), For j in 0..num_rows, columns_f[col_index][j] = memory[index[j] + address_offset + i]
     pub values: Vec<ColIndex>,
     /// Constant offset added to the index address (default 0).
@@ -21,6 +31,10 @@ pub struct LookupIntoMemory {
     /// Columns whose value=1 makes the lookup inactive (numerator=0).
     /// Lookup is active when ALL listed columns are 0. Empty = always active.
     pub conditional_inactive: Vec<ColIndex>,
+    /// If set, the lookup address is computed algebraically instead of read from a column.
+    /// address = base + hi_coeff * col[hi_col] + col[lo_col]
+    /// When Some, the `index` field is ignored.
+    pub computed_address: Option<ComputedAddress>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -170,11 +170,13 @@ pub fn prove_generic_logup(
         offset += 1 << log_n_rows;
 
         // II] Lookup into memory
+        let all_lookups = table.lookups();
         let value_columns = table.lookup_value_columns(trace);
         let index_columns = table.lookup_index_columns(trace);
         let address_offsets = table.lookup_address_offsets();
         let conditional_cols = table.lookup_conditional_inactive_columns(trace);
         for (lookup_idx, (col_index, col_values)) in index_columns.iter().zip(&value_columns).enumerate() {
+            let lookup = &all_lookups[lookup_idx];
             let addr_offset = address_offsets[lookup_idx];
             let addr_offset_field = F::from_usize(addr_offset);
             let inactive_cols = &conditional_cols[lookup_idx];
@@ -209,12 +211,24 @@ pub fn prove_generic_logup(
                 .for_each(|(i, denom_chunk)| {
                     let i_field = F::from_usize(i) + addr_offset_field;
                     denom_chunk.par_iter_mut().enumerate().for_each(|(p, slot)| {
+                        let addr_packed = if let Some(ref ca) = lookup.computed_address {
+                            // Computed address: base + hi_coeff * col[hi_col] + col[lo_col]
+                            PFPacking::<EF>::from_fn(|w| {
+                                let idx = src_idx(p, w);
+                                F::from_usize(ca.base)
+                                    + trace.columns[ca.hi_col][idx] * F::from_usize(ca.hi_coeff)
+                                    + trace.columns[ca.lo_col][idx]
+                                    + i_field
+                            })
+                        } else {
+                            PFPacking::<EF>::from_fn(|w| col_index[src_idx(p, w)] + i_field)
+                        };
                         *slot = c_packed
                             - finger_print_packed::<EF>(
                                 memory_contrib,
                                 &[
                                     PFPacking::<EF>::from_fn(|w| col_values[i][src_idx(p, w)]),
-                                    PFPacking::<EF>::from_fn(|w| col_index[src_idx(p, w)] + i_field),
+                                    addr_packed,
                                 ],
                                 &alphas_packed,
                             );
@@ -479,12 +493,31 @@ pub fn verify_generic_logup(
 
         // II] Lookup into memory
         for lookup in table.lookups() {
-            let index_eval = if !table_values.contains_key(&lookup.index) {
-                let e = verifier_state.next_extension_scalar()?;
-                table_values.insert(lookup.index, e);
-                e
+            let index_eval = if let Some(ref ca) = lookup.computed_address {
+                // Computed address: evaluate from hi/lo columns
+                let hi_eval = if !table_values.contains_key(&ca.hi_col) {
+                    let e = verifier_state.next_extension_scalar()?;
+                    table_values.insert(ca.hi_col, e);
+                    e
+                } else {
+                    table_values[&ca.hi_col]
+                };
+                let lo_eval = if !table_values.contains_key(&ca.lo_col) {
+                    let e = verifier_state.next_extension_scalar()?;
+                    table_values.insert(ca.lo_col, e);
+                    e
+                } else {
+                    table_values[&ca.lo_col]
+                };
+                EF::from(F::from_usize(ca.base)) + hi_eval * F::from_usize(ca.hi_coeff) + lo_eval
             } else {
-                table_values[&lookup.index]
+                if !table_values.contains_key(&lookup.index) {
+                    let e = verifier_state.next_extension_scalar()?;
+                    table_values.insert(lookup.index, e);
+                    e
+                } else {
+                    table_values[&lookup.index]
+                }
             };
 
             for (i, col_index) in lookup.values.iter().enumerate() {

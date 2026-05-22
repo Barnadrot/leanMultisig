@@ -144,6 +144,7 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
                 values: (POSEIDON_16_COL_INPUT_START..POSEIDON_16_COL_INPUT_START + HALF_DIGEST_LEN).collect(),
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             },
             LookupIntoMemory {
                 index: POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_SECOND,
@@ -151,6 +152,7 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
                     .collect(),
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             },
             LookupIntoMemory {
                 index: POSEIDON_16_COL_INDEX_INPUT_RIGHT,
@@ -158,12 +160,14 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
                     .collect(),
                 address_offset: 0,
                 conditional_inactive: vec![],
+                computed_address: None,
             },
             LookupIntoMemory {
                 index: POSEIDON_16_COL_INDEX_INPUT_RES,
                 values: (POSEIDON_16_COL_OUTPUT_LEFT..POSEIDON_16_COL_OUTPUT_LEFT + HALF_DIGEST_LEN).collect(),
                 address_offset: 0,
                 conditional_inactive: vec![POSEIDON_16_COL_FLAG_PERMUTE],
+                computed_address: None,
             },
             LookupIntoMemory {
                 index: POSEIDON_16_COL_INDEX_INPUT_RES,
@@ -171,6 +175,7 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
                     .collect(),
                 address_offset: HALF_DIGEST_LEN,
                 conditional_inactive: vec![POSEIDON_16_COL_FLAG_HALF_OUTPUT, POSEIDON_16_COL_FLAG_PERMUTE],
+                computed_address: None,
             },
         ]
     }
