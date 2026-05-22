@@ -23,6 +23,7 @@ LOOKUPS_INDEXES = LOOKUPS_INDEXES_PLACEHOLDER  # [[_; ?]; N_TABLES]
 LOOKUPS_VALUES = LOOKUPS_VALUES_PLACEHOLDER  # [[[_; ?]; ?]; N_TABLES]
 LOOKUPS_ADDRESS_OFFSETS = LOOKUPS_ADDRESS_OFFSETS_PLACEHOLDER  # [[_; ?]; N_TABLES]
 LOOKUPS_CONDITIONAL_INACTIVE = LOOKUPS_CONDITIONAL_INACTIVE_PLACEHOLDER  # [[[_; ?]; ?]; N_TABLES]
+LOOKUPS_COMPUTED_ADDRESSES = LOOKUPS_COMPUTED_ADDRESSES_PLACEHOLDER  # [[[base, hi_col, hi_coeff, lo_col]; ?]; N_TABLES]
 
 NUM_COLS_AIR = NUM_COLS_AIR_PLACEHOLDER
 
@@ -307,11 +308,33 @@ def continue_recursion_ordered(
         # II] Lookup into memory
 
         for lookup_f_index in unroll(0, len(LOOKUPS_INDEXES[table_index])):
-            idx_col = LOOKUPS_INDEXES[table_index][lookup_f_index]
-            if len(pcs_values[table_index][0][idx_col]) == 0:
-                fs, index_eval = fs_receive_ef_inlined(fs, 1)
-                pcs_values[table_index][0][idx_col].push(index_eval)
-            index_eval = pcs_values[table_index][0][idx_col][0]
+            n_computed = len(LOOKUPS_COMPUTED_ADDRESSES[table_index][lookup_f_index])
+            index_eval: Mut = ZERO_VEC_PTR
+            if n_computed == 4:
+                # Computed address: read hi_col and lo_col evaluations
+                ca_base = LOOKUPS_COMPUTED_ADDRESSES[table_index][lookup_f_index][0]
+                ca_hi_col = LOOKUPS_COMPUTED_ADDRESSES[table_index][lookup_f_index][1]
+                ca_hi_coeff = LOOKUPS_COMPUTED_ADDRESSES[table_index][lookup_f_index][2]
+                ca_lo_col = LOOKUPS_COMPUTED_ADDRESSES[table_index][lookup_f_index][3]
+                if len(pcs_values[table_index][0][ca_hi_col]) == 0:
+                    fs, hi_eval = fs_receive_ef_inlined(fs, 1)
+                    pcs_values[table_index][0][ca_hi_col].push(hi_eval)
+                if len(pcs_values[table_index][0][ca_lo_col]) == 0:
+                    fs, lo_eval = fs_receive_ef_inlined(fs, 1)
+                    pcs_values[table_index][0][ca_lo_col].push(lo_eval)
+                hi_eval = pcs_values[table_index][0][ca_hi_col][0]
+                lo_eval = pcs_values[table_index][0][ca_lo_col][0]
+                index_eval = add_extension_ret(
+                    add_base_extension_ret(ca_base, mul_base_extension_ret(ca_hi_coeff, hi_eval)),
+                    lo_eval,
+                )
+            else:
+                # Regular address: read index column evaluation
+                idx_col = LOOKUPS_INDEXES[table_index][lookup_f_index]
+                if len(pcs_values[table_index][0][idx_col]) == 0:
+                    fs, index_eval = fs_receive_ef_inlined(fs, 1)
+                    pcs_values[table_index][0][idx_col].push(index_eval)
+                index_eval = pcs_values[table_index][0][idx_col][0]
 
             addr_offset = LOOKUPS_ADDRESS_OFFSETS[table_index][lookup_f_index]
             n_lookup_values = len(LOOKUPS_VALUES[table_index][lookup_f_index])

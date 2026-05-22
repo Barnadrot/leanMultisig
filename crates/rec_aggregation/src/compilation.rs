@@ -278,6 +278,7 @@ fn build_replacements(inner_program_log_size: usize, bytecode_zero_eval: F) -> B
     let mut lookup_values_str = vec![];
     let mut lookup_address_offsets_str = vec![];
     let mut lookup_conditional_inactive_str = vec![];
+    let mut lookup_computed_addresses_str = vec![];
     let mut num_cols_air = vec![];
     let mut air_degrees = vec![];
     let mut n_air_columns = vec![];
@@ -286,9 +287,28 @@ fn build_replacements(inner_program_log_size: usize, bytecode_zero_eval: F) -> B
         let lookups = table.lookups();
         let this_look_f_indexes_str = lookups
             .iter()
-            .map(|lookup_f| lookup_f.index.to_string())
+            .map(|lookup_f| {
+                if let Some(ref ca) = lookup_f.computed_address {
+                    // For computed addresses, use hi_col as the "index" (will be overridden)
+                    ca.hi_col.to_string()
+                } else {
+                    lookup_f.index.to_string()
+                }
+            })
             .collect::<Vec<_>>();
         lookup_indexes_str.push(format!("[{}]", this_look_f_indexes_str.join(", ")));
+        // Computed address data: [base, hi_col, hi_coeff, lo_col] or [] if not computed
+        let this_computed = lookups
+            .iter()
+            .map(|lookup_f| {
+                if let Some(ref ca) = lookup_f.computed_address {
+                    format!("[{}, {}, {}, {}]", ca.base, ca.hi_col, ca.hi_coeff, ca.lo_col)
+                } else {
+                    "[]".to_string()
+                }
+            })
+            .collect::<Vec<_>>();
+        lookup_computed_addresses_str.push(format!("[{}]", this_computed.join(", ")));
         num_cols_air.push(table.n_columns().to_string());
         let this_lookup_f_values_str = lookups
             .iter()
@@ -351,6 +371,10 @@ fn build_replacements(inner_program_log_size: usize, bytecode_zero_eval: F) -> B
     replacements.insert(
         "LOOKUPS_CONDITIONAL_INACTIVE_PLACEHOLDER".to_string(),
         format!("[{}]", lookup_conditional_inactive_str.join(", ")),
+    );
+    replacements.insert(
+        "LOOKUPS_COMPUTED_ADDRESSES_PLACEHOLDER".to_string(),
+        format!("[{}]", lookup_computed_addresses_str.join(", ")),
     );
     replacements.insert(
         "NUM_COLS_AIR_PLACEHOLDER".to_string(),

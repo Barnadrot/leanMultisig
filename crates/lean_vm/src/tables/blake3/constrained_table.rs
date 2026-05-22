@@ -60,24 +60,64 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
         }
 
         // XOR byte lookups: verify xor_result = a_byte ^ b_byte via memory[XOR_TABLE_BASE + 256*a + b]
-        // Steps 2, 4, 6 have XOR address constraints.
-        // Step 8 is skipped (>>>12 byte mapping is complex, soundness from output_state+down chain).
+        // Steps 2, 4, 6 use ComputedAddress (no address columns needed).
+        // Step 8 keeps explicit address columns (>>>12 byte mapping can't be expressed as a single hi/lo pair).
+        let xor_base = get_xor_table_base();
         for g in 0..4 {
-            for (xor_addrs, xor_bytes) in [
-                (G_XOR2_ADDRS, G_XOR2_BYTES),
-                (G_XOR4_ADDRS, G_XOR4_BYTES),
-                (G_XOR6_ADDRS, G_XOR6_BYTES),
-                (G_XOR8_ADDRS, G_XOR8_BYTES),
-            ] {
-                for i in 0..4 {
-                    lookups.push(LookupIntoMemory {
-                        index: g_col(g, xor_addrs + i),
-                        values: vec![g_col(g, xor_bytes + i)],
-                        address_offset: 0,
-                        conditional_inactive: vec![],
-                        computed_address: None, // TODO: use ComputedAddress to eliminate address columns
-                    });
-                }
+            // Step 2: addr = base + 256 * d_byte[i] + add1_byte[i]
+            for i in 0..4 {
+                lookups.push(LookupIntoMemory {
+                    index: 0, // ignored when computed_address is Some
+                    values: vec![g_col(g, G_XOR2_BYTES + i)],
+                    address_offset: 0,
+                    conditional_inactive: vec![],
+                    computed_address: Some(ComputedAddress {
+                        base: xor_base,
+                        hi_col: g_col(g, G_D_BYTES + i),
+                        hi_coeff: 256,
+                        lo_col: g_col(g, G_ADD1_BYTES + i),
+                    }),
+                });
+            }
+            // Step 4: addr = base + 256 * b_byte[i] + add2_byte[i]
+            for i in 0..4 {
+                lookups.push(LookupIntoMemory {
+                    index: 0, // ignored when computed_address is Some
+                    values: vec![g_col(g, G_XOR4_BYTES + i)],
+                    address_offset: 0,
+                    conditional_inactive: vec![],
+                    computed_address: Some(ComputedAddress {
+                        base: xor_base,
+                        hi_col: g_col(g, G_B_BYTES + i),
+                        hi_coeff: 256,
+                        lo_col: g_col(g, G_ADD2_BYTES + i),
+                    }),
+                });
+            }
+            // Step 6: addr = base + 256 * xor2_byte[(i+2)%4] + add3_byte[i]
+            for i in 0..4 {
+                lookups.push(LookupIntoMemory {
+                    index: 0, // ignored when computed_address is Some
+                    values: vec![g_col(g, G_XOR6_BYTES + i)],
+                    address_offset: 0,
+                    conditional_inactive: vec![],
+                    computed_address: Some(ComputedAddress {
+                        base: xor_base,
+                        hi_col: g_col(g, G_XOR2_BYTES + (i + 2) % 4),
+                        hi_coeff: 256,
+                        lo_col: g_col(g, G_ADD3_BYTES + i),
+                    }),
+                });
+            }
+            // Step 8: keeps explicit address columns (>>>12 byte mapping)
+            for i in 0..4 {
+                lookups.push(LookupIntoMemory {
+                    index: g_col(g, G_XOR8_ADDRS + i),
+                    values: vec![g_col(g, G_XOR8_BYTES + i)],
+                    address_offset: 0,
+                    conditional_inactive: vec![],
+                    computed_address: None,
+                });
             }
         }
 
@@ -120,12 +160,11 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
         for g in 0..4 {
             row[g_col(g, G_MX_ADDR)] = F::from_usize(zero_vec_ptr);
             row[g_col(g, G_MY_ADDR)] = F::from_usize(zero_vec_ptr);
-            // XOR lookup addresses: XOR_TABLE_BASE + 256*0 + 0 = XOR_TABLE_BASE
+            // Step 8 XOR lookup addresses: XOR_TABLE_BASE + 256*0 + 0 = XOR_TABLE_BASE
             // (all byte columns are 0 on padding, so xor(0,0) = 0 which matches)
-            for xor_addrs in [G_XOR2_ADDRS, G_XOR4_ADDRS, G_XOR6_ADDRS, G_XOR8_ADDRS] {
-                for i in 0..4 {
-                    row[g_col(g, xor_addrs + i)] = F::from_usize(xor_base);
-                }
+            // Steps 2/4/6 use ComputedAddress — no address columns to fill
+            for i in 0..4 {
+                row[g_col(g, G_XOR8_ADDRS + i)] = F::from_usize(xor_base);
             }
         }
         // State: all zeros (reads from zero_vec_ptr)

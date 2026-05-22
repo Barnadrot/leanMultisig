@@ -331,10 +331,24 @@ pub fn prove_generic_logup(
 
         // II] Lookup into memory
         for lookup in table.lookups() {
-            if !table_values.contains_key(&lookup.index) {
-                let index_eval = trace.columns[lookup.index].evaluate(&inner_point);
-                prover_state.add_extension_scalar(index_eval);
-                table_values.insert(lookup.index, index_eval);
+            if let Some(ref ca) = lookup.computed_address {
+                // Computed address: send hi_col and lo_col evaluations
+                if !table_values.contains_key(&ca.hi_col) {
+                    let hi_eval = trace.columns[ca.hi_col].evaluate(&inner_point);
+                    prover_state.add_extension_scalar(hi_eval);
+                    table_values.insert(ca.hi_col, hi_eval);
+                }
+                if !table_values.contains_key(&ca.lo_col) {
+                    let lo_eval = trace.columns[ca.lo_col].evaluate(&inner_point);
+                    prover_state.add_extension_scalar(lo_eval);
+                    table_values.insert(ca.lo_col, lo_eval);
+                }
+            } else {
+                if !table_values.contains_key(&lookup.index) {
+                    let index_eval = trace.columns[lookup.index].evaluate(&inner_point);
+                    prover_state.add_extension_scalar(index_eval);
+                    table_values.insert(lookup.index, index_eval);
+                }
             }
 
             for col_index in &lookup.values {

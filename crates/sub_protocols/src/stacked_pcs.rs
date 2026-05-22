@@ -225,10 +225,16 @@ pub fn total_whir_statements() -> usize {
         .map(|table| {
             // AIR
             let air_count = table.n_columns() + table.n_down_columns();
-            // Lookups into memory: count unique columns (index + values + conditionals)
+            // Lookups into memory: count unique columns (index/hi/lo + values + conditionals)
             let mut logup_cols = BTreeSet::new();
             for lookup in table.lookups() {
-                logup_cols.insert(lookup.index);
+                if let Some(ref ca) = lookup.computed_address {
+                    // Computed address uses hi_col and lo_col instead of index
+                    logup_cols.insert(ca.hi_col);
+                    logup_cols.insert(ca.lo_col);
+                } else {
+                    logup_cols.insert(lookup.index);
+                }
                 for &v in &lookup.values {
                     logup_cols.insert(v);
                 }

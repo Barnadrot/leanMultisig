@@ -172,20 +172,18 @@ pub fn generate_compression_trace<M: MemoryAccess>(
                 // Step 1: addition result bytes (a')
                 fill_word_bytes(columns, gc(G_ADD1_BYTES), trace.add1_result.to_u32());
 
-                // Step 2: d bytes + XOR bytes + addresses
+                // Step 2: d bytes + XOR bytes (addresses computed from G_D_BYTES + G_ADD1_BYTES)
                 fill_word_bytes(columns, gc(G_D_BYTES), d);
                 let xor2_val = d ^ trace.add1_result.to_u32();
                 fill_word_bytes(columns, gc(G_XOR2_BYTES), xor2_val);
-                fill_xor_addrs(columns, gc(G_XOR2_ADDRS), d, trace.add1_result.to_u32(), xor_table_base);
 
                 // Step 3: addition result bytes (c')
                 fill_word_bytes(columns, gc(G_ADD2_BYTES), trace.add2_result.to_u32());
 
-                // Step 4: b bytes + XOR bytes + addresses + split
+                // Step 4: b bytes + XOR bytes + split (addresses computed from G_B_BYTES + G_ADD2_BYTES)
                 fill_word_bytes(columns, gc(G_B_BYTES), b);
                 let xor4_val = b ^ trace.add2_result.to_u32();
                 fill_word_bytes(columns, gc(G_XOR4_BYTES), xor4_val);
-                fill_xor_addrs(columns, gc(G_XOR4_ADDRS), b, trace.add2_result.to_u32(), xor_table_base);
                 // >>>12 nibble split: split xor4_bytes[1] at nibble boundary
                 let xor4_b1 = (xor4_val >> 8) & 0xFF;
                 columns[gc(G_XOR4_SPLIT)].push(F::from_u32(xor4_b1 & 0x0F));      // lo nibble
@@ -194,11 +192,10 @@ pub fn generate_compression_trace<M: MemoryAccess>(
                 // Step 5: addition result bytes (a'')
                 fill_word_bytes(columns, gc(G_ADD3_BYTES), trace.add3_result.to_u32());
 
-                // Step 6: XOR bytes + addresses (d' bytes reused from xor2)
+                // Step 6: XOR bytes (d' bytes reused from xor2, addresses computed from G_XOR2_BYTES + G_ADD3_BYTES)
                 let d1 = trace.xor_rot16.result.to_u32();
                 let xor6_val = d1 ^ trace.add3_result.to_u32();
                 fill_word_bytes(columns, gc(G_XOR6_BYTES), xor6_val);
-                fill_xor_addrs(columns, gc(G_XOR6_ADDRS), d1, trace.add3_result.to_u32(), xor_table_base);
 
                 // Step 7: addition result bytes (c'')
                 fill_word_bytes(columns, gc(G_ADD4_BYTES), trace.add4_result.to_u32());
