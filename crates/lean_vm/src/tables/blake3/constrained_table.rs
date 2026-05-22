@@ -65,7 +65,7 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
                 (G_XOR2_ADDRS, G_XOR2_BYTES),
                 (G_XOR4_ADDRS, G_XOR4_BYTES),
                 (G_XOR6_ADDRS, G_XOR6_BYTES),
-                // G_XOR8_ADDRS skipped (step 8 address constraint not yet correct)
+                (G_XOR8_ADDRS, G_XOR8_BYTES),
             ] {
                 for i in 0..4 {
                     lookups.push(LookupIntoMemory {

@@ -250,7 +250,34 @@ pub fn g_function_constraints<AB: AirBuilder>(
         assert_zero!(addr - xor_table_base - d1_byte * AB::F::from_u32(256) - a2_byte);
     }
 
-    // TEMP: skip step 8 XOR to isolate
+    // Step 8 XOR addresses: b' ^ c'' where b' = xor4 >>> 12
+    // >>>12 in nibbles: N3 N4 N5 N6 N7 N0 N1 N2 (shift right by 3 nibbles)
+    // b'_b0 = split4_hi + 16*xor4_b2_lo, b'_b1 = xor4_b2_hi + 16*xor4_b3_lo,
+    // b'_b2 = xor4_b3_hi + 16*xor4_b0_lo, b'_b3 = xor4_b0_hi + 16*split4_lo
+    {
+        let xor4_b0_lo = gc(G_XOR4_B0_SPLIT);
+        let xor4_b0_hi = gc(G_XOR4_B0_SPLIT + 1);
+        let xor4_b2_lo = gc(G_XOR4_B2_SPLIT);
+        let xor4_b2_hi = gc(G_XOR4_B2_SPLIT + 1);
+        let xor4_b3_lo = gc(G_XOR4_B3_SPLIT);
+        let xor4_b3_hi = gc(G_XOR4_B3_SPLIT + 1);
+        let split4_lo = gc(G_XOR4_SPLIT);
+        let split4_hi = gc(G_XOR4_SPLIT + 1);
+        // Verify nibble decompositions
+        assert_zero!(gc(G_XOR4_BYTES) - xor4_b0_lo - xor4_b0_hi * AB::F::from_u32(16));
+        assert_zero!(gc(G_XOR4_BYTES + 2) - xor4_b2_lo - xor4_b2_hi * AB::F::from_u32(16));
+        // b' bytes after >>>12 rotation
+        let bp_b0 = split4_hi + xor4_b2_lo * AB::F::from_u32(16);
+        let bp_b1 = xor4_b2_hi + xor4_b3_lo * AB::F::from_u32(16);
+        let bp_b2 = xor4_b3_hi + xor4_b0_lo * AB::F::from_u32(16);
+        let bp_b3 = xor4_b0_hi + split4_lo * AB::F::from_u32(16);
+        let bp_bytes = [bp_b0, bp_b1, bp_b2, bp_b3];
+        for i in 0..4 {
+            let c2_byte = gc(G_ADD4_BYTES + i);
+            let addr = gc(G_XOR8_ADDRS + i);
+            assert_zero!(addr - xor_table_base - bp_bytes[i] * AB::F::from_u32(256) - c2_byte);
+        }
+    }
 
     let xor8_b0 = gc(G_XOR8_BYTES);
     let split8_lo = gc(G_XOR8_SPLIT);
@@ -336,18 +363,16 @@ pub fn g_function_outputs<AB: AirBuilder>(
 pub const fn constraints_per_g() -> usize {
     2  // message byte decomp (mx, my)
     + 2  // step 1 carries (lo, hi)
-    // step 2: no d_byte decomp (d derived from bytes directly)
     + 4  // step 2 XOR addresses
-    // step 3: no c carries (c-dependent, skipped for QR compatibility)
-    // step 4: no b_byte decomp (b derived from bytes directly)
     + 4  // step 4 XOR addresses
-    + 1  // step 4 split
+    + 1  // step 4 split (xor4_b1 nibble)
     + 4  // step 6 XOR addresses
-    + 4  // step 8 XOR addresses
-    + 1  // step 8 split
+    + 2  // step 8 xor4_b0 + xor4_b2 nibble decomp
+    + 4  // step 8 XOR addresses (with correct >>>12 byte mapping)
+    + 1  // step 8 split (xor8_b0)
     + 1  // step 8 split boolean
-    + 2  // step 7 carries (c' + d'', no state dependency)
-    // Total: 25 constraints per G
+    + 2  // step 7 carries
+    // Total: 27 constraints per G
 }
 
 /// Total AIR constraints per row.

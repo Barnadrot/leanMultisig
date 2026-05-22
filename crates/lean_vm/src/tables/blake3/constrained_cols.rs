@@ -74,9 +74,11 @@ pub const G_MY_ADDR: usize = 71;       // 1 col: memory address for my
 // Rotation reconstruction columns
 pub const G_XOR4_B3_SPLIT: usize = 72; // 2 cols: xor4_b3 nibble split for >>>12 reconstruction
 pub const G_CARRY_ROT7: usize = 74;    // 1 col: carry boolean for >>>7 limb reconstruction
+pub const G_XOR4_B0_SPLIT: usize = 75; // 2 cols: xor4_b0 nibble split for >>>12 byte mapping
+pub const G_XOR4_B2_SPLIT: usize = 77; // 2 cols: xor4_b2 nibble split for >>>12 byte mapping
 
 /// Total columns per G-function.
-pub const COLS_PER_G: usize = 75;
+pub const COLS_PER_G: usize = 79;
 
 /// G-function region: 4 G-functions after the state columns.
 pub const COL_G_START: ColIndex = COL_STATE_START + N_STATE_COLS;
@@ -154,11 +156,11 @@ pub fn down_columns() -> Vec<usize> {
 }
 
 const _: () = {
-    assert!(COLS_PER_G == 75);
-    assert!(N_G_COLS == 300);
+    assert!(COLS_PER_G == 79);
+    assert!(N_G_COLS == 316);
     assert!(N_OUTPUT_STATE_COLS == 32);
-    assert!(N_COMMITTED_COLS == 371);
-    assert!(N_TOTAL_COLS == 373);
+    assert!(N_COMMITTED_COLS == 387);
+    assert!(N_TOTAL_COLS == 389);
 };
 
 #[cfg(test)]

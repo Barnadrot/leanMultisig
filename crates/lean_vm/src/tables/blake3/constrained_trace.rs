@@ -236,10 +236,16 @@ pub fn generate_compression_trace<M: MemoryAccess>(
                 columns[gc(G_MY_ADDR)].push(F::from_usize(my_addr));
 
                 // Rotation reconstruction columns
-                // >>>12: xor4_b3 nibble split
+                // >>>12 nibble splits for all xor4 bytes that need them
                 let xor4_b3 = (xor4_val >> 24) & 0xFF;
-                columns[gc(G_XOR4_B3_SPLIT)].push(F::from_u32(xor4_b3 & 0x0F));     // lo nibble
-                columns[gc(G_XOR4_B3_SPLIT) + 1].push(F::from_u32(xor4_b3 >> 4));   // hi nibble
+                columns[gc(G_XOR4_B3_SPLIT)].push(F::from_u32(xor4_b3 & 0x0F));
+                columns[gc(G_XOR4_B3_SPLIT) + 1].push(F::from_u32(xor4_b3 >> 4));
+                let xor4_b0_val = xor4_val & 0xFF;
+                columns[gc(G_XOR4_B0_SPLIT)].push(F::from_u32(xor4_b0_val & 0x0F));
+                columns[gc(G_XOR4_B0_SPLIT) + 1].push(F::from_u32(xor4_b0_val >> 4));
+                let xor4_b2_val = (xor4_val >> 16) & 0xFF;
+                columns[gc(G_XOR4_B2_SPLIT)].push(F::from_u32(xor4_b2_val & 0x0F));
+                columns[gc(G_XOR4_B2_SPLIT) + 1].push(F::from_u32(xor4_b2_val >> 4));
 
                 // >>>7: carry for limb reconstruction
                 // b''_lo_raw = split8_hi1 + xor8_b1*2 + xor8_b2*512
