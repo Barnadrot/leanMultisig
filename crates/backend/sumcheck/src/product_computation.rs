@@ -45,7 +45,7 @@ pub fn run_product_sumcheck<EF: ExtensionField<PF<EF>>>(
     assert!(n_rounds >= 1);
     let first_sumcheck_poly = match (pol_a, pol_b) {
         (MleRef::BasePacked(evals), MleRef::ExtensionPacked(weights)) => {
-            compute_product_sumcheck_polynomial(evals, weights, sum, |e| EFPacking::<EF>::to_ext_iter([e]).collect())
+            compute_product_sumcheck_polynomial_base_ext_packed(evals, weights, sum)
         }
         (MleRef::ExtensionPacked(evals), MleRef::ExtensionPacked(weights)) => {
             compute_product_sumcheck_polynomial(evals, weights, sum, |e| EFPacking::<EF>::to_ext_iter([e]).collect())
@@ -164,9 +164,9 @@ pub fn compute_product_sumcheck_polynomial<
     DensePolynomial::new(vec![c0, c1, c2])
 }
 
-// using delayed modular reduction
+// Delayed modular reduction: accumulate u128/i128 products across packed lanes,
+// then do one Montgomery reduction per extension coordinate at the end.
 pub fn compute_product_sumcheck_polynomial_base_ext_packed<
-    const DIM: usize,
     F: PrimeField32,
     PF: PackedField<Scalar = F>,
     EFP: BasedVectorSpace<PF> + Copy + Send + Sync,
@@ -176,13 +176,11 @@ pub fn compute_product_sumcheck_polynomial_base_ext_packed<
     pol_1: &[EFP],
     sum: EF,
 ) -> DensePolynomial<EF> {
-    assert_eq!(DIM, EF::DIMENSION);
+    let dim = EF::DIMENSION;
     let n = pol_0.len();
     assert_eq!(n, pol_1.len());
     assert!(n.is_power_of_two());
     let half = n / 2;
-
-    type Acc<const D: usize> = ([u128; D], [i128; D]);
 
     let chunk_size = 1024;
 
@@ -195,14 +193,14 @@ pub fn compute_product_sumcheck_polynomial_base_ext_packed<
                 .zip(pol_1[half..].par_chunks(chunk_size)),
         )
         .map(|((b_lo, b_hi), (e_lo, e_hi))| {
-            let mut c0 = [0u128; DIM];
-            let mut c2 = [0i128; DIM];
+            let mut c0 = vec![0u128; dim];
+            let mut c2 = vec![0i128; dim];
             for i in 0..b_lo.len() {
                 let x0_lanes = b_lo[i].as_slice();
                 let x1_lanes = b_hi[i].as_slice();
                 let y0_coords = e_lo[i].as_basis_coefficients_slice();
                 let y1_coords = e_hi[i].as_basis_coefficients_slice();
-                for j in 0..DIM {
+                for j in 0..dim {
                     let y0_j = y0_coords[j].as_slice();
                     let y1_j = y1_coords[j].as_slice();
                     for lane in 0..PF::WIDTH {
@@ -218,9 +216,9 @@ pub fn compute_product_sumcheck_polynomial_base_ext_packed<
             (c0, c2)
         })
         .reduce(
-            || ([0u128; DIM], [0i128; DIM]),
-            |(mut a0, mut a2): Acc<DIM>, (b0, b2): Acc<DIM>| {
-                for j in 0..DIM {
+            || (vec![0u128; dim], vec![0i128; dim]),
+            |(mut a0, mut a2), (b0, b2)| {
+                for j in 0..dim {
                     a0[j] += b0[j];
                     a2[j] += b2[j];
                 }

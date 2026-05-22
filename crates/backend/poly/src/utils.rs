@@ -12,7 +12,7 @@ use rayon::{
 
 use crate::{EFPacking, PF, PFPacking};
 
-pub const PARALLEL_THRESHOLD: usize = 1 << 9;
+pub const PARALLEL_THRESHOLD: usize = 1 << 13;
 
 pub fn pack_extension<EF: ExtensionField<PF<EF>>>(slice: &[EF]) -> Vec<EFPacking<EF>> {
     let width = packing_width::<EF>();
