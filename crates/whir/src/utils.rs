@@ -14,6 +14,7 @@ use tracing::instrument;
 use utils::log2_strict_usize;
 
 use crate::EvalsDft;
+use crate::Matrix;
 use crate::RowMajorMatrix;
 
 pub(crate) fn get_challenge_stir_queries<F: Field, Chal: ChallengeSampler<F>>(
@@ -89,6 +90,36 @@ where
             DftOutput::Extension(dft.dft_algebra_batch_by_evals(RowMajorMatrix::new(evals, dft_n_cols)))
         }
     }
+}
+
+pub(crate) fn run_dft_on_prepared<EF: ExtensionField<PF<EF>>>(
+    prepared: RowMajorMatrix<PF<EF>>,
+) -> DftOutput<EF>
+where
+    PF<EF>: TwoAdicField,
+{
+    let dft = global_dft::<PF<EF>>();
+    let h = prepared.height();
+    if dft.max_n_twiddles() < h {
+        tracing::warn!("Twiddles have not been precomputed, for size = {}", h);
+    }
+    DftOutput::Base(dft.dft_algebra_batch_by_evals(prepared))
+}
+
+pub fn compute_dft_params(
+    num_variables: usize,
+    actual_data_len: usize,
+    folding_factor_round0: usize,
+    log_inv_rate: usize,
+    packing_width: usize,
+) -> (usize, usize, usize) {
+    let n_blocks = 1usize << folding_factor_round0;
+    let evals_len = 1usize << num_variables;
+    let effective_n_cols = actual_data_len.div_ceil(evals_len / n_blocks);
+    let dft_n_cols = effective_n_cols.next_multiple_of(packing_width).min(n_blocks);
+    let full_len = evals_len << log_inv_rate;
+    let dft_height = full_len / n_blocks;
+    (dft_n_cols, dft_height, effective_n_cols)
 }
 
 fn prepare_evals_for_fft<EF: ExtensionField<PF<EF>>>(

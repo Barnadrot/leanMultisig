@@ -5,7 +5,7 @@ use lean_vm::{
 };
 use lean_vm::{EF, F, Table, TableT, TableTrace};
 use std::collections::BTreeMap;
-use tracing::instrument;
+use tracing::{info_span, instrument};
 use utils::VarCount;
 use utils::ansi::Colorize;
 
@@ -140,29 +140,87 @@ pub fn stack_polynomials_and_commit(
     }
     assert_eq!(log2_ceil_usize(offset), stacked_n_vars);
     let tail_offset = offset;
+    let actual_data_len = offset;
     let dst_base = global_polynomial.as_mut_ptr() as usize;
     let total_len = global_polynomial.len();
-    copy_tasks.par_iter().for_each(|&(dst_offset, n, src_addr)| unsafe {
-        std::ptr::copy_nonoverlapping(src_addr as *const F, (dst_base as *mut F).add(dst_offset), n);
+
+    let folding_factor_0 = whir_config_builder.folding_factor.at_round(0);
+    let log_inv_rate = whir_config_builder.starting_log_inv_rate;
+    let (dft_n_cols, dft_height, _effective_n_cols) =
+        compute_dft_params(stacked_n_vars, actual_data_len, folding_factor_0, log_inv_rate, packing_width::<EF>());
+    let dft_len = dft_height * dft_n_cols;
+    let mut dft_buf: Vec<F> = unsafe { uninitialized_vec(dft_len) };
+    let dft_base = dft_buf.as_mut_ptr() as usize;
+    let block_size_src = (1usize << stacked_n_vars) / (1usize << folding_factor_0);
+    let rate_expansion = 1usize << log_inv_rate;
+
+    info_span!("stacking + DFT prep").in_scope(|| {
+        copy_tasks.par_iter().for_each(|&(dst_offset, n, src_addr)| unsafe {
+            std::ptr::copy_nonoverlapping(src_addr as *const F, (dst_base as *mut F).add(dst_offset), n);
+            let col = dst_offset / block_size_src;
+            if col < dft_n_cols {
+                let row_base_src = dst_offset % block_size_src;
+                let rows_to_write = n.min(block_size_src - row_base_src);
+                for k in 0..rows_to_write {
+                    let val = *((src_addr as *const F).add(k));
+                    let src_row = row_base_src + k;
+                    for rep in 0..rate_expansion {
+                        let dft_row = src_row * rate_expansion + rep;
+                        *((dft_base as *mut F).add(dft_row * dft_n_cols + col)) = val;
+                    }
+                }
+            }
+        });
+
+        // Also write the non-table portions (memory, memory_acc, bytecode_acc) into DFT buf
+        let sequential_data = &global_polynomial[..copy_tasks.first().map_or(tail_offset, |t| t.0)];
+        (0..sequential_data.len()).into_par_iter().for_each(|pos| unsafe {
+            let col = pos / block_size_src;
+            if col < dft_n_cols {
+                let src_row = pos % block_size_src;
+                let val = *sequential_data.get_unchecked(pos);
+                for rep in 0..rate_expansion {
+                    let dft_row = src_row * rate_expansion + rep;
+                    *((dft_base as *mut F).add(dft_row * dft_n_cols + col)) = val;
+                }
+            }
+        });
+
+        // Zero the tail in both stacked polynomial and DFT buf
+        unsafe {
+            std::ptr::write_bytes((dst_base as *mut F).add(tail_offset), 0, total_len - tail_offset);
+        }
+        for pos in tail_offset..total_len {
+            let col = pos / block_size_src;
+            if col < dft_n_cols {
+                let src_row = pos % block_size_src;
+                for rep in 0..rate_expansion {
+                    let dft_row = src_row * rate_expansion + rep;
+                    unsafe {
+                        *((dft_base as *mut F).add(dft_row * dft_n_cols + col)) = F::ZERO;
+                    }
+                }
+            }
+        }
     });
-    unsafe {
-        std::ptr::write_bytes((dst_base as *mut F).add(tail_offset), 0, total_len - tail_offset);
-    }
+
     tracing::info!(
         "{}",
         format!(
             "stacked PCS data: {} = 2^{} * (1 + {:.2})",
-            offset,
+            actual_data_len,
             stacked_n_vars - 1,
-            (offset as f64) / (1 << (stacked_n_vars - 1)) as f64 - 1.0
+            (actual_data_len as f64) / (1 << (stacked_n_vars - 1)) as f64 - 1.0
         )
         .green()
     );
 
     let global_polynomial = MleOwned::Base(global_polynomial);
+    let dft_matrix = DenseMatrix::new(dft_buf, dft_n_cols);
 
+    let whir_config = WhirConfig::new(whir_config_builder, stacked_n_vars);
     let inner_witness =
-        WhirConfig::new(whir_config_builder, stacked_n_vars).commit(prover_state, &global_polynomial, offset);
+        whir_config.commit_with_precomputed_dft(prover_state, &global_polynomial, actual_data_len, dft_matrix);
     StackedPcsWitness {
         stacked_n_vars,
         inner_witness,
