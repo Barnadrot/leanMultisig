@@ -31,7 +31,7 @@ use tracing::info_span;
 
 const ENDIANNESS_PIVOT_AIR: usize = 12;
 
-pub trait OuterSumcheckSession<EF: ExtensionField<PF<EF>>>: Debug {
+pub trait OuterSumcheckSession<EF: ExtensionField<PF<EF>>>: Debug + Send {
     fn initial_n_vars(&self) -> usize;
     fn sum(&self) -> EF;
     fn bare_degree(&self) -> usize;
@@ -649,17 +649,26 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
         let mut combined_coeffs = EF::zero_vec(max_full_degree + 1);
         let mut bare_polys: Vec<Option<DensePolynomial<EF>>> = vec![None; sessions.len()];
 
-        for (idx, session) in sessions.iter_mut().enumerate() {
+        rayon::scope(|s| {
+            for (session, bare_poly_slot) in sessions.iter_mut().zip(bare_polys.iter_mut()) {
+                let join_round = n_rounds - session.initial_n_vars();
+                if round >= join_round {
+                    s.spawn(move |_| {
+                        *bare_poly_slot = Some(session.compute_bare_round_poly());
+                    });
+                }
+            }
+        });
+
+        for (idx, session) in sessions.iter().enumerate() {
             let join_round = n_rounds - session.initial_n_vars();
             if round < join_round {
                 combined_coeffs[1] += eta_powers[idx] * k[idx] * session.sum();
-            } else {
-                let bare_poly = session.compute_bare_round_poly();
+            } else if let Some(bare_poly) = &bare_polys[idx] {
                 let full_coeffs = expand_bare_to_full(&bare_poly.coeffs, session.eq_alpha());
                 for (i, &c) in full_coeffs.iter().enumerate() {
                     combined_coeffs[i] += eta_powers[idx] * k[idx] * c;
                 }
-                bare_polys[idx] = Some(bare_poly);
             }
         }
 
@@ -667,12 +676,23 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
         let challenge = prover_state.sample();
         challenges.push(challenge);
 
-        for (idx, session) in sessions.iter_mut().enumerate() {
+        rayon::scope(|s| {
+            for (session, bare_poly) in sessions.iter_mut().zip(bare_polys.iter()) {
+                let join_round = n_rounds - session.initial_n_vars();
+                if round >= join_round {
+                    if let Some(bare_poly) = bare_poly {
+                        s.spawn(move |_| {
+                            session.process_challenge(challenge, bare_poly);
+                        });
+                    }
+                }
+            }
+        });
+
+        for (idx, session) in sessions.iter().enumerate() {
             let join_round = n_rounds - session.initial_n_vars();
             if round < join_round {
                 k[idx] *= challenge;
-            } else if let Some(bare_poly) = &bare_polys[idx] {
-                session.process_challenge(challenge, bare_poly);
             }
         }
     }
