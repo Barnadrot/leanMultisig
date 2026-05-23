@@ -116,18 +116,6 @@ pub fn stack_polynomials_and_commit(
     );
     let total_len = 1 << stacked_n_vars;
     let mut global_polynomial: Vec<F> = unsafe { uninitialized_vec(total_len) };
-    #[cfg(target_os = "linux")]
-    unsafe {
-        // MADV_POPULATE_WRITE (23): pre-fault all pages to eliminate demand-paging during par_iter copy
-        unsafe extern "C" {
-            fn madvise(addr: *mut std::ffi::c_void, len: usize, advice: i32) -> i32;
-        }
-        madvise(
-            global_polynomial.as_mut_ptr() as *mut std::ffi::c_void,
-            total_len * std::mem::size_of::<F>(),
-            23, // MADV_POPULATE_WRITE
-        );
-    }
     global_polynomial[..memory.len()].copy_from_slice(memory);
     let mut offset = memory.len();
     global_polynomial[offset..][..memory_acc.len()].copy_from_slice(memory_acc);
