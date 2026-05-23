@@ -41,6 +41,9 @@ def batch_hash_slice_rtl(num_queries, all_data_to_hash, all_resulting_hashes, nu
     if num_chunks == 5:
         batch_hash_slice_rtl_const(num_queries, all_data_to_hash, all_resulting_hashes, 5)
         return
+    if num_chunks == 80:
+        batch_hash_slice_rtl_const(num_queries, all_data_to_hash, all_resulting_hashes, 80)
+        return
     print(num_chunks)
     assert False, "batch_hash_slice called with unsupported len"
 
