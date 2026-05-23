@@ -291,10 +291,19 @@ pub(super) fn run_phase2_sumcheck<EF: ExtensionField<PF<EF>>>(
     mut sum: EF,
     mut mmf: EF,
 ) -> (Vec<EF>, [EF; 4]) {
-    for _round in 0..remaining_eq.len() {
-        let eq_alpha = *remaining_eq.last().unwrap();
-        let eq_prefix = &remaining_eq[..remaining_eq.len() - 1];
-        let eq_table = eval_eq(eq_prefix);
+    let n_rounds = remaining_eq.len();
+    if n_rounds == 0 {
+        let evals = [num_l[0], num_r[0], den_l[0], den_r[0]];
+        return (q_natural, evals);
+    }
+
+    let eq_prefix_init = &remaining_eq[..n_rounds - 1];
+    let mut eq_table = eval_eq(eq_prefix_init);
+    let mut eq_table_len = eq_table.len();
+
+    for round in 0..n_rounds {
+        let eq_alpha = remaining_eq[n_rounds - 1 - round];
+        let eq_prefix_len = n_rounds - 1 - round;
 
         let active_l = num_l.len();
         let active_r = num_r.len();
@@ -328,7 +337,7 @@ pub(super) fn run_phase2_sumcheck<EF: ExtensionField<PF<EF>>>(
             acc += coeffs * eq_table[j];
         }
 
-        let padding_sum = alpha * mle_of_zeros_then_ones(active_pairs, eq_prefix);
+        let padding_sum = alpha * mle_of_zeros_then_ones(active_pairs, &remaining_eq[..eq_prefix_len]);
 
         let bare = build_bare_from_coeffs(
             acc.c0_num + alpha * acc.c0_den + padding_sum,
@@ -344,18 +353,37 @@ pub(super) fn run_phase2_sumcheck<EF: ExtensionField<PF<EF>>>(
         sum = eq_eval * bare.evaluate(r);
         mmf *= eq_eval;
 
-        num_l = fold_normal_with_padding(&num_l, r, EF::ZERO);
-        num_r = fold_normal_with_padding(&num_r, r, EF::ZERO);
-        den_l = fold_normal_with_padding(&den_l, r, EF::ONE);
-        den_r = fold_normal_with_padding(&den_r, r, EF::ONE);
+        fold_in_place(&mut num_l, r, EF::ZERO);
+        fold_in_place(&mut num_r, r, EF::ZERO);
+        fold_in_place(&mut den_l, r, EF::ONE);
+        fold_in_place(&mut den_r, r, EF::ONE);
+
+        if round + 1 < n_rounds {
+            let new_len = eq_table_len / 2;
+            for k in 0..new_len {
+                eq_table[k] = eq_table[2 * k] + eq_table[2 * k + 1];
+            }
+            eq_table_len = new_len;
+        }
 
         q_natural.push(r);
-        remaining_eq.pop();
     }
 
     q_natural.reverse();
     let evals = [num_l[0], num_r[0], den_l[0], den_r[0]];
     (q_natural, evals)
+}
+
+fn fold_in_place<EF: ExtensionField<PF<EF>>>(m: &mut Vec<EF>, r: EF, pad_value: EF) {
+    let active = m.len();
+    let new_active = active.div_ceil(2);
+    assert!(new_active != 0);
+    for i in 0..new_active {
+        let a = m[2 * i];
+        let b = if 2 * i + 1 < active { m[2 * i + 1] } else { pad_value };
+        m[i] = a + (b - a) * r;
+    }
+    m.truncate(new_active);
 }
 
 fn fold_normal_with_padding<EF: ExtensionField<PF<EF>>>(m: &[EF], r: EF, pad_value: EF) -> Vec<EF> {
