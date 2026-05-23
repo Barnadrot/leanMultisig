@@ -288,6 +288,7 @@ pub fn aggregate_type_1(
     let mut bytecode_value_hint_blobs = Vec::with_capacity(n_recursions);
     let mut inner_bytecode_claim_blobs = Vec::with_capacity(n_recursions);
     let mut proof_transcript_blobs = Vec::with_capacity(n_recursions);
+    let mut table_sort_perm_blobs = Vec::with_capacity(n_recursions);
 
     let claim_size_padded = bytecode_claim_size.next_multiple_of(DIGEST_LEN);
 
@@ -310,6 +311,7 @@ pub fn aggregate_type_1(
         bytecode_value_hint_blobs.push(v.bytecode_evaluation.value.as_basis_coefficients_slice().to_vec());
         inner_bytecode_claim_blobs.push(v.input_data[BYTECODE_CLAIM_OFFSET..][..claim_size_padded].to_vec());
         proof_transcript_blobs.push(v.raw_proof.transcript.clone());
+        table_sort_perm_blobs.push(v.sorted_table_perm.iter().map(|&i| F::from_usize(i)).collect());
     }
 
     let n_dup = dup_pub_keys.len();
@@ -360,6 +362,7 @@ pub fn aggregate_type_1(
             .collect(),
     );
     hints.insert("proof_transcript".to_string(), proof_transcript_blobs);
+    hints.insert("table_sort_perm".to_string(), table_sort_perm_blobs);
     hints.insert("wots".to_string(), wots_blobs);
     hints.insert("xmss_merkle_node".to_string(), xmss_merkle_node_blobs);
     hints.insert("merkle_leaf".to_string(), merkle_leaf_blobs);
