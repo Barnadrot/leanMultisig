@@ -41,11 +41,14 @@ pub fn run_product_sumcheck<EF: ExtensionField<PF<EF>>>(
     mut sum: EF,
     n_rounds: usize,
     pow_bits: usize,
-) -> (MultilinearPoint<EF>, EF, MleOwned<EF>, MleOwned<EF>) {
+) -> (MultilinearPoint<EF>, EF, MleOwned<EF>, MleOwned<EF>)
+where
+    PF<EF>: PrimeField32,
+{
     assert!(n_rounds >= 1);
     let first_sumcheck_poly = match (pol_a, pol_b) {
         (MleRef::BasePacked(evals), MleRef::ExtensionPacked(weights)) => {
-            compute_product_sumcheck_polynomial(evals, weights, sum, |e| EFPacking::<EF>::to_ext_iter([e]).collect())
+            compute_product_sumcheck_polynomial_base_ext_packed_dispatch::<EF>(evals, weights, sum)
         }
         (MleRef::ExtensionPacked(evals), MleRef::ExtensionPacked(weights)) => {
             compute_product_sumcheck_polynomial(evals, weights, sum, |e| EFPacking::<EF>::to_ext_iter([e]).collect())
@@ -162,6 +165,27 @@ pub fn compute_product_sumcheck_polynomial<
     let c1 = sum - c0.double() - c2;
 
     DensePolynomial::new(vec![c0, c1, c2])
+}
+
+fn compute_product_sumcheck_polynomial_base_ext_packed_dispatch<EF: ExtensionField<PF<EF>>>(
+    pol_0: &[PFPacking<EF>],
+    pol_1: &[EFPacking<EF>],
+    sum: EF,
+) -> DensePolynomial<EF>
+where
+    PF<EF>: PrimeField32,
+{
+    match EF::DIMENSION {
+        5 => compute_product_sumcheck_polynomial_base_ext_packed::<5, PF<EF>, PFPacking<EF>, EFPacking<EF>, EF>(
+            pol_0, pol_1, sum,
+        ),
+        4 => compute_product_sumcheck_polynomial_base_ext_packed::<4, PF<EF>, PFPacking<EF>, EFPacking<EF>, EF>(
+            pol_0, pol_1, sum,
+        ),
+        _ => compute_product_sumcheck_polynomial(pol_0, pol_1, sum, |e| {
+            EFPacking::<EF>::to_ext_iter([e]).collect()
+        }),
+    }
 }
 
 // using delayed modular reduction
