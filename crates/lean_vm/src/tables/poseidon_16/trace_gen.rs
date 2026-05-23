@@ -47,12 +47,13 @@ pub(super) fn generate_trace_rows_for_perm<F: Algebra<KoalaBear> + Copy>(perm: &
 
     // No initial linear layer for Poseidon1 (unlike Poseidon2)
 
-    for (full_round, constants) in perm
-        .beginning_full_rounds
+    for ((mid, full_round), constants) in perm
+        .mid_beginning_full_rounds
         .iter_mut()
+        .zip(perm.beginning_full_rounds.iter_mut())
         .zip(poseidon1_initial_constants().chunks_exact(2))
     {
-        generate_2_full_round(&mut state, full_round, &constants[0], &constants[1]);
+        generate_2_full_round(&mut state, mid, full_round, &constants[0], &constants[1]);
     }
 
     // --- Sparse partial rounds ---
@@ -91,17 +92,19 @@ pub(super) fn generate_trace_rows_for_perm<F: Algebra<KoalaBear> + Copy>(perm: &
     }
 
     let n_ending_full_rounds = perm.ending_full_rounds.len();
+    let mut mid_ending_iter = perm.mid_ending_full_rounds.iter_mut();
     for (full_round, constants) in perm
         .ending_full_rounds
         .iter_mut()
         .zip(poseidon1_final_constants().chunks_exact(2))
     {
-        generate_2_full_round(&mut state, full_round, &constants[0], &constants[1]);
+        generate_2_full_round(&mut state, mid_ending_iter.next().unwrap(), full_round, &constants[0], &constants[1]);
     }
 
     generate_last_2_full_rounds(
         &mut state,
         &inputs,
+        mid_ending_iter.next().unwrap(),
         &mut perm.outputs_left,
         &poseidon1_final_constants()[2 * n_ending_full_rounds],
         &poseidon1_final_constants()[2 * n_ending_full_rounds + 1],
@@ -111,6 +114,7 @@ pub(super) fn generate_trace_rows_for_perm<F: Algebra<KoalaBear> + Copy>(perm: &
 #[inline]
 fn generate_2_full_round<F: Algebra<KoalaBear> + Copy>(
     state: &mut [F; WIDTH],
+    mid_witness: &mut [&mut F; WIDTH],
     post_full_round: &mut [&mut F; WIDTH],
     round_constants_1: &[KoalaBear; WIDTH],
     round_constants_2: &[KoalaBear; WIDTH],
@@ -120,13 +124,15 @@ fn generate_2_full_round<F: Algebra<KoalaBear> + Copy>(
         *state_i = state_i.cube();
     }
     mds_circ_16(state);
+    mid_witness.iter_mut().zip(*state).for_each(|(mid, x)| {
+        **mid = x;
+    });
 
     for (state_i, const_i) in state.iter_mut().zip(round_constants_2.iter()) {
         *state_i += *const_i;
         *state_i = state_i.cube();
     }
     mds_circ_16(state);
-
     post_full_round.iter_mut().zip(*state).for_each(|(post, x)| {
         **post = x;
     });
@@ -136,6 +142,7 @@ fn generate_2_full_round<F: Algebra<KoalaBear> + Copy>(
 fn generate_last_2_full_rounds<F: Algebra<KoalaBear> + Copy>(
     state: &mut [F; WIDTH],
     inputs: &[F; WIDTH],
+    mid_witness: &mut [&mut F; WIDTH],
     outputs_left: &mut [&mut F; WIDTH / 2],
     round_constants_1: &[KoalaBear; WIDTH],
     round_constants_2: &[KoalaBear; WIDTH],
@@ -145,6 +152,9 @@ fn generate_last_2_full_rounds<F: Algebra<KoalaBear> + Copy>(
         *state_i = state_i.cube();
     }
     mds_circ_16(state);
+    mid_witness.iter_mut().zip(*state).for_each(|(mid, x)| {
+        **mid = x;
+    });
 
     for (state_i, const_i) in state.iter_mut().zip(round_constants_2.iter()) {
         *state_i += *const_i;
