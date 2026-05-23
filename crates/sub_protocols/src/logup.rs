@@ -258,19 +258,19 @@ pub fn prove_generic_logup(
     // sanity check
     assert_eq!(sum, EF::ZERO);
 
+    // Memory: ...
     let memory_and_acc_point = MultilinearPoint(from_end(&claim_point_gkr, log2_strict_usize(memory.len())).to_vec());
-    let bytecode_and_acc_point = MultilinearPoint(from_end(&claim_point_gkr, log_bytecode).to_vec());
-
-    let (value_memory_acc, (value_memory, value_bytecode_acc)) = rayon::join(
-        || memory_acc.evaluate_sequential(&memory_and_acc_point),
-        || rayon::join(
-            || memory.evaluate_sequential(&memory_and_acc_point),
-            || bytecode_acc.evaluate_sequential(&bytecode_and_acc_point),
-        ),
-    );
+    let value_memory_acc = memory_acc.evaluate(&memory_and_acc_point);
     prover_state.add_extension_scalar(value_memory_acc);
+
+    let value_memory = memory.evaluate(&memory_and_acc_point);
     prover_state.add_extension_scalar(value_memory);
+
+    let bytecode_and_acc_point = MultilinearPoint(from_end(&claim_point_gkr, log_bytecode).to_vec());
+    let value_bytecode_acc = bytecode_acc.evaluate(&bytecode_and_acc_point);
     prover_state.add_extension_scalar(value_bytecode_acc);
+
+    // evaluation on bytecode itself can be done directly by the verifier
 
     let mut bus_numerators_values = BTreeMap::new();
     let mut bus_denominators_values = BTreeMap::new();
@@ -280,83 +280,40 @@ pub fn prove_generic_logup(
         let log_n_rows = trace.log_n_rows;
 
         let inner_point = MultilinearPoint(from_end(&claim_point_gkr, log_n_rows).to_vec());
-
-        let mut unique_col_indices: Vec<ColIndex> = Vec::new();
-        if table == &Table::execution() {
-            unique_col_indices.push(COL_PC);
-            for i in 0..N_INSTRUCTION_COLUMNS {
-                unique_col_indices.push(N_RUNTIME_COLUMNS + i);
-            }
-        }
-        let bus = table.bus();
-        if !unique_col_indices.contains(&bus.selector) {
-            unique_col_indices.push(bus.selector);
-        }
-        for entry in &bus.data {
-            if let BusData::Column(col) = entry {
-                if !unique_col_indices.contains(col) {
-                    unique_col_indices.push(*col);
-                }
-            }
-        }
-        for lookup in table.lookups() {
-            if let Some(ref ca) = lookup.computed_address {
-                if !unique_col_indices.contains(&ca.hi_col) {
-                    unique_col_indices.push(ca.hi_col);
-                }
-                if !unique_col_indices.contains(&ca.lo_col) {
-                    unique_col_indices.push(ca.lo_col);
-                }
-            } else if !unique_col_indices.contains(&lookup.index) {
-                unique_col_indices.push(lookup.index);
-            }
-            for &col_index in &lookup.values {
-                if !unique_col_indices.contains(&col_index) {
-                    unique_col_indices.push(col_index);
-                }
-            }
-            for &cond_col in &lookup.conditional_inactive {
-                if !unique_col_indices.contains(&cond_col) {
-                    unique_col_indices.push(cond_col);
-                }
-            }
-        }
-
-        let batch_evals: Vec<EF> = unique_col_indices
-            .par_iter()
-            .map(|&col_idx| trace.columns[col_idx].evaluate_sequential(&inner_point))
-            .collect();
-
-        let eval_map: BTreeMap<ColIndex, EF> = unique_col_indices
-            .iter()
-            .zip(batch_evals.iter())
-            .map(|(&idx, &val)| (idx, val))
-            .collect();
-
         let mut table_values = BTreeMap::<ColIndex, EF>::new();
 
         if table == &Table::execution() {
-            let eval_on_pc = eval_map[&COL_PC];
+            let pc_column = &trace.columns[COL_PC];
+            let bytecode_columns = trace.columns[N_RUNTIME_COLUMNS..][..N_INSTRUCTION_COLUMNS]
+                .iter()
+                .collect::<Vec<_>>();
+
+            let eval_on_pc = pc_column.evaluate(&inner_point);
             prover_state.add_extension_scalar(eval_on_pc);
+            assert!(!table_values.contains_key(&COL_PC));
             table_values.insert(COL_PC, eval_on_pc);
 
-            let instr_evals: Vec<EF> = (0..N_INSTRUCTION_COLUMNS)
-                .map(|i| eval_map[&(N_RUNTIME_COLUMNS + i)])
-                .collect();
+            let instr_evals = bytecode_columns
+                .iter()
+                .map(|col| col.evaluate(&inner_point))
+                .collect::<Vec<_>>();
             prover_state.add_extension_scalars(&instr_evals);
-            for (i, &eval_on_instr_col) in instr_evals.iter().enumerate() {
-                table_values.insert(N_RUNTIME_COLUMNS + i, eval_on_instr_col);
+            for (i, eval_on_instr_col) in instr_evals.iter().enumerate() {
+                let global_index = N_RUNTIME_COLUMNS + i;
+                assert!(!table_values.contains_key(&global_index));
+                table_values.insert(global_index, *eval_on_instr_col);
             }
         }
 
-        let eval_on_selector = eval_map[&bus.selector] * bus.direction.to_field_flag();
+        let bus = table.bus();
+        let eval_on_selector = trace.columns[bus.selector].evaluate(&inner_point) * bus.direction.to_field_flag();
         prover_state.add_extension_scalar(eval_on_selector);
 
         let bus_data_evals: Vec<EF> = bus
             .data
             .iter()
             .map(|entry| match entry {
-                BusData::Column(col) => eval_map[col],
+                BusData::Column(col) => trace.columns[*col].evaluate(&inner_point),
                 BusData::Constant(val) => EF::from(F::from_usize(*val)),
             })
             .collect();
@@ -370,32 +327,40 @@ pub fn prove_generic_logup(
         bus_numerators_values.insert(*table, eval_on_selector);
         bus_denominators_values.insert(*table, eval_on_data);
 
+        // II] Lookup into memory
         for lookup in table.lookups() {
             if let Some(ref ca) = lookup.computed_address {
+                // Computed address: send hi_col and lo_col evaluations
                 if !table_values.contains_key(&ca.hi_col) {
-                    prover_state.add_extension_scalar(eval_map[&ca.hi_col]);
-                    table_values.insert(ca.hi_col, eval_map[&ca.hi_col]);
+                    let hi_eval = trace.columns[ca.hi_col].evaluate(&inner_point);
+                    prover_state.add_extension_scalar(hi_eval);
+                    table_values.insert(ca.hi_col, hi_eval);
                 }
                 if !table_values.contains_key(&ca.lo_col) {
-                    prover_state.add_extension_scalar(eval_map[&ca.lo_col]);
-                    table_values.insert(ca.lo_col, eval_map[&ca.lo_col]);
+                    let lo_eval = trace.columns[ca.lo_col].evaluate(&inner_point);
+                    prover_state.add_extension_scalar(lo_eval);
+                    table_values.insert(ca.lo_col, lo_eval);
                 }
-            } else if !table_values.contains_key(&lookup.index) {
-                prover_state.add_extension_scalar(eval_map[&lookup.index]);
-                table_values.insert(lookup.index, eval_map[&lookup.index]);
+            } else {
+                if !table_values.contains_key(&lookup.index) {
+                    let index_eval = trace.columns[lookup.index].evaluate(&inner_point);
+                    prover_state.add_extension_scalar(index_eval);
+                    table_values.insert(lookup.index, index_eval);
+                }
             }
 
-            for &col_index in &lookup.values {
-                let value_eval = eval_map[&col_index];
+            for col_index in &lookup.values {
+                let value_eval = trace.columns[*col_index].evaluate(&inner_point);
                 prover_state.add_extension_scalar(value_eval);
-                assert!(!table_values.contains_key(&col_index));
-                table_values.insert(col_index, value_eval);
+                assert!(!table_values.contains_key(col_index));
+                table_values.insert(*col_index, value_eval);
             }
 
             for &cond_col in &lookup.conditional_inactive {
                 if !table_values.contains_key(&cond_col) {
-                    prover_state.add_extension_scalar(eval_map[&cond_col]);
-                    table_values.insert(cond_col, eval_map[&cond_col]);
+                    let cond_eval = trace.columns[cond_col].evaluate(&inner_point);
+                    prover_state.add_extension_scalar(cond_eval);
+                    table_values.insert(cond_col, cond_eval);
                 }
             }
         }
