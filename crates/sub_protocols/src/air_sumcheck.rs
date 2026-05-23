@@ -91,16 +91,7 @@ where
                 let shift = usize::BITS as usize - pivot;
                 let bit_reversed = cols
                     .par_iter()
-                    .enumerate()
-                    .map(|(col_idx, &src)| {
-                        // Pad each column's allocation so col_k starts at a different
-                        // L1 cache set. Without this, the bump allocator places all
-                        // columns at 2^23-byte stride → all map to L1D set 0.
-                        let pad_bytes = (col_idx % 64) * 64; // shift by col_idx cache lines
-                        if pad_bytes > 0 {
-                            let pad_layout = std::alloc::Layout::from_size_align(pad_bytes, 64).unwrap();
-                            let _ = unsafe { std::alloc::alloc(pad_layout) };
-                        }
+                    .map(|&src| {
                         let mut dst: Vec<PFPacking<EF>> = unsafe { uninitialized_vec(src.len()) };
                         let src_u = PFPacking::<EF>::unpack_slice(src);
                         let dst_u = PFPacking::<EF>::unpack_slice_mut(&mut dst);
