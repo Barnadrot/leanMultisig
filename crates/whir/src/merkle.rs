@@ -135,11 +135,12 @@ fn precompute_blake3_zero_suffix(n_zero_suffix_chunks: usize) -> [u8; 32] {
 fn blake3_compress_internal(left: [KoalaBear; DIGEST_ELEMS], right: [KoalaBear; DIGEST_ELEMS]) -> [KoalaBear; DIGEST_ELEMS] {
     let left_bytes: &[u8; DIGEST_ELEMS * 4] = unsafe { &*(&left as *const _ as *const _) };
     let right_bytes: &[u8; DIGEST_ELEMS * 4] = unsafe { &*(&right as *const _ as *const _) };
-    let mut buf = [0u8; DIGEST_ELEMS * 2 * 4];
-    buf[..DIGEST_ELEMS * 4].copy_from_slice(left_bytes);
-    buf[DIGEST_ELEMS * 4..].copy_from_slice(right_bytes);
-    let hash = blake3::hash(&buf);
-    blake3_digest_to_field(hash.as_bytes())
+    let mut block = [0u8; 64];
+    block[..32].copy_from_slice(left_bytes);
+    block[32..].copy_from_slice(right_bytes);
+    let platform = blake3::platform::Platform::detect();
+    let hash_out = blake3_hash_raw(&block, &platform);
+    blake3_digest_to_field(&hash_out)
 }
 
 #[instrument(name = "first digest layer (blake3)", level = "debug", skip_all)]
