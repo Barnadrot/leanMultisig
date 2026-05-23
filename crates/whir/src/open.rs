@@ -593,7 +593,14 @@ where
                 smt.values.len(),
                 "Duplicate selectors in sparse statement"
             );
-            let inner_len = 1usize << shift;
+            let mut chunks_mut = split_at_mut_many(
+                &mut combined_weights,
+                &indexed_smt_values
+                    .iter()
+                    .map(|(_, e)| e.selector << shift)
+                    .collect::<Vec<_>>(),
+            );
+            chunks_mut.remove(0);
             let mut next_gamma_powers = vec![gamma_pow];
             for _ in 1..indexed_smt_values.len() {
                 next_gamma_powers.push(*next_gamma_powers.last().unwrap() * gamma);
@@ -601,25 +608,16 @@ where
             for (e, &scalar) in smt.values.iter().zip(&next_gamma_powers) {
                 combined_sum += e.value * scalar;
             }
-            let out_offsets: Vec<usize> = indexed_smt_values
-                .iter()
-                .map(|(_, e)| e.selector << shift)
-                .collect();
-            let gamma_powers_packed: Vec<EFPacking<EF>> = indexed_smt_values
-                .iter()
-                .map(|&(origin_index, _)| EFPacking::<EF>::from(next_gamma_powers[origin_index]))
-                .collect();
-            let base = combined_weights.as_mut_ptr() as usize;
-            (0..inner_len)
+            chunks_mut
                 .into_par_iter()
-                .for_each(|i| {
-                    let poly_val = inner_poly[i];
-                    for (j, &gpow) in gamma_powers_packed.iter().enumerate() {
-                        unsafe {
-                            let dst = &mut *(base as *mut EFPacking<EF>).add(out_offsets[j] + i);
-                            *dst += poly_val * gpow;
-                        }
-                    }
+                .zip(&indexed_smt_values)
+                .for_each(|(out_buff, &(origin_index, _))| {
+                    out_buff[..1 << shift]
+                        .par_iter_mut()
+                        .zip(&inner_poly)
+                        .for_each(|(out_elem, &poly_elem)| {
+                            *out_elem += poly_elem * next_gamma_powers[origin_index];
+                        });
                 });
             gamma_pow = *next_gamma_powers.last().unwrap() * gamma;
         }
