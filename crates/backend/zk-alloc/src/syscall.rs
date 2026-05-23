@@ -14,6 +14,7 @@ mod imp {
     const MAP_PRIVATE: usize = 0x02;
     const MAP_ANONYMOUS: usize = 0x20;
     const MAP_NORESERVE: usize = 0x4000;
+    const MAP_HUGETLB: usize = 0x40000;
 
     pub const MADV_NOHUGEPAGE: usize = 15;
 
@@ -65,6 +66,13 @@ mod imp {
     }
 
     #[inline]
+    pub unsafe fn mmap_hugetlb(size: usize) -> *mut u8 {
+        let flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB;
+        let ret = unsafe { syscall6(SYS_MMAP, 0, size, PROT_READ | PROT_WRITE, flags, usize::MAX, 0) };
+        if ret < 0 { ptr::null_mut() } else { ret as *mut u8 }
+    }
+
+    #[inline]
     pub unsafe fn madvise(ptr: *mut u8, size: usize, advice: usize) {
         unsafe { syscall3(SYS_MADVISE, ptr as usize, size, advice) };
     }
@@ -92,9 +100,14 @@ mod imp {
     }
 
     #[inline]
+    pub unsafe fn mmap_hugetlb(size: usize) -> *mut u8 {
+        unsafe { mmap_anonymous(size) }
+    }
+
+    #[inline]
     pub unsafe fn madvise(_ptr: *mut u8, _size: usize, _advice: usize) {
         // The advice values we pass are Linux-specific.
     }
 }
 
-pub use imp::{MADV_NOHUGEPAGE, madvise, mmap_anonymous};
+pub use imp::{MADV_NOHUGEPAGE, madvise, mmap_anonymous, mmap_hugetlb};
