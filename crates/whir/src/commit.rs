@@ -97,36 +97,4 @@ where
             ood_answers,
         }
     }
-
-    #[instrument(skip_all)]
-    pub fn commit_with_precomputed_dft(
-        &self,
-        prover_state: &mut impl FSProver<EF>,
-        polynomial: &MleOwned<EF>,
-        actual_data_len: usize,
-        dft_matrix: RowMajorMatrix<PF<EF>>,
-    ) -> Witness<EF> {
-        let n_blocks = 1usize << self.folding_factor.at_round(0);
-        let evals_len = 1usize << self.num_variables;
-        let effective_n_cols = actual_data_len.div_ceil(evals_len / n_blocks);
-
-        let folded_matrix = info_span!("FFT (pre-transposed)").in_scope(|| {
-            run_dft_on_prepared::<EF>(dft_matrix)
-        });
-
-        let (prover_data, root) = MerkleData::build(folded_matrix, n_blocks, effective_n_cols);
-
-        prover_state.add_base_scalars(&root);
-
-        let (ood_points, ood_answers) =
-            sample_ood_points::<EF, _>(prover_state, self.commitment_ood_samples, self.num_variables, |point| {
-                polynomial.evaluate(point)
-            });
-
-        Witness {
-            prover_data,
-            ood_points,
-            ood_answers,
-        }
-    }
 }

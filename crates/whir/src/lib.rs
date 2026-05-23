@@ -21,11 +21,10 @@ pub use merkle::DIGEST_ELEMS;
 pub(crate) use merkle::*;
 
 mod utils;
-pub use utils::{precompute_dft_twiddles, compute_dft_params};
+pub use utils::precompute_dft_twiddles;
 pub(crate) use utils::*;
 
 mod matrix;
-pub use matrix::DenseMatrix;
 pub(crate) use matrix::*;
 
 #[derive(Clone, Debug)]
