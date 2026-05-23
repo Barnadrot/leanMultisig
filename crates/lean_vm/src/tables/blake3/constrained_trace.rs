@@ -289,14 +289,6 @@ pub fn generate_compression_trace<M: MemoryAccess>(
                 }
             }
 
-            // Fill output state columns (state has been updated by G-functions above)
-            for w in 0..16 {
-                let lo = state[w] & 0xFFFF;
-                let hi = state[w] >> 16;
-                columns[output_state_col(w, 0)].push(F::from_u32(lo));
-                columns[output_state_col(w, 1)].push(F::from_u32(hi));
-            }
-
             // Fill control columns
             columns[COL_FLAG_ACTIVE].push(F::ONE);
             columns[COL_IS_FIRST_ROW].push(F::from_bool(is_first_row));
@@ -305,6 +297,7 @@ pub fn generate_compression_trace<M: MemoryAccess>(
             columns[COL_LEFT_ADDR].push(F::from_usize(left_addr));
             columns[COL_RIGHT_ADDR].push(F::from_usize(right_addr));
             columns[COL_RESULT_ADDR].push(F::from_usize(result_addr));
+            columns[COL_FLAG_A_COL_QR].push(F::from_bool(is_column_qr)); // flag_active=1 here, so flag_a * is_col_qr = is_col_qr
 
             // Virtual columns
             columns[COL_V_INDEX_LEFT].push(F::from_usize(left_addr));
