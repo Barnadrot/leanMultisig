@@ -138,44 +138,15 @@ fn prepare_evals_for_fft_unpacked<A: Copy + Send + Sync>(
     let log_block_size = log2_strict_usize(block_size);
     let out_len = block_size * dft_n_cols;
 
-    let mut out: Vec<A> = unsafe { uninitialized_vec(out_len) };
-
-    // L2-aware tiling: process TILE_C columns × TILE_R rows at a time.
-    // Source data per tile: TILE_C × (TILE_R >> log_inv_rate) elements, each sizeof::<A>() bytes.
-    // Target: fit in L2 cache (~1MB).
-    const TARGET_TILE_BYTES: usize = 512 * 1024; // 512KB to leave room for output in L2
-    let elem_size = std::mem::size_of::<A>().max(1);
-    let tile_c = 32usize.min(dft_n_cols);
-    let tile_r_raw = TARGET_TILE_BYTES / (tile_c * elem_size);
-    let tile_r = tile_r_raw.next_power_of_two().min(block_size).max(1);
-
-    let n_col_tiles = dft_n_cols.div_ceil(tile_c);
-    let n_row_tiles = block_size.div_ceil(tile_r);
-
-    (0..n_col_tiles * n_row_tiles)
+    (0..out_len)
         .into_par_iter()
-        .for_each(|tile_idx| {
-            let col_tile = tile_idx % n_col_tiles;
-            let row_tile = tile_idx / n_col_tiles;
-            let col_start = col_tile * tile_c;
-            let col_end = (col_start + tile_c).min(dft_n_cols);
-            let row_start = row_tile * tile_r;
-            let row_end = (row_start + tile_r).min(block_size);
-
-            let out_ptr = out.as_ptr() as usize;
-            for row in row_start..row_end {
-                for col in col_start..col_end {
-                    let src_index = ((col << log_block_size) + row) >> log_inv_rate;
-                    let dst_index = row * dft_n_cols + col;
-                    unsafe {
-                        let val = *evals.get_unchecked(src_index);
-                        *(out_ptr as *mut A).add(dst_index) = val;
-                    }
-                }
-            }
-        });
-
-    out
+        .map(|i| {
+            let block_index = i % dft_n_cols;
+            let offset_in_block = i / dft_n_cols;
+            let src_index = ((block_index << log_block_size) + offset_in_block) >> log_inv_rate;
+            unsafe { *evals.get_unchecked(src_index) }
+        })
+        .collect()
 }
 
 fn prepare_evals_for_fft_packed_extension<EF: ExtensionField<PF<EF>>>(
