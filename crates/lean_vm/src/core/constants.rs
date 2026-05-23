@@ -27,7 +27,7 @@ pub const MAX_LOG_MEMORY_SIZE: usize = 26;
 pub const MIN_BYTECODE_LOG_SIZE: usize = 8;
 
 /// Minimum and maximum number of rows per table (as powers of two), both inclusive
-pub const MIN_LOG_N_ROWS_PER_TABLE: usize = 8; // Zero padding will be added to each at least, if this minimum is not reached, (ensuring AIR / GKR work fine, with SIMD, without too much edge cases). Long term, we should find a more elegant solution.
+pub const MIN_LOG_N_ROWS_PER_TABLE: usize = 12; // Ensures all GKR sections are large enough for the ENDIANNESS_PIVOT_GKR=12 fast path (packed SIMD bit-reversed sumcheck).
 pub const MAX_LOG_N_ROWS_PER_TABLE: [(Table, usize); 4] = [
     (Table::execution(), 24),
     (Table::extension_op(), 21),
