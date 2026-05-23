@@ -25,12 +25,10 @@ use system_info::NUM_THREADS;
 
 mod syscall;
 
-const HOT_SLAB_SIZE: usize = 1 << 30; // 1GB hugetlb-backed per slab
-const COLD_SLAB_SIZE: usize = 7 << 30; // 7GB regular pages per slab
-const SLACK: usize = 4;
+const SLAB_SIZE: usize = 8 << 30; // 8GB
+const SLACK: usize = 4; // SLACK absorbs the main thread and any non-rayon helpers.
 const MAX_THREADS: usize = NUM_THREADS + SLACK;
-const HOT_REGION_SIZE: usize = HOT_SLAB_SIZE * MAX_THREADS;
-const COLD_REGION_SIZE: usize = COLD_SLAB_SIZE * MAX_THREADS;
+const REGION_SIZE: usize = SLAB_SIZE * MAX_THREADS;
 
 #[derive(Debug)]
 pub struct ZkAllocator;
@@ -45,11 +43,9 @@ static GENERATION: AtomicUsize = AtomicUsize::new(0);
 /// through the arena; `false` (set by `end_phase`) routes them to the system allocator.
 static ARENA_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-/// Base address of the hot (hugetlb) mmap'd region, or `0` before `ensure_region` runs.
-static HOT_REGION_BASE: AtomicUsize = AtomicUsize::new(0);
-
-/// Base address of the cold (regular pages) mmap'd region, or `0` before init.
-static COLD_REGION_BASE: AtomicUsize = AtomicUsize::new(0);
+/// Base address of the mmap'd region, or `0` before `ensure_region` runs. Read on
+/// every `dealloc` to test whether a pointer belongs to us.
+static REGION_BASE: AtomicUsize = AtomicUsize::new(0);
 
 /// Synchronizes the one-time mmap so concurrent first-allocators don't race.
 static REGION_INIT: Once = Once::new();
@@ -60,44 +56,36 @@ static REGION_INIT: Once = Once::new();
 static THREAD_IDX: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
-    /// Where this thread's next allocation lands.
+    /// Where this thread's next allocation lands. Advanced past each allocation.
     static ARENA_PTR: Cell<usize> = const { Cell::new(0) };
-    /// One past the last byte of the current active region (hot or cold).
+    /// One past the last byte of this thread's slab. An alloc fits iff
+    /// `aligned + size <= ARENA_END`.
     static ARENA_END: Cell<usize> = const { Cell::new(0) };
-    /// Base of this thread's hot slab (hugetlb). Also the phase-reset target.
+    /// Base address of this thread's slab (`0` = not yet claimed). On reset,
+    /// `ARENA_PTR` is set back to this value.
     static ARENA_BASE: Cell<usize> = const { Cell::new(0) };
-    /// One past the last byte of the hot slab. Used to detect hot→cold overflow.
-    static ARENA_HOT_END: Cell<usize> = const { Cell::new(0) };
-    /// Base of this thread's cold slab (regular pages).
-    static ARENA_COLD_BASE: Cell<usize> = const { Cell::new(0) };
-    /// One past the last byte of the cold slab.
-    static ARENA_COLD_END: Cell<usize> = const { Cell::new(0) };
-    /// Last generation value this thread observed.
+    /// Last `GENERATION` value this thread observed. When the global moves past
+    /// this, the next allocation resets `ARENA_PTR` to `ARENA_BASE` and updates
+    /// this field.
     static ARENA_GEN: Cell<usize> = const { Cell::new(0) };
-    /// `true` after this thread overflowed from hot to cold in this phase.
-    static ARENA_IN_COLD: Cell<bool> = const { Cell::new(false) };
-    /// `true` if this thread exhausted MAX_THREADS.
+    /// `true` if this thread was created after `MAX_THREADS` was already exhausted.
+    /// Such threads skip arena logic entirely and always go to the system allocator.
     static ARENA_NO_SLAB: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Ensures both hot (hugetlb) and cold (regular) regions are mapped. Returns the
-/// hot region base address.
+/// Returns the base address of the mmap'd region, mapping it on the first call.
 fn ensure_region() -> usize {
     REGION_INIT.call_once(|| {
-        let hot = unsafe { syscall::mmap_hugetlb(HOT_REGION_SIZE) };
-        if hot.is_null() {
+        // SAFETY: mmap_anonymous returns a page-aligned pointer or null. MAP_NORESERVE
+        // means no physical memory is committed until pages are touched.
+        let ptr = unsafe { syscall::mmap_anonymous(REGION_SIZE) };
+        if ptr.is_null() {
             std::process::abort();
         }
-        HOT_REGION_BASE.store(hot as usize, Ordering::Release);
-
-        let cold = unsafe { syscall::mmap_anonymous(COLD_REGION_SIZE) };
-        if cold.is_null() {
-            std::process::abort();
-        }
-        unsafe { syscall::madvise(cold, COLD_REGION_SIZE, syscall::MADV_NOHUGEPAGE) };
-        COLD_REGION_BASE.store(cold as usize, Ordering::Release);
+        unsafe { syscall::madvise(ptr, REGION_SIZE, syscall::MADV_NOHUGEPAGE) };
+        REGION_BASE.store(ptr as usize, Ordering::Release);
     });
-    HOT_REGION_BASE.load(Ordering::Acquire)
+    REGION_BASE.load(Ordering::Acquire)
 }
 
 /// Call once at process start, before any `begin_phase()`.
@@ -130,50 +118,26 @@ pub fn end_phase() {
 #[inline(never)]
 unsafe fn arena_alloc_cold(size: usize, align: usize) -> *mut u8 {
     let generation = GENERATION.load(Ordering::Relaxed);
-    if !ARENA_NO_SLAB.get() {
-        if ARENA_GEN.get() != generation {
-            // Generation mismatch — reset to start of hot slab.
-            let mut base = ARENA_BASE.get();
-            if base == 0 {
-                let hot_region = ensure_region();
-                let cold_region = COLD_REGION_BASE.load(Ordering::Acquire);
-                let idx = THREAD_IDX.fetch_add(1, Ordering::Relaxed);
-                if idx >= MAX_THREADS {
-                    ARENA_NO_SLAB.set(true);
-                    return unsafe { std::alloc::System.alloc(Layout::from_size_align_unchecked(size, align)) };
-                }
-                base = hot_region + idx * HOT_SLAB_SIZE;
-                ARENA_BASE.set(base);
-                ARENA_HOT_END.set(base + HOT_SLAB_SIZE);
-                let cold_base = cold_region + idx * COLD_SLAB_SIZE;
-                ARENA_COLD_BASE.set(cold_base);
-                ARENA_COLD_END.set(cold_base + COLD_SLAB_SIZE);
+    if !ARENA_NO_SLAB.get() && ARENA_GEN.get() != generation {
+        let mut base = ARENA_BASE.get();
+        if base == 0 {
+            let region = ensure_region();
+            let idx = THREAD_IDX.fetch_add(1, Ordering::Relaxed);
+            if idx >= MAX_THREADS {
+                ARENA_NO_SLAB.set(true);
+                return unsafe { std::alloc::System.alloc(Layout::from_size_align_unchecked(size, align)) };
             }
-            ARENA_PTR.set(base);
-            ARENA_END.set(ARENA_HOT_END.get());
-            ARENA_IN_COLD.set(false);
-            ARENA_GEN.set(generation);
-            let aligned = base.next_multiple_of(align);
-            let new_ptr = aligned + size;
-            if new_ptr <= ARENA_END.get() {
-                ARENA_PTR.set(new_ptr);
-                return aligned as *mut u8;
-            }
+            base = region + idx * SLAB_SIZE;
+            ARENA_BASE.set(base);
+            ARENA_END.set(base + SLAB_SIZE);
         }
-        // Hot slab exhausted — switch to cold slab (once per phase).
-        if !ARENA_IN_COLD.get() {
-            ARENA_IN_COLD.set(true);
-            let cold_base = ARENA_COLD_BASE.get();
-            let cold_end = ARENA_COLD_END.get();
-            if cold_base != 0 {
-                let aligned = cold_base.next_multiple_of(align);
-                let new_ptr = aligned + size;
-                if new_ptr <= cold_end {
-                    ARENA_PTR.set(new_ptr);
-                    ARENA_END.set(cold_end);
-                    return aligned as *mut u8;
-                }
-            }
+        ARENA_PTR.set(base);
+        ARENA_GEN.set(generation);
+        let aligned = base.next_multiple_of(align);
+        let new_ptr = aligned + size;
+        if new_ptr <= ARENA_END.get() {
+            ARENA_PTR.set(new_ptr);
+            return aligned as *mut u8;
         }
     }
     unsafe { std::alloc::System.alloc(Layout::from_size_align_unchecked(size, align)) }
@@ -206,13 +170,9 @@ unsafe impl GlobalAlloc for ZkAllocator {
     #[inline(always)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let addr = ptr as usize;
-        let hot = HOT_REGION_BASE.load(Ordering::Relaxed);
-        if hot != 0 && addr >= hot && addr < hot + HOT_REGION_SIZE {
-            return;
-        }
-        let cold = COLD_REGION_BASE.load(Ordering::Relaxed);
-        if cold != 0 && addr >= cold && addr < cold + COLD_REGION_SIZE {
-            return;
+        let base = REGION_BASE.load(Ordering::Relaxed);
+        if base != 0 && addr >= base && addr < base + REGION_SIZE {
+            return; // arena-owned pointer — free is a no-op
         }
         unsafe { std::alloc::System.dealloc(ptr, layout) };
     }
