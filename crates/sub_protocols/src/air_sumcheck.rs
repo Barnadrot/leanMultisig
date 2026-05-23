@@ -457,28 +457,11 @@ where
                 let i_lo = new_j & lo_mask;
                 let i0 = (i_hi << (fold_bit + 1)) | i_lo;
                 let i1 = i0 | stride;
-
-                let next_j = new_j + 1;
-                let next_i_hi = next_j >> fold_bit;
-                let next_i_lo = next_j & lo_mask;
-                let next_i0 = (next_i_hi << (fold_bit + 1)) | next_i_lo;
-                let next_i1 = next_i0 | stride;
-                for c in cols {
-                    if next_i1 < c.len() {
-                        unsafe {
-                            let p0 = (c.as_ptr().add(next_i0)) as *const u8;
-                            let p1 = (c.as_ptr().add(next_i1)) as *const u8;
-                            #[cfg(target_arch = "x86_64")]
-                            {
-                                std::arch::x86_64::_mm_prefetch(p0 as *const i8, std::arch::x86_64::_MM_HINT_T0);
-                                std::arch::x86_64::_mm_prefetch(p1 as *const i8, std::arch::x86_64::_MM_HINT_T0);
-                            }
-                        }
-                    }
-                }
-
                 let partial_eq = get_split_eq(new_j);
 
+                // `point` holds column values at z=0; `diff[k] = col_k[i1] - col_k[i0]`.
+                // Invariant for the rest of this closure: `col_k(z) = point[k] + z · diff[k]`,
+                // so advancing z by 1 means `point[k] += diff[k]` for all k.
                 point.clear();
                 diff.clear();
                 for c in cols {
@@ -613,26 +596,6 @@ where
                 let i_lo = new_j & lo_mask;
                 let i0 = (i_hi << (fold_bit + 1)) | i_lo;
                 let i1 = i0 | stride;
-
-                let next_j = new_j + 1;
-                let next_i_hi = next_j >> fold_bit;
-                let next_i_lo = next_j & lo_mask;
-                let next_i0 = (next_i_hi << (fold_bit + 1)) | next_i_lo;
-                let next_i1 = next_i0 | stride;
-                for c in cols {
-                    if next_i1 < c.len() {
-                        unsafe {
-                            let p0 = (c.as_ptr().add(next_i0)) as *const u8;
-                            let p1 = (c.as_ptr().add(next_i1)) as *const u8;
-                            #[cfg(target_arch = "x86_64")]
-                            {
-                                std::arch::x86_64::_mm_prefetch(p0 as *const i8, std::arch::x86_64::_MM_HINT_T0);
-                                std::arch::x86_64::_mm_prefetch(p1 as *const i8, std::arch::x86_64::_MM_HINT_T0);
-                            }
-                        }
-                    }
-                }
-
                 let partial_eq = get_split_eq(new_j);
                 point.clear();
                 diff.clear();
