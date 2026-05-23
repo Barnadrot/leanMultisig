@@ -31,6 +31,14 @@ fn blake3_digest_to_field(hash_bytes: &[u8; 32]) -> [KoalaBear; DIGEST_ELEMS] {
 }
 
 fn blake3_leaf_hash(row: &[KoalaBear], full_base_width: usize) -> [KoalaBear; DIGEST_ELEMS] {
+    blake3_leaf_hash_with_suffix(row, full_base_width, None)
+}
+
+fn blake3_leaf_hash_with_suffix(
+    row: &[KoalaBear],
+    full_base_width: usize,
+    precomputed: Option<&([KoalaBear; DIGEST_ELEMS], usize)>,
+) -> [KoalaBear; DIGEST_ELEMS] {
     assert!(full_base_width % DIGEST_ELEMS == 0, "full_base_width must be a multiple of DIGEST_ELEMS");
     let n_chunks = full_base_width / DIGEST_ELEMS;
     assert!(n_chunks >= 2, "need at least 2 chunks for blake3 leaf hash");
@@ -49,9 +57,25 @@ fn blake3_leaf_hash(row: &[KoalaBear], full_base_width: usize) -> [KoalaBear; DI
         }
     };
 
-    let mut state = blake3_compress_internal(chunk(n_chunks - 2), chunk(n_chunks - 1));
-    for j in 1..n_chunks - 1 {
-        state = blake3_compress_internal(state, chunk(n_chunks - 2 - j));
+    let (mut state, start_absorb_from) = if let Some(&(ref precomp_state, n_zero_suffix)) = precomputed {
+        (*precomp_state, n_chunks - 1 - n_zero_suffix)
+    } else {
+        let s = blake3_compress_internal(chunk(n_chunks - 2), chunk(n_chunks - 1));
+        (s, n_chunks - 3)
+    };
+
+    for j in (0..=start_absorb_from).rev() {
+        state = blake3_compress_internal(state, chunk(j));
+    }
+    state
+}
+
+fn precompute_blake3_zero_suffix(n_zero_suffix_chunks: usize) -> [KoalaBear; DIGEST_ELEMS] {
+    assert!(n_zero_suffix_chunks >= 2);
+    let zero_chunk = [KoalaBear::default(); DIGEST_ELEMS];
+    let mut state = blake3_compress_internal(zero_chunk, zero_chunk);
+    for _ in 2..n_zero_suffix_chunks {
+        state = blake3_compress_internal(state, zero_chunk);
     }
     state
 }
@@ -70,14 +94,23 @@ fn blake3_compress_internal(left: [KoalaBear; DIGEST_ELEMS], right: [KoalaBear; 
 fn first_digest_layer_blake3(
     matrix: &DenseMatrix<KoalaBear>,
     full_base_width: usize,
+    effective_base_width: usize,
 ) -> Vec<[KoalaBear; DIGEST_ELEMS]> {
     let height = matrix.height();
     let matrix_width = matrix.width();
     let mut digests = vec![[KoalaBear::default(); DIGEST_ELEMS]; height];
 
+    let n_zero_suffix_chunks = (full_base_width - effective_base_width) / DIGEST_ELEMS;
+    let precomputed = if n_zero_suffix_chunks >= 2 {
+        let state = precompute_blake3_zero_suffix(n_zero_suffix_chunks);
+        Some((state, n_zero_suffix_chunks))
+    } else {
+        None
+    };
+
     digests.par_iter_mut().enumerate().for_each(|(i, digest)| {
         let row_slice = unsafe { matrix.row_subslice_unchecked(i, 0, matrix_width) };
-        *digest = blake3_leaf_hash(&row_slice, full_base_width);
+        *digest = blake3_leaf_hash_with_suffix(&row_slice, full_base_width, precomputed.as_ref());
     });
 
     digests
@@ -143,9 +176,9 @@ pub(crate) fn merkle_commit<F: Field, EF: ExtensionField<F>>(
 fn build_merkle_tree_koalabear(
     leaf: DenseMatrix<KoalaBear>,
     full_base_width: usize,
-    _effective_base_width: usize,
+    effective_base_width: usize,
 ) -> RoundMerkleTree<KoalaBear> {
-    let first_layer = first_digest_layer_blake3(&leaf, full_base_width);
+    let first_layer = first_digest_layer_blake3(&leaf, full_base_width, effective_base_width);
     let tree = symetric::merkle::MerkleTree::from_first_layer_with_fn(first_layer, &blake3_compress_internal);
     WhirMerkleTree {
         leaf,
