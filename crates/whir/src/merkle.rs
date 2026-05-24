@@ -30,6 +30,36 @@ fn blake3_digest_to_field(hash_bytes: &[u8; 32]) -> [KoalaBear; DIGEST_ELEMS] {
     })
 }
 
+const BLAKE3_IV: [u32; 8] = [
+    0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
+    0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
+];
+const BLAKE3_CHUNK_START: u8 = 1;
+const BLAKE3_CHUNK_END: u8 = 2;
+const BLAKE3_ROOT: u8 = 8;
+const BLAKE3_BLOCK_LEN: u8 = 64;
+
+#[inline(always)]
+fn blake3_hash_raw(block: &[u8; 64], platform: &blake3::platform::Platform) -> [u8; 32] {
+    let mut cv = BLAKE3_IV;
+    platform.compress_in_place(
+        &mut cv,
+        block,
+        BLAKE3_BLOCK_LEN,
+        0,
+        BLAKE3_CHUNK_START | BLAKE3_CHUNK_END | BLAKE3_ROOT,
+    );
+    let mut out = [0u8; 32];
+    for (i, &word) in cv.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    out
+}
+
+fn field_to_bytes(field: &[KoalaBear; DIGEST_ELEMS]) -> [u8; 32] {
+    unsafe { *(&*field as *const [KoalaBear; DIGEST_ELEMS] as *const [u8; 32]) }
+}
+
 fn blake3_leaf_hash(row: &[KoalaBear], full_base_width: usize) -> [KoalaBear; DIGEST_ELEMS] {
     blake3_leaf_hash_with_suffix(row, full_base_width, None)
 }
@@ -37,47 +67,69 @@ fn blake3_leaf_hash(row: &[KoalaBear], full_base_width: usize) -> [KoalaBear; DI
 fn blake3_leaf_hash_with_suffix(
     row: &[KoalaBear],
     full_base_width: usize,
-    precomputed: Option<&([KoalaBear; DIGEST_ELEMS], usize)>,
+    precomputed: Option<&([u8; 32], usize)>,
 ) -> [KoalaBear; DIGEST_ELEMS] {
     assert!(full_base_width % DIGEST_ELEMS == 0, "full_base_width must be a multiple of DIGEST_ELEMS");
     let n_chunks = full_base_width / DIGEST_ELEMS;
     assert!(n_chunks >= 2, "need at least 2 chunks for blake3 leaf hash");
 
-    let chunk = |i: usize| -> [KoalaBear; DIGEST_ELEMS] {
+    let platform = blake3::platform::Platform::detect();
+
+    let chunk_bytes = |i: usize| -> [u8; 32] {
         let start = i * DIGEST_ELEMS;
         let end = start + DIGEST_ELEMS;
         if end <= row.len() {
-            row[start..end].try_into().unwrap()
+            unsafe { *(row[start..end].as_ptr() as *const [u8; 32]) }
         } else if start >= row.len() {
-            [KoalaBear::default(); DIGEST_ELEMS]
+            [0u8; 32]
         } else {
-            let mut c = [KoalaBear::default(); DIGEST_ELEMS];
-            c[..row.len() - start].copy_from_slice(&row[start..]);
+            let mut c = [0u8; 32];
+            let n_present = row.len() - start;
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    row[start..].as_ptr() as *const u8,
+                    c.as_mut_ptr(),
+                    n_present * 4,
+                );
+            }
             c
         }
     };
 
-    let (mut state, start_absorb_from) = if let Some(&(ref precomp_state, n_zero_suffix)) = precomputed {
-        (*precomp_state, n_chunks - 1 - n_zero_suffix)
+    let (mut state_bytes, start_absorb_from) = if let Some(&(ref precomp_bytes, n_zero_suffix)) = precomputed {
+        (*precomp_bytes, n_chunks - 1 - n_zero_suffix)
     } else {
-        let s = blake3_compress_internal(chunk(n_chunks - 2), chunk(n_chunks - 1));
-        (s, n_chunks - 3)
+        let last = chunk_bytes(n_chunks - 1);
+        let second_last = chunk_bytes(n_chunks - 2);
+        let mut block = [0u8; 64];
+        block[..32].copy_from_slice(&second_last);
+        block[32..].copy_from_slice(&last);
+        let hash_out = blake3_hash_raw(&block, &platform);
+        let field = blake3_digest_to_field(&hash_out);
+        (field_to_bytes(&field), n_chunks - 3)
     };
 
     for j in (0..=start_absorb_from).rev() {
-        state = blake3_compress_internal(state, chunk(j));
+        let right = chunk_bytes(j);
+        let mut block = [0u8; 64];
+        block[..32].copy_from_slice(&state_bytes);
+        block[32..].copy_from_slice(&right);
+        let hash_out = blake3_hash_raw(&block, &platform);
+        let field = blake3_digest_to_field(&hash_out);
+        state_bytes = field_to_bytes(&field);
     }
-    state
+
+    unsafe { *(&state_bytes as *const [u8; 32] as *const [KoalaBear; DIGEST_ELEMS]) }
 }
 
-fn precompute_blake3_zero_suffix(n_zero_suffix_chunks: usize) -> [KoalaBear; DIGEST_ELEMS] {
+fn precompute_blake3_zero_suffix(n_zero_suffix_chunks: usize) -> [u8; 32] {
     assert!(n_zero_suffix_chunks >= 2);
     let zero_chunk = [KoalaBear::default(); DIGEST_ELEMS];
     let mut state = blake3_compress_internal(zero_chunk, zero_chunk);
     for _ in 2..n_zero_suffix_chunks {
-        state = blake3_compress_internal(state, zero_chunk);
+        state = blake3_compress_internal(state, [KoalaBear::default(); DIGEST_ELEMS]);
     }
-    state
+    field_to_bytes(&state)
 }
 
 fn blake3_compress_internal(left: [KoalaBear; DIGEST_ELEMS], right: [KoalaBear; DIGEST_ELEMS]) -> [KoalaBear; DIGEST_ELEMS] {
@@ -102,8 +154,8 @@ fn first_digest_layer_blake3(
 
     let n_zero_suffix_chunks = (full_base_width - effective_base_width) / DIGEST_ELEMS;
     let precomputed = if n_zero_suffix_chunks >= 2 {
-        let state = precompute_blake3_zero_suffix(n_zero_suffix_chunks);
-        Some((state, n_zero_suffix_chunks))
+        let state_bytes = precompute_blake3_zero_suffix(n_zero_suffix_chunks);
+        Some((state_bytes, n_zero_suffix_chunks))
     } else {
         None
     };
