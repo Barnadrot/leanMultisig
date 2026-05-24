@@ -92,7 +92,7 @@ fn compile_main_program_self_referential() -> Bytecode {
         if actual_log_size == log_size_guess {
             return bytecode;
         } else {
-            println!(
+            eprintln!(
                 "Wrong guess at `compile_main_program_self_referential`, should be {} instead of {}, recompiling...",
                 actual_log_size, log_size_guess
             );
