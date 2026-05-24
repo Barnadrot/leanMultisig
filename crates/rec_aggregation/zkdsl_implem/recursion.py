@@ -629,22 +629,23 @@ def continue_recursion_ordered(
         log_n_rows = table_log_heights[table_index]
         n_rows = table_heights[table_index]
         total_num_cols = NUM_COLS_AIR[table_index]
+        column_prefixes = compute_column_prefixes(
+            offset / n_rows,
+            stacked_n_vars - log_n_rows,
+            folding_randomness_global,
+            total_num_cols,
+        )
         for i in unroll(0, len(pcs_points[table_index])):
             point = pcs_points[table_index][i]
             inner_folding = folding_randomness_global + (stacked_n_vars - log_n_rows) * DIM
             n_down_columns = len(AIR_DOWN_COLUMNS[table_index])
-            # TODO: cache prefixes for down columns to avoid recomputing them in the eq pass below
-            
+
             # next_mle (down) values
             if n_down_columns != 0:
                 next_factor = next_mle(point, inner_folding, log_n_rows)
                 for j in unroll(0, total_num_cols):
                     if len(pcs_values_down[table_index][i][j]) == 1:
-                        prefix = multilinear_location_prefix(
-                            offset / n_rows + j,
-                            stacked_n_vars - log_n_rows,
-                            folding_randomness_global,
-                        )
+                        prefix = column_prefixes + j * DIM
                         s = add_extension_ret(
                             s,
                             mul_extension_ret(mul_extension_ret(curr_randomness, prefix), next_factor),
@@ -654,11 +655,7 @@ def continue_recursion_ordered(
             eq_factor = poly_eq_extension_dynamic_ret(point, inner_folding, log_n_rows)
             for j in unroll(0, total_num_cols):
                 if len(pcs_values[table_index][i][j]) == 1:
-                    prefix = multilinear_location_prefix(
-                        offset / n_rows + j,
-                        stacked_n_vars - log_n_rows,
-                        folding_randomness_global,
-                    )
+                    prefix = column_prefixes + j * DIM
                     s = add_extension_ret(
                         s,
                         mul_extension_ret(mul_extension_ret(curr_randomness, prefix), eq_factor),
@@ -674,6 +671,38 @@ def multilinear_location_prefix(offset, n_vars, point):
     bits = checked_decompose_bits_small_value(offset, n_vars)
     res = poly_eq_base_extension(bits, point, n_vars)
     return res
+
+
+def compute_column_prefixes(first_col_offset, n_vars, point, n_cols: Const):
+    K = log2_ceil(n_cols)
+    debug_assert(0 < K)
+    debug_assert(K <= n_vars)
+    high_n_vars = n_vars - K
+
+    # low factor: eq(., point[high_n_vars:]) for every K-bit pattern
+    low_eq = compute_eq_mle_extension(point + high_n_vars * DIM, K)
+
+    # high factors for q = floor(first_col_offset / 2^K) and for the last column's q (q or q+1)
+    bits_first = checked_decompose_bits_small_value(first_col_offset, n_vars)
+    bits_last = checked_decompose_bits_small_value(first_col_offset + n_cols - 1, n_vars)
+    high_eq_lo = poly_eq_base_extension_or_one(bits_first, point, high_n_vars)
+    high_eq_hi = poly_eq_base_extension_or_one(bits_last, point, high_n_vars)
+
+    # column_prefixes[w]        = eq(q,   point_high) * low_eq[w]   for w in [0, 2^K)
+    # column_prefixes[2^K + w]  = eq(q+1, point_high) * low_eq[w]   for w in [0, 2^K)
+    column_prefixes = Array(2 ** (K + 1) * DIM)
+    for w in unroll(0, 2**K):
+        mul_extension(high_eq_lo, low_eq + w * DIM, column_prefixes + w * DIM)
+        mul_extension(high_eq_hi, low_eq + w * DIM, column_prefixes + (2**K + w) * DIM)
+
+    # r = first_col_offset mod 2^K (low K bits; big-endian bits, index n_vars-1 is the LSB)
+    r: Mut = bits_first[n_vars - 1]
+    for i in unroll(1, K):
+        r += bits_first[n_vars - 1 - i] * 2**i
+
+    # Column j lands at index r + j < 2^K + n_cols <= 2^(K+1).
+
+    return column_prefixes + r * DIM
 
 
 def fingerprint_2(table_index, data_1, data_2, logup_alphas_eq_poly):
