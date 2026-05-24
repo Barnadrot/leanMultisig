@@ -1151,6 +1151,7 @@ name = "sub_protocols"
 version = "0.1.0"
 dependencies = [
  "backend",
+ "lean_prover",
  "lean_vm",
  "rand",
  "tracing",
