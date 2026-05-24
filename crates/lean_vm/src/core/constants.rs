@@ -77,6 +77,6 @@ mod tests {
         for (table, max_log_n_rows) in MAX_LOG_N_ROWS_PER_TABLE {
             max_surface += (table.n_columns() as u64) << (max_log_n_rows as u64);
         }
-        assert!(max_surface <= 1 << 30); // Maximum data we can commit via WHIR using an initial folding factor of 7, and rate = 1/2
+        assert!(max_surface <= 1 << 31); // Maximum data we can commit via WHIR using an initial folding factor of 8, and rate = 1/2
     }
 }
