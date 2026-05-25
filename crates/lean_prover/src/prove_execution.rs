@@ -40,7 +40,8 @@ pub fn prove_execution(
 
     // Memory must be at least MIN_LOG_MEMORY_SIZE and at least bytecode size
     // (required by the stacked polynomial ordering)
-    let min_memory_size = (1 << MIN_LOG_MEMORY_SIZE).max(1 << bytecode.log_size());
+    let max_table_log = traces.values().map(|t| t.log_n_rows).max().unwrap_or(0);
+    let min_memory_size = (1 << MIN_LOG_MEMORY_SIZE).max(1 << bytecode.log_size()).max(1 << max_table_log);
     if memory.len() < min_memory_size {
         memory.resize(min_memory_size, F::ZERO);
     }

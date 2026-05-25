@@ -106,8 +106,7 @@ pub fn stack_polynomials_and_commit(
     assert_eq!(memory.len(), memory_acc.len());
     let tables_heights = traces.iter().map(|(table, trace)| (*table, trace.log_n_rows)).collect();
     let tables_heights_sorted = sort_tables_by_height(&tables_heights);
-    assert!(log2_strict_usize(memory.len()) >= tables_heights[&Table::execution()]); // memory must be at least as large as the number of cycles (TODO add some padding when this is not the case)
-    assert!(tables_heights[&Table::execution()] >= tables_heights_sorted[0].1); // execution table must be the largest table (TODO add some padding when this is not the case)
+    assert!(log2_strict_usize(memory.len()) >= tables_heights_sorted[0].1); // memory must be at least as large as the largest table
 
     let stacked_n_vars = compute_stacked_n_vars(
         log2_strict_usize(memory.len()),
@@ -177,11 +176,8 @@ pub fn stacked_pcs_parse_commitment(
     log_bytecode: usize,
     tables_heights: &BTreeMap<Table, VarCount>,
 ) -> Result<ParsedCommitment<F, EF>, ProofError> {
-    if log_memory < tables_heights[&Table::execution()]
-        || tables_heights[&Table::execution()] < tables_heights.values().copied().max().unwrap()
-    {
-        // memory must be at least as large as the number of cycles
-        // execution table must be the largest table
+    if log_memory < *tables_heights.values().max().unwrap() {
+        // memory must be at least as large as the largest table
         return Err(ProofError::InvalidProof);
     }
 
