@@ -159,6 +159,7 @@ pub fn prove_generic_logup(
             for (j, entry) in bus_data_entries.iter().enumerate() {
                 bus_data[j] = match entry {
                     BusData::Column(col) => PFPacking::<EF>::from_fn(|w| trace.columns[*col][src_idx(p, w)]),
+                    BusData::ColumnPlusConstant(col, ofs) => PFPacking::<EF>::from_fn(|w| trace.columns[*col][src_idx(p, w)] + F::from_usize(*ofs)),
                     BusData::Constant(val) => PFPacking::<EF>::from(F::from_usize(*val)),
                 };
             }
@@ -314,6 +315,7 @@ pub fn prove_generic_logup(
             .iter()
             .map(|entry| match entry {
                 BusData::Column(col) => trace.columns[*col].evaluate(&inner_point),
+                BusData::ColumnPlusConstant(col, ofs) => trace.columns[*col].evaluate(&inner_point) + EF::from(F::from_usize(*ofs)),
                 BusData::Constant(val) => EF::from(F::from_usize(*val)),
             })
             .collect();

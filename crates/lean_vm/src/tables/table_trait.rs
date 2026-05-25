@@ -55,7 +55,51 @@ impl BusDirection {
 #[derive(Debug, Clone, Copy)]
 pub enum BusData {
     Column(ColIndex),
+    ColumnPlusConstant(ColIndex, usize),
     Constant(usize),
+}
+
+impl BusData {
+    pub fn column(self) -> Option<ColIndex> {
+        match self {
+            Self::Column(c) | Self::ColumnPlusConstant(c, _) => Some(c),
+            Self::Constant(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BusMultiplicity {
+    One,
+    Column(ColIndex),
+}
+
+#[derive(Debug)]
+pub struct BusInteraction {
+    pub direction: BusDirection,
+    pub multiplicity: BusMultiplicity,
+    pub domainsep: BusData,
+    pub data: Vec<BusData>,
+}
+
+impl BusInteraction {
+    pub fn is_memory_lookup(&self) -> bool {
+        matches!(self.domainsep, BusData::Constant(crate::LOGUP_MEMORY_DOMAINSEP))
+    }
+}
+
+pub fn memory_lookups_consecutive(idx_col: ColIndex, values_start: ColIndex, n: usize) -> Vec<BusInteraction> {
+    (0..n)
+        .map(|i| BusInteraction {
+            direction: BusDirection::Push,
+            multiplicity: BusMultiplicity::One,
+            domainsep: BusData::Constant(crate::LOGUP_MEMORY_DOMAINSEP),
+            data: vec![
+                BusData::ColumnPlusConstant(idx_col, i),
+                BusData::Column(values_start + i),
+            ],
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -145,6 +189,46 @@ pub trait TableT: Air {
     fn table(&self) -> Table;
     fn lookups(&self) -> Vec<LookupIntoMemory>;
     fn bus(&self) -> Bus;
+    fn bus_interactions(&self) -> Vec<BusInteraction> {
+        // Default: convert from old lookups() + bus() API
+        let bus = self.bus();
+        let mut interactions = vec![BusInteraction {
+            direction: bus.direction,
+            multiplicity: BusMultiplicity::Column(bus.selector),
+            domainsep: bus.data.last().copied().unwrap_or(BusData::Constant(0)),
+            data: bus.data[..bus.data.len().saturating_sub(1)].to_vec(),
+        }];
+        for lookup in self.lookups() {
+            if let Some(ca) = lookup.computed_address {
+                for (i, &val_col) in lookup.values.iter().enumerate() {
+                    interactions.push(BusInteraction {
+                        direction: BusDirection::Push,
+                        multiplicity: BusMultiplicity::One,
+                        domainsep: BusData::Constant(crate::LOGUP_MEMORY_DOMAINSEP),
+                        data: vec![
+                            // addr = base + hi_coeff*hi_col + lo_col + address_offset + i
+                            // This can't be expressed cleanly in BusData, so we skip ComputedAddress lookups
+                            // in the default impl. Tables with ComputedAddress should override bus_interactions().
+                            BusData::Column(val_col),
+                        ],
+                    });
+                }
+            } else {
+                for (i, &val_col) in lookup.values.iter().enumerate() {
+                    interactions.push(BusInteraction {
+                        direction: BusDirection::Push,
+                        multiplicity: BusMultiplicity::One,
+                        domainsep: BusData::Constant(crate::LOGUP_MEMORY_DOMAINSEP),
+                        data: vec![
+                            BusData::ColumnPlusConstant(lookup.index, lookup.address_offset + i),
+                            BusData::Column(val_col),
+                        ],
+                    });
+                }
+            }
+        }
+        interactions
+    }
     fn padding_row(&self, zero_vec_ptr: usize, null_hash_ptr: usize, null_blake3_hash_ptr: usize) -> Vec<F>;
     fn execute<M: MemoryAccess>(
         &self,
