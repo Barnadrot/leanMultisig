@@ -922,12 +922,8 @@ fn eval_eq_with_packed_output_dual<F: Field, EF: ExtensionField<F>>(
             let sa0 = scalar_a - sa1;
             let sb1 = scalar_b * eval_b[0];
             let sb0 = scalar_b - sb1;
-            eval_eq_with_packed_output_dual::<F, EF>(
-                &eval_a[1..], &eval_b[1..], low, sa0, sb0,
-            );
-            eval_eq_with_packed_output_dual::<F, EF>(
-                &eval_a[1..], &eval_b[1..], high, sa1, sb1,
-            );
+            eval_eq_with_packed_output_dual::<F, EF>(&eval_a[1..], &eval_b[1..], low, sa0, sb0);
+            eval_eq_with_packed_output_dual::<F, EF>(&eval_a[1..], &eval_b[1..], high, sa1, sb1);
         }
     }
 }

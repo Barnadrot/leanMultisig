@@ -543,10 +543,7 @@ where
 
         let second = statements.get(1);
         let second_is_full_domain = second.is_some_and(|s| {
-            !s.is_next
-                && s.values.len() == 1
-                && s.values[0].selector == 0
-                && s.inner_num_variables() == num_variables
+            !s.is_next && s.values.len() == 1 && s.values[0].selector == 0 && s.inner_num_variables() == num_variables
         });
 
         if second_is_full_domain {
