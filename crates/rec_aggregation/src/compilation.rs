@@ -19,7 +19,7 @@ use crate::type_1_aggregation::TWEAK_TABLE_SIZE_FE_PADDED;
 // [000.. (ZERO_VEC_LEN)][10000000 (fiat-shamir domain sep)][10000 (one in extension field)][111... (NUM_REPEATED_ONES)][tweak table]
 pub const ZERO_VEC_LEN: usize = 16;
 pub const NUM_REPEATED_ONES: usize = 32;
-pub const XOR_TABLE_SIZE: usize = 0;
+pub const XOR_TABLE_SIZE: usize = 256 * 256;
 pub const PREAMBLE_MEMORY_LEN: usize =
     ZERO_VEC_LEN + DIGEST_LEN + DIMENSION + NUM_REPEATED_ONES + TWEAK_TABLE_SIZE_FE_PADDED + XOR_TABLE_SIZE;
 
@@ -35,6 +35,9 @@ pub fn get_aggregation_bytecode() -> &'static Bytecode {
 }
 
 pub fn init_aggregation_bytecode() {
+    eprintln!("PREAMBLE_MEMORY_LEN = {}", PREAMBLE_MEMORY_LEN);
+    eprintln!("XOR_TABLE_SIZE = {}", XOR_TABLE_SIZE);
+    eprintln!("TWEAK_TABLE_SIZE_FE_PADDED = {}", crate::type_1_aggregation::TWEAK_TABLE_SIZE_FE_PADDED);
     let xor_table_addr = DIGEST_LEN + PREAMBLE_MEMORY_LEN - XOR_TABLE_SIZE;
     lean_vm::set_xor_table_base(xor_table_addr);
     BYTECODE.get_or_init(compile_main_program_self_referential);
@@ -408,6 +411,8 @@ fn build_replacements(log_inner_bytecode: usize, bytecode_zero_eval: F) -> BTree
     replacements.insert("STARTING_PC_PLACEHOLDER".to_string(), STARTING_PC.to_string());
     replacements.insert("ENDING_PC_PLACEHOLDER".to_string(), ending_pc.to_string());
     let xor_table_addr = DIGEST_LEN + PREAMBLE_MEMORY_LEN - XOR_TABLE_SIZE;
+    replacements.insert("XOR_TABLE_ADDR_PLACEHOLDER".to_string(), xor_table_addr.to_string());
+    let xor_table_addr = DIGEST_LEN + PREAMBLE_MEMORY_LEN - XOR_TABLE_SIZE;
 
     // XMSS-specific replacements
     replacements.insert("V_PLACEHOLDER".to_string(), V.to_string());
@@ -449,6 +454,11 @@ fn build_replacements(log_inner_bytecode: usize, bytecode_zero_eval: F) -> BTree
         NUM_REPEATED_ONES.to_string(),
     );
 
+    // Debug: dump Blake3 table bus interactions
+    eprintln!("Blake3 bus_interactions count: {}", Table::blake3().bus_interactions().len());
+    for (i, bus) in Table::blake3().bus_interactions().iter().enumerate() {
+        eprintln!("  bus[{}]: dir={:?} mult={:?} domsep={:?} data_len={}", i, bus.direction, bus.multiplicity, bus.domainsep, bus.data.len());
+    }
     replacements
 }
 
@@ -457,7 +467,6 @@ fn all_air_evals_in_zk_dsl() -> String {
     res += &air_eval_in_zk_dsl(ExecutionTable::<false> {});
     res += &air_eval_in_zk_dsl(ExtensionOpPrecompile::<false> {});
     res += &air_eval_in_zk_dsl(Poseidon16Precompile::<false> {});
-    res += &air_eval_in_zk_dsl(ConstrainedBlake3Precompile::<false> {});
     res
 }
 

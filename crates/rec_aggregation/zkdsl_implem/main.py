@@ -33,8 +33,10 @@ TYPE_2_BASE_NUM_CHUNKS = BYTECODE_CLAIM_NUM_CHUNKS + 2  # prefix chunk + domsep 
 
 def main():
     debug_assert(MAX_N_SIGS + MAX_N_DUPS <= 2**16)  # because of range checking, TODO increase
-    pub_mem = 0  # See hashing.py for the memory layout
+    pub_mem: Mut = 0  # See hashing.py for the memory layout
     build_preamble_memory()
+    xor_table_w: Mut = XOR_TABLE_ADDR
+    hint_witness("xor_table", xor_table_w)
 
     input_data_num_chunks_buf = Array(1)
     hint_witness("input_data_num_chunks", input_data_num_chunks_buf)

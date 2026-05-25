@@ -385,6 +385,11 @@ pub(crate) fn aggregate_type_1_with_min_padding(
         );
     }
 
+    let xor_table: Vec<F> = (0..65536u32)
+        .map(|i| F::from_u32((i >> 8) ^ (i & 0xFF)))
+        .collect();
+    hints.insert("xor_table".to_string(), vec![xor_table]);
+
     let witness = ExecutionWitness {
         preamble_memory_len: PREAMBLE_MEMORY_LEN,
         hints,

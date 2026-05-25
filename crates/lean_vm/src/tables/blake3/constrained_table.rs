@@ -77,6 +77,8 @@ impl<const BUS: bool> TableT for ConstrainedBlake3Precompile<BUS> {
         }
 
         // XOR byte lookups via memory bus (64 per row: 4 G × 4 steps × 4 bytes)
+        // Skip when XOR table not in preamble
+        if get_xor_table_base() == 0 { return buses; }
         for g in 0..4 {
             for (xor_addrs, xor_bytes) in [
                 (G_XOR2_ADDRS, G_XOR2_BYTES),
