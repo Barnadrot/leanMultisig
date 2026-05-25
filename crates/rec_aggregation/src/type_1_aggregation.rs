@@ -378,23 +378,12 @@ pub(crate) fn aggregate_type_1_with_min_padding(
     hints.insert("merkle_path".to_string(), merkle_path_blobs);
     hints.insert("aggregate_sizes".to_string(), vec![aggregate_sizes]);
     hints.insert("tweak_table".to_string(), vec![tweak_table]);
-    // XOR byte lookup table: 65536 entries, xor_table[256*a + b] = a ^ b
-    let xor_table: Vec<F> = (0..65536u32)
-        .map(|i| F::from_u32((i >> 8) ^ (i & 0xFF)))
-        .collect();
-    hints.insert("xor_table".to_string(), vec![xor_table]);
     if n_recursions > 0 {
         hints.insert(
             "bytecode_sumcheck_proof".to_string(),
             vec![reduced_claims.sumcheck_transcript],
         );
     }
-
-    // XOR byte lookup table for constrained Blake3
-    let xor_table: Vec<F> = (0..65536u32)
-        .map(|i| F::from_u32((i >> 8) ^ (i & 0xFF)))
-        .collect();
-    hints.insert("xor_table".to_string(), vec![xor_table]);
 
     let witness = ExecutionWitness {
         preamble_memory_len: PREAMBLE_MEMORY_LEN,

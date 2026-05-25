@@ -19,7 +19,7 @@ use crate::type_1_aggregation::TWEAK_TABLE_SIZE_FE_PADDED;
 // [000.. (ZERO_VEC_LEN)][10000000 (fiat-shamir domain sep)][10000 (one in extension field)][111... (NUM_REPEATED_ONES)][tweak table]
 pub const ZERO_VEC_LEN: usize = 16;
 pub const NUM_REPEATED_ONES: usize = 32;
-pub const XOR_TABLE_SIZE: usize = 256 * 256;
+pub const XOR_TABLE_SIZE: usize = 0;
 pub const PREAMBLE_MEMORY_LEN: usize =
     ZERO_VEC_LEN + DIGEST_LEN + DIMENSION + NUM_REPEATED_ONES + TWEAK_TABLE_SIZE_FE_PADDED + XOR_TABLE_SIZE;
 
@@ -408,7 +408,6 @@ fn build_replacements(log_inner_bytecode: usize, bytecode_zero_eval: F) -> BTree
     replacements.insert("STARTING_PC_PLACEHOLDER".to_string(), STARTING_PC.to_string());
     replacements.insert("ENDING_PC_PLACEHOLDER".to_string(), ending_pc.to_string());
     let xor_table_addr = DIGEST_LEN + PREAMBLE_MEMORY_LEN - XOR_TABLE_SIZE;
-    replacements.insert("XOR_TABLE_ADDR_PLACEHOLDER".to_string(), xor_table_addr.to_string());
 
     // XMSS-specific replacements
     replacements.insert("V_PLACEHOLDER".to_string(), V.to_string());

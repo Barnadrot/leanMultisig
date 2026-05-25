@@ -11,12 +11,6 @@ use utils::poseidon_compress_slice;
 
 use crate::InnerVerified;
 
-fn add_xor_table_hint(hints: &mut HashMap<String, Vec<Vec<F>>>) {
-    let xor_table: Vec<F> = (0..65536u32)
-        .map(|i| F::from_u32((i >> 8) ^ (i & 0xFF)))
-        .collect();
-    hints.insert("xor_table".to_string(), vec![xor_table]);
-}
 use crate::bytecode_claims::compute_bytecode_value_at;
 use crate::bytecode_claims::flatten_bytecode_claim;
 use crate::bytecode_claims::reduce_bytecode_claims;
@@ -159,7 +153,6 @@ pub fn merge_many_type_1(
         vec![reduced_claims.sumcheck_transcript],
     );
 
-    add_xor_table_hint(&mut hints);
     let witness = ExecutionWitness {
         preamble_memory_len: PREAMBLE_MEMORY_LEN,
         hints,
@@ -263,7 +256,6 @@ pub fn split_type_2(
         vec![reduced_claims.sumcheck_transcript],
     );
 
-    add_xor_table_hint(&mut hints);
     let witness = ExecutionWitness {
         preamble_memory_len: PREAMBLE_MEMORY_LEN,
         hints,
