@@ -1,6 +1,5 @@
 use crate::{
-    EF, EXT_OP_FLAG_ADD, EXT_OP_FLAG_IS_BE, EXT_OP_FLAG_MUL, EXT_OP_FLAG_POLY_EQ, ExtraDataForBuses,
-    eval_virtual_bus_column,
+    EF, EXT_OP_FLAG_ADD, EXT_OP_FLAG_IS_BE, EXT_OP_FLAG_MUL, EXT_OP_FLAG_POLY_EQ, ExtraDataForBuses, eval_bus_virtual,
     tables::extension_op::{EXT_OP_LEN_MULTIPLIER, ExtensionOpPrecompile},
 };
 use backend::*;
@@ -26,8 +25,8 @@ pub(super) const COL_VRES: usize = 19;
 pub(super) const COL_COMP: usize = 24;
 
 // Virtual columns (not explicitely in AIR)
-pub(super) const COL_ACTIVATION_FLAG: usize = 29;
-pub(super) const COL_AUX_EXTENSION_OP: usize = 30;
+pub(super) const COL_MULTIPLICITY_EXTENSION_OP: usize = 29;
+pub(super) const COL_DOMAINSEP_EXTENSION_OP: usize = 30;
 
 use backend::quintic_extension::extension::quintic_mul;
 
@@ -48,7 +47,7 @@ impl<const BUS: bool> Air for ExtensionOpPrecompile<BUS> {
         6
     }
     fn n_constraints(&self) -> usize {
-        33
+        35
     }
     fn down_column_indexes(&self) -> Vec<usize> {
         vec![
@@ -98,7 +97,7 @@ impl<const BUS: bool> Air for ExtensionOpPrecompile<BUS> {
         let comp_down: [AB::IF; 5] = std::array::from_fn(|k| down[8 + k]); // COL_COMP+0..5
 
         let active = flag_add + flag_mul + flag_poly_eq;
-        let activation_flag = start * active;
+        let multiplicity = start * active;
 
         let aux = is_be * AB::F::from_usize(EXT_OP_FLAG_IS_BE)
             + flag_add * AB::F::from_usize(EXT_OP_FLAG_ADD)
@@ -109,14 +108,10 @@ impl<const BUS: bool> Air for ExtensionOpPrecompile<BUS> {
         let idx_r = up[COL_IDX_RES];
 
         if BUS {
-            builder.assert_zero_ef(eval_virtual_bus_column::<AB, EF>(
-                extra_data,
-                activation_flag,
-                &[aux, idx_a, idx_b, idx_r],
-            ));
+            eval_bus_virtual::<AB, EF>(builder, extra_data, multiplicity, aux, &[idx_a, idx_b, idx_r]);
         } else {
-            builder.declare_values(&[activation_flag]);
-            builder.declare_values(&[aux, idx_a, idx_b, idx_r]);
+            builder.declare_values(&[multiplicity]);
+            builder.declare_values(&[idx_a, idx_b, idx_r, aux]);
         }
 
         let is_ee = -(is_be - AB::F::ONE);

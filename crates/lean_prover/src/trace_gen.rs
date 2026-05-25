@@ -1,7 +1,7 @@
 use backend::*;
 use lean_vm::*;
 use std::{array, collections::BTreeMap};
-use utils::{ToUsize, blake3_compress, get_poseidon_16_of_zero, transposed_par_iter_mut};
+use utils::{ToUsize, get_poseidon_16_of_zero, transposed_par_iter_mut};
 
 #[derive(Debug)]
 pub struct ExecutionTrace {
@@ -11,7 +11,11 @@ pub struct ExecutionTrace {
     pub metadata: ExecutionMetadata,
 }
 
-pub fn get_execution_trace(bytecode: &Bytecode, execution_result: ExecutionResult) -> ExecutionTrace {
+pub fn get_execution_trace(
+    bytecode: &Bytecode,
+    execution_result: ExecutionResult,
+    min_table_log_n_rows: &BTreeMap<Table, usize>, // testing purpose
+) -> ExecutionTrace {
     assert_eq!(execution_result.pcs.len(), execution_result.fps.len());
 
     let n_cycles = execution_result.pcs.len();
@@ -93,14 +97,11 @@ pub fn get_execution_trace(bytecode: &Bytecode, execution_result: ExecutionResul
 
     let mut memory_padded = memory.0.par_iter().map(|&v| v.unwrap_or(F::ZERO)).collect::<Vec<F>>();
 
-    // Write [0000000000000000 | poseidon_compress(0^16) | blake3_compress(0^8, 0^8)] (to make lookups work on padding-rows).
+    // Write [0000000000000000 | poseidon_compress(0000000000000000)] (to make lookups work on padding-rows).
     let padding_zero_vec_ptr = memory_padded.len();
     memory_padded.extend(std::iter::repeat_n(F::ZERO, 16));
     let null_poseidon_16_hash_ptr = memory_padded.len();
     memory_padded.extend_from_slice(get_poseidon_16_of_zero());
-    let null_blake3_hash_ptr = memory_padded.len();
-    let blake3_null = blake3_compress(&[F::ZERO; 8], &[F::ZERO; 8]);
-    memory_padded.extend_from_slice(&blake3_null);
 
     // IMPORTANT: memory size should always be >= number of VM cycles
     let padded_memory_len = (memory_padded.len().max(n_cycles).max(1 << MIN_LOG_N_ROWS_PER_TABLE)).next_power_of_two();
@@ -111,9 +112,35 @@ pub fn get_execution_trace(bytecode: &Bytecode, execution_result: ExecutionResul
     let poseidon_trace = traces.get_mut(&Table::poseidon16()).unwrap();
     fill_trace_poseidon_16(&mut poseidon_trace.columns);
 
-    // outputs_left[4..8] always holds the correct Poseidon output (state[i]+inputs[i]).
-    // The second-half result lookup is conditional (inactive when flag_half_output=1),
-    // so no override is needed.
+    // For permute=0 rows, override unconstrained output columns with memory values
+    // so the lookup matches. Same when half_output=1.
+    {
+        let split = POSEIDON_16_COL_OUTPUT_LEFT + HALF_DIGEST_LEN;
+        let (left, right) = poseidon_trace.columns.split_at_mut(split);
+        let half_output_col = &left[POSEIDON_16_COL_FLAG_HALF_OUTPUT];
+        let permute_col = &left[POSEIDON_16_COL_FLAG_PERMUTE];
+        let res_col = &left[POSEIDON_16_COL_INDEX_INPUT_RES];
+        const N: usize = HALF_DIGEST_LEN + DIGEST_LEN;
+        let cols: &mut [Vec<F>; N] = (&mut right[..N]).try_into().unwrap();
+
+        transposed_par_iter_mut(cols)
+            .zip(half_output_col)
+            .zip(permute_col)
+            .zip(res_col)
+            .for_each(|(((row, &half), &permute), &res)| {
+                if permute == F::ZERO {
+                    let base = res.to_usize();
+                    if half == F::ONE {
+                        for j in 0..HALF_DIGEST_LEN {
+                            *row[j] = memory_padded[base + HALF_DIGEST_LEN + j];
+                        }
+                    }
+                    for j in 0..DIGEST_LEN {
+                        *row[HALF_DIGEST_LEN + j] = memory_padded[base + DIGEST_LEN + j];
+                    }
+                }
+            });
+    }
 
     let extension_op_trace = traces.get_mut(&Table::extension_op()).unwrap();
     fill_trace_extension_op(extension_op_trace, &memory_padded);
@@ -127,7 +154,19 @@ pub fn get_execution_trace(bytecode: &Bytecode, execution_result: ExecutionResul
         },
     );
     for table in traces.keys().copied().collect::<Vec<_>>() {
-        pad_table(&table, &mut traces, padding_zero_vec_ptr, null_poseidon_16_hash_ptr, null_blake3_hash_ptr);
+        let floor = min_table_log_n_rows
+            .get(&table)
+            .copied()
+            .unwrap_or_default()
+            .max(MIN_LOG_N_ROWS_PER_TABLE);
+        pad_table(
+            &table,
+            &mut traces,
+            padding_zero_vec_ptr,
+            null_poseidon_16_hash_ptr,
+            bytecode.ending_pc,
+            floor,
+        );
     }
 
     ExecutionTrace {
@@ -143,7 +182,8 @@ fn pad_table(
     traces: &mut BTreeMap<Table, TableTrace>,
     zero_vec_ptr: usize,
     null_poseidon_16_hash_ptr: usize,
-    null_blake3_hash_ptr: usize,
+    ending_pc: usize,
+    min_log_n_rows: usize,
 ) {
     let trace = traces.get_mut(table).unwrap();
     let h = trace.columns[0].len();
@@ -154,9 +194,9 @@ fn pad_table(
         .for_each(|(i, col)| assert_eq!(col.len(), h, "column {}, table {}", i, table.name()));
 
     trace.non_padded_n_rows = h;
-    trace.log_n_rows = log2_ceil_usize(h + 1).max(MIN_LOG_N_ROWS_PER_TABLE);
+    trace.log_n_rows = log2_ceil_usize(h + 1).max(min_log_n_rows);
     let n_rows = 1 << trace.log_n_rows;
-    let padding_row = table.padding_row(zero_vec_ptr, null_poseidon_16_hash_ptr, null_blake3_hash_ptr);
+    let padding_row = table.padding_row(zero_vec_ptr, null_poseidon_16_hash_ptr, ending_pc);
     trace.columns.par_iter_mut().enumerate().for_each(|(i, col)| {
         assert!(col.len() <= h); // potentially some columns have not been filled (in Poseidon -> we fill it later with SIMD + parallelism), but the first one should always be representative
         col.resize(n_rows, padding_row[i]);

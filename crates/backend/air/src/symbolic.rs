@@ -252,7 +252,7 @@ struct SymbolicAirBuilder<F: Field> {
     up: Vec<SymbolicExpression<F>>,
     down: Vec<SymbolicExpression<F>>,
     constraints: Vec<SymbolicExpression<F>>,
-    bus_flag_value: Option<SymbolicExpression<F>>,
+    bus_multiplicity_value: Option<SymbolicExpression<F>>,
     bus_data_values: Option<Vec<SymbolicExpression<F>>>,
 }
 
@@ -269,7 +269,7 @@ impl<F: Field> SymbolicAirBuilder<F> {
             up,
             down,
             constraints: Vec::new(),
-            bus_flag_value: None,
+            bus_multiplicity_value: None,
             bus_data_values: None,
         }
     }
@@ -301,9 +301,9 @@ impl<F: Field> AirBuilder for SymbolicAirBuilder<F> {
     }
 
     fn declare_values(&mut self, values: &[Self::IF]) {
-        if self.bus_flag_value.is_none() {
+        if self.bus_multiplicity_value.is_none() {
             assert_eq!(values.len(), 1);
-            self.bus_flag_value = Some(values[0]);
+            self.bus_multiplicity_value = Some(values[0]);
         } else {
             assert!(self.bus_data_values.is_none());
             self.bus_data_values = Some(values.to_vec());
@@ -311,13 +311,13 @@ impl<F: Field> AirBuilder for SymbolicAirBuilder<F> {
     }
 }
 
-pub fn get_symbolic_constraints_and_bus_data_values<F: Field, A: Air>(
-    air: &A,
-) -> (
+pub type SymbolicAirData<F> = (
     Vec<SymbolicExpression<F>>,
     SymbolicExpression<F>,
     Vec<SymbolicExpression<F>>,
-)
+);
+
+pub fn get_symbolic_constraints_and_bus_data_values<F: Field, A: Air>(air: &A) -> SymbolicAirData<F>
 where
     A::ExtraData: Default,
 {
@@ -328,7 +328,7 @@ where
     air.eval(&mut builder, &Default::default());
     (
         builder.constraints(),
-        builder.bus_flag_value.unwrap(),
+        builder.bus_multiplicity_value.unwrap(),
         builder.bus_data_values.unwrap(),
     )
 }

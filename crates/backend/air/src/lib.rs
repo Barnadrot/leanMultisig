@@ -20,6 +20,10 @@ pub trait Air: Send + Sync + 'static {
 
     fn down_column_indexes(&self) -> Vec<usize>;
 
+    fn n_shift_columns(&self) -> usize {
+        self.down_column_indexes().len()
+    }
+
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData);
 
     /// If the AIR contains a `low_degree_block` sub-region, returns `(degree, n_constraints)`
@@ -50,6 +54,8 @@ pub trait AirBuilder: Sized {
 
     fn up(&self) -> &[Self::IF];
     fn down(&self) -> &[Self::IF];
+    fn flat(&self) -> &[Self::IF] { self.up() }
+    fn shift(&self) -> &[Self::IF] { self.down() }
 
     fn assert_zero(&mut self, x: Self::IF);
     fn assert_zero_ef(&mut self, x: Self::EF);
