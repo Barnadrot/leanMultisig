@@ -239,8 +239,7 @@ impl<const BUS: bool> Air for Blake3CompressPrecompile<BUS> {
             );
         } else {
             builder.declare_values(std::slice::from_ref(&flag_active));
-            builder.declare_values(&[precompile_data_reconstructed]);
-            builder.declare_values(&[index_a, index_right, index_res]);
+            builder.declare_values(&[precompile_data_reconstructed, index_a, index_right, index_res]);
         }
 
         builder.assert_bool(flag_active);

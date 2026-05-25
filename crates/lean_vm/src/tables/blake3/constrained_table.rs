@@ -229,8 +229,9 @@ impl<const BUS: bool> Air for ConstrainedBlake3Precompile<BUS> {
             );
         } else {
             builder.declare_values(std::slice::from_ref(&bus_selector));
-            builder.declare_values(&[precompile_data]);
-            builder.declare_values(&bus_data);
+            let mut all_bus_data = vec![precompile_data];
+            all_bus_data.extend_from_slice(&bus_data);
+            builder.declare_values(&all_bus_data);
         }
 
         builder.assert_bool(flag_active);
