@@ -49,6 +49,7 @@ impl<const BUS: bool> Air for ExtensionOpPrecompile<BUS> {
     fn n_constraints(&self) -> usize {
         35
     }
+    fn n_shift_columns(&self) -> usize { 4 }
     fn down_column_indexes(&self) -> Vec<usize> {
         vec![
             COL_START,

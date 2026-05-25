@@ -52,37 +52,37 @@ pub const COL_STATE_START: ColIndex = 0;
 pub const G_ADD1_BYTES: usize = 0;     // 4 cols: a' = a + b + mx
 pub const G_D_BYTES: usize = 4;        // 4 cols: byte decomp of d (for XOR step 2)
 pub const G_XOR2_BYTES: usize = 8;     // 4 cols: d ^ a' result bytes
-// (XOR2 addresses eliminated — computed from G_D_BYTES + G_ADD1_BYTES via ComputedAddress)
-pub const G_ADD2_BYTES: usize = 12;    // 4 cols: c' = c + d'
-pub const G_B_BYTES: usize = 16;       // 4 cols: byte decomp of b (for XOR step 4)
-pub const G_XOR4_BYTES: usize = 20;    // 4 cols: b ^ c' result bytes
-// (XOR4 addresses eliminated — computed from G_B_BYTES + G_ADD2_BYTES via ComputedAddress)
-pub const G_XOR4_SPLIT: usize = 24;    // 2 cols: nibble split for >>>12
-pub const G_ADD3_BYTES: usize = 26;    // 4 cols: a'' = a' + b' + my
-pub const G_XOR6_BYTES: usize = 30;    // 4 cols: d' ^ a'' result bytes
-// (XOR6 addresses eliminated — computed from G_XOR2_BYTES + G_ADD3_BYTES via ComputedAddress)
-pub const G_ADD4_BYTES: usize = 34;    // 4 cols: c'' = c' + d''
-pub const G_XOR8_BYTES: usize = 38;    // 4 cols: b' ^ c'' result bytes
-pub const G_XOR8_ADDRS: usize = 42;    // 4 cols: XOR lookup addresses (kept — >>>12 byte mapping)
-pub const G_XOR8_SPLIT: usize = 46;    // 2 cols: bit split for >>>7
-pub const G_MX_VALUE: usize = 48;      // 1 col: message word mx (field element from memory)
-pub const G_MX_BYTES: usize = 49;      // 4 cols: byte decomp of mx
-pub const G_MX_ADDR: usize = 53;       // 1 col: memory address for mx
-pub const G_MY_VALUE: usize = 54;      // 1 col: message word my (field element from memory)
-pub const G_MY_BYTES: usize = 55;      // 4 cols: byte decomp of my
-pub const G_MY_ADDR: usize = 59;       // 1 col: memory address for my
+pub const G_XOR2_ADDRS: usize = 12;    // 4 cols: XOR lookup addresses
+pub const G_ADD2_BYTES: usize = 16;    // 4 cols: c' = c + d'
+pub const G_B_BYTES: usize = 20;       // 4 cols: byte decomp of b (for XOR step 4)
+pub const G_XOR4_BYTES: usize = 24;    // 4 cols: b ^ c' result bytes
+pub const G_XOR4_ADDRS: usize = 28;    // 4 cols: XOR lookup addresses
+pub const G_XOR4_SPLIT: usize = 32;    // 2 cols: nibble split for >>>12
+pub const G_ADD3_BYTES: usize = 34;    // 4 cols: a'' = a' + b' + my
+pub const G_XOR6_BYTES: usize = 38;    // 4 cols: d' ^ a'' result bytes
+pub const G_XOR6_ADDRS: usize = 42;    // 4 cols: XOR lookup addresses
+pub const G_ADD4_BYTES: usize = 46;    // 4 cols: c'' = c' + d''
+pub const G_XOR8_BYTES: usize = 50;    // 4 cols: b' ^ c'' result bytes
+pub const G_XOR8_ADDRS: usize = 54;    // 4 cols: XOR lookup addresses
+pub const G_XOR8_SPLIT: usize = 58;    // 2 cols: bit split for >>>7
+pub const G_MX_VALUE: usize = 60;      // 1 col: message word mx (field element from memory)
+pub const G_MX_BYTES: usize = 61;      // 4 cols: byte decomp of mx
+pub const G_MX_ADDR: usize = 65;       // 1 col: memory address for mx
+pub const G_MY_VALUE: usize = 66;      // 1 col: message word my (field element from memory)
+pub const G_MY_BYTES: usize = 67;      // 4 cols: byte decomp of my
+pub const G_MY_ADDR: usize = 71;       // 1 col: memory address for my
 // Rotation reconstruction columns
-pub const G_XOR4_B3_SPLIT: usize = 60; // 2 cols: xor4_b3 nibble split for >>>12 reconstruction
-pub const G_CARRY_ROT7: usize = 62;    // 1 col: carry boolean for >>>7 limb reconstruction
-pub const G_XOR4_B0_SPLIT: usize = 63; // 2 cols: xor4_b0 nibble split for >>>12 byte mapping
-pub const G_XOR4_B2_SPLIT: usize = 65; // 2 cols: xor4_b2 nibble split for >>>12 byte mapping
+pub const G_XOR4_B3_SPLIT: usize = 72; // 2 cols: xor4_b3 nibble split for >>>12 reconstruction
+pub const G_CARRY_ROT7: usize = 74;    // 1 col: carry boolean for >>>7 limb reconstruction
+pub const G_XOR4_B0_SPLIT: usize = 75; // 2 cols: xor4_b0 nibble split for >>>12 byte mapping
+pub const G_XOR4_B2_SPLIT: usize = 77; // 2 cols: xor4_b2 nibble split for >>>12 byte mapping
 
 /// Total columns per G-function.
-pub const COLS_PER_G: usize = 67;
+pub const COLS_PER_G: usize = 79;
 
 /// G-function region: 4 G-functions after the state columns.
 pub const COL_G_START: ColIndex = COL_STATE_START + N_STATE_COLS;
-pub const N_G_COLS: usize = 4 * COLS_PER_G; // = 268
+pub const N_G_COLS: usize = 4 * COLS_PER_G; // = 288
 
 /// Output state columns: 16 words × 2 limbs = 32 columns.
 /// These store the state AFTER the 4 G-functions have been applied.
@@ -102,7 +102,7 @@ pub const COL_RESULT_ADDR: ColIndex = COL_CTRL_START + 6;  // down column: outpu
 pub const N_CTRL_COLS: usize = 7;
 
 /// Total committed columns.
-pub const N_COMMITTED_COLS: usize = COL_CTRL_START + N_CTRL_COLS; // 32 + 268 + 32 + 7 = 339
+pub const N_COMMITTED_COLS: usize = COL_CTRL_START + N_CTRL_COLS; // 32 + 288 + 32 + 7 = 359
 
 /// Virtual columns (not committed, used for bus interaction).
 pub const COL_V_INDEX_LEFT: ColIndex = N_COMMITTED_COLS;
@@ -156,11 +156,11 @@ pub fn down_columns() -> Vec<usize> {
 }
 
 const _: () = {
-    assert!(COLS_PER_G == 67);
-    assert!(N_G_COLS == 268);
+    assert!(COLS_PER_G == 79);
+    assert!(N_G_COLS == 316);
     assert!(N_OUTPUT_STATE_COLS == 32);
-    assert!(N_COMMITTED_COLS == 339);
-    assert!(N_TOTAL_COLS == 341);
+    assert!(N_COMMITTED_COLS == 387);
+    assert!(N_TOTAL_COLS == 389);
 };
 
 #[cfg(test)]

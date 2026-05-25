@@ -175,7 +175,7 @@ pub fn prove_execution(
     let shifted_rows: Vec<Vec<Vec<F>>> = ALL_TABLES
         .par_iter()
         .zip(&column_refs)
-        .map(|(table, cols)| compute_shifted_columns(table.n_shift_columns(), cols))
+        .map(|(table, cols)| compute_shifted_columns(&table.down_column_indexes(), cols))
         .collect();
     std::mem::drop(_span);
     let mut sessions = Vec::with_capacity(ALL_TABLES.len());

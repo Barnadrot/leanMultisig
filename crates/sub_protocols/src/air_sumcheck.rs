@@ -699,6 +699,8 @@ pub fn natural_ordering_point_for_session<EF: Copy>(sumcheck_air_point: &[EF], l
         .collect()
 }
 
+pub use columns_evals_up_and_down as columns_evals_flat_and_shift;
+
 pub fn columns_evals_up_and_down<EF: ExtensionField<PF<EF>>, A: Air>(
     air: &A,
     col_evals: &[EF],

@@ -19,8 +19,9 @@ use crate::type_1_aggregation::TWEAK_TABLE_SIZE_FE_PADDED;
 // [000.. (ZERO_VEC_LEN)][10000000 (fiat-shamir domain sep)][10000 (one in extension field)][111... (NUM_REPEATED_ONES)][tweak table]
 pub const ZERO_VEC_LEN: usize = 16;
 pub const NUM_REPEATED_ONES: usize = 32;
+pub const XOR_TABLE_SIZE: usize = 256 * 256;
 pub const PREAMBLE_MEMORY_LEN: usize =
-    ZERO_VEC_LEN + DIGEST_LEN + DIMENSION + NUM_REPEATED_ONES + TWEAK_TABLE_SIZE_FE_PADDED;
+    ZERO_VEC_LEN + DIGEST_LEN + DIMENSION + NUM_REPEATED_ONES + TWEAK_TABLE_SIZE_FE_PADDED + XOR_TABLE_SIZE;
 
 pub(crate) const MERKLE_LEVELS_PER_CHUNK_FOR_SLOT: usize = 4;
 pub(crate) const N_MERKLE_CHUNKS_FOR_SLOT: usize = LOG_LIFETIME / MERKLE_LEVELS_PER_CHUNK_FOR_SLOT;
@@ -34,6 +35,8 @@ pub fn get_aggregation_bytecode() -> &'static Bytecode {
 }
 
 pub fn init_aggregation_bytecode() {
+    let xor_table_addr = DIGEST_LEN + PREAMBLE_MEMORY_LEN - XOR_TABLE_SIZE;
+    lean_vm::set_xor_table_base(xor_table_addr);
     BYTECODE.get_or_init(compile_main_program_self_referential);
 }
 
@@ -404,6 +407,8 @@ fn build_replacements(log_inner_bytecode: usize, bytecode_zero_eval: F) -> BTree
     );
     replacements.insert("STARTING_PC_PLACEHOLDER".to_string(), STARTING_PC.to_string());
     replacements.insert("ENDING_PC_PLACEHOLDER".to_string(), ending_pc.to_string());
+    let xor_table_addr = DIGEST_LEN + PREAMBLE_MEMORY_LEN - XOR_TABLE_SIZE;
+    replacements.insert("XOR_TABLE_ADDR_PLACEHOLDER".to_string(), xor_table_addr.to_string());
 
     // XMSS-specific replacements
     replacements.insert("V_PLACEHOLDER".to_string(), V.to_string());

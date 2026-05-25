@@ -99,7 +99,14 @@ pub fn g_function_constraints<AB: AirBuilder>(
 
     // ─── Step 2: d' = (d ^ a') >>> 16 ────────────────────────────────────
     // d bytes are used directly (d_lo, d_hi derived from G_D_BYTES above)
-    // XOR addresses eliminated — computed via ComputedAddress(base, G_D_BYTES+i, 256, G_ADD1_BYTES+i)
+
+    // XOR address: addr = XOR_TABLE_BASE + 256 * d_byte + a_byte
+    for i in 0..4 {
+        let d_byte = gc(G_D_BYTES + i);
+        let a_byte = gc(G_ADD1_BYTES + i);
+        let addr = gc(G_XOR2_ADDRS + i);
+        assert_zero!(addr - xor_table_base - d_byte * AB::F::from_u32(256) - a_byte);
+    }
 
     // >>>16 rotation: result_lo = xor_hi, result_hi = xor_lo
     // d'_lo = xor2_b2 + 256 * xor2_b3
@@ -120,7 +127,12 @@ pub fn g_function_constraints<AB: AirBuilder>(
     // ─── Step 4: b' = (b ^ c') >>> 12 ───────────────────────────────────
     // b_lo, b_hi already derived from G_B_BYTES above
 
-    // XOR4 addresses eliminated — computed via ComputedAddress(base, G_B_BYTES+i, 256, G_ADD2_BYTES+i)
+    for i in 0..4 {
+        let b_byte = gc(G_B_BYTES + i);
+        let c_byte = gc(G_ADD2_BYTES + i);
+        let addr = gc(G_XOR4_ADDRS + i);
+        assert_zero!(addr - xor_table_base - b_byte * AB::F::from_u32(256) - c_byte);
+    }
 
     let xor4_b1 = gc(G_XOR4_BYTES + 1);
     let split4_lo = gc(G_XOR4_SPLIT);
@@ -231,7 +243,12 @@ pub fn g_function_constraints<AB: AirBuilder>(
     // For now, use a placeholder: assume the trace provides correct b' values
     // via the add3 result constraint
 
-    // XOR6 addresses eliminated — computed via ComputedAddress(base, G_XOR2_BYTES+(i+2)%4, 256, G_ADD3_BYTES+i)
+    for i in 0..4 {
+        let d1_byte = gc(G_XOR2_BYTES + (i + 2) % 4);
+        let a2_byte = gc(G_ADD3_BYTES + i);
+        let addr = gc(G_XOR6_ADDRS + i);
+        assert_zero!(addr - xor_table_base - d1_byte * AB::F::from_u32(256) - a2_byte);
+    }
 
     // Step 8 XOR addresses: b' ^ c'' where b' = xor4 >>> 12
     // >>>12 in nibbles: N3 N4 N5 N6 N7 N0 N1 N2 (shift right by 3 nibbles)
@@ -346,14 +363,16 @@ pub fn g_function_outputs<AB: AirBuilder>(
 pub const fn constraints_per_g() -> usize {
     2  // message byte decomp (mx, my)
     + 2  // step 1 carries (lo, hi)
-    // step 2/4/6 XOR addresses eliminated (verified via ComputedAddress lookups)
+    + 4  // step 2 XOR addresses
+    + 4  // step 4 XOR addresses
     + 1  // step 4 split (xor4_b1 nibble)
+    + 4  // step 6 XOR addresses
     + 2  // step 8 xor4_b0 + xor4_b2 nibble decomp
     + 4  // step 8 XOR addresses (with correct >>>12 byte mapping)
     + 1  // step 8 split (xor8_b0)
     + 1  // step 8 split boolean
     + 2  // step 7 carries
-    // Total: 15 constraints per G
+    // Total: 27 constraints per G
 }
 
 /// Total AIR constraints per row.

@@ -304,10 +304,6 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         // Each partial round contributes one `assert_eq_low` per round (1 S-box / round), of degree 3 (= the "low" degree part)
         Some((3, PARTIAL_ROUNDS))
     }
-    fn down_column_indexes(&self) -> Vec<usize> {
-        (0..self.n_shift_columns()).collect()
-    }
-
     fn n_shift_columns(&self) -> usize {
         0
     }

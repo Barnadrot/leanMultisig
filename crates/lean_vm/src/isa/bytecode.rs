@@ -19,6 +19,7 @@ pub struct Bytecode {
     pub code: Vec<CodeEntry>,
     pub instructions_multilinear: Vec<F>,
     pub starting_frame_memory: usize,
+    pub ending_pc: usize,
     pub hash: [F; DIGEST_ELEMS],
     pub public_input_size: usize,
     // debug

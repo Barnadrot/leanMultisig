@@ -18,10 +18,10 @@ pub trait Air: Send + Sync + 'static {
 
     fn n_constraints(&self) -> usize;
 
-    fn down_column_indexes(&self) -> Vec<usize>;
+    fn n_shift_columns(&self) -> usize;
 
-    fn n_shift_columns(&self) -> usize {
-        self.down_column_indexes().len()
+    fn down_column_indexes(&self) -> Vec<usize> {
+        (0..self.n_shift_columns()).collect()
     }
 
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData);
