@@ -8,7 +8,6 @@ use field::BasedVectorSpace;
 use field::ExtensionField;
 use field::Field;
 use field::PackedValue;
-use field::PrimeCharacteristicRing;
 use field::PrimeField32;
 use koala_bear::{KoalaBear, QuinticExtensionFieldKB};
 use poly::*;
@@ -297,7 +296,7 @@ pub struct WhirMerkleTree<F, M, const DIGEST_ELEMS: usize> {
     full_leaf_base_width: usize,
 }
 
-impl<F: PrimeCharacteristicRing + Clone + Copy + Default + Send + Sync, M: Matrix<F>, const DIGEST_ELEMS: usize>
+impl<F: Clone + Copy + Default + Send + Sync, M: Matrix<F>, const DIGEST_ELEMS: usize>
     WhirMerkleTree<F, M, DIGEST_ELEMS>
 {
     #[instrument(name = "build merkle tree", skip_all)]
@@ -313,10 +312,8 @@ impl<F: PrimeCharacteristicRing + Clone + Copy + Default + Send + Sync, M: Matri
     {
         let n_zero_suffix_rate_chunks = (full_leaf_base_width - effective_base_width) / RATE;
         let first_layer = if n_zero_suffix_rate_chunks >= 2 {
-            let iv_first = F::from_usize(full_leaf_base_width);
             let scalar_state = symetric::precompute_zero_suffix_state::<F, Perm, WIDTH, RATE, DIGEST_ELEMS>(
                 perm,
-                iv_first,
                 n_zero_suffix_rate_chunks,
             );
             let packed_state: [P; WIDTH] = std::array::from_fn(|i| P::from_fn(|_| scalar_state[i]));
@@ -359,7 +356,7 @@ fn first_digest_layer<P, Perm, M, const DIGEST_ELEMS: usize, const WIDTH: usize,
 ) -> Vec<[P::Value; DIGEST_ELEMS]>
 where
     P: PackedValue + Default,
-    P::Value: PrimeCharacteristicRing + Default + Copy,
+    P::Value: Default + Copy,
     Perm: Compression<[P::Value; WIDTH]> + Compression<[P; WIDTH]>,
     M: Matrix<P::Value>,
 {
@@ -377,10 +374,8 @@ where
         .for_each(|(i, digests_chunk)| {
             let first_row = i * width;
             let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, matrix_width, n_trailing_zeros);
-            let mut initial_state = [P::default(); WIDTH];
-            initial_state[0] = P::from_fn(|_| P::Value::from_usize(matrix_width));
             let packed_digest: [P; DIGEST_ELEMS] =
-                symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(perm, rtl_iter, &initial_state);
+                symetric::hash_rtl_iter::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(perm, rtl_iter);
             for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
                 *dst = src;
             }

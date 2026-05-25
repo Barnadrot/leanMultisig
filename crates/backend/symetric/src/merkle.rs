@@ -118,7 +118,7 @@ pub fn merkle_verify<F, Comp, const DIGEST_ELEMS: usize, const WIDTH: usize, con
     opening_proof: &[[F; DIGEST_ELEMS]],
 ) -> bool
 where
-    F: field::PrimeCharacteristicRing + PartialEq,
+    F: Default + Copy + PartialEq,
     Comp: Compression<[F; WIDTH]>,
 {
     if opening_proof.len() != log_height {

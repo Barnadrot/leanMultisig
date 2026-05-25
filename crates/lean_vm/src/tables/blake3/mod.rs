@@ -53,46 +53,64 @@ impl<const BUS: bool> TableT for Blake3CompressPrecompile<BUS> {
         Table::blake3()
     }
 
-    fn bus_interactions(&self) -> Vec<BusInteraction> {
-        let mut buses = vec![BusInteraction {
-            direction: BusDirection::Pull,
-            multiplicity: BusMultiplicity::Column(BLAKE3_COL_FLAG),
-            domainsep: BusData::Column(BLAKE3_COL_PRECOMPILE_DATA),
-            data: vec![
-                BusData::Column(BLAKE3_COL_INDEX_LEFT),
-                BusData::Column(BLAKE3_COL_INDEX_RIGHT),
-                BusData::Column(BLAKE3_COL_INDEX_RES),
-            ],
-        }];
-        buses.extend(memory_lookups_consecutive(
-            BLAKE3_COL_EFFECTIVE_INDEX_LEFT_FIRST,
-            BLAKE3_COL_INPUT_START,
-            HALF_DIGEST_LEN,
-        ));
-        buses.extend(memory_lookups_consecutive(
-            BLAKE3_COL_EFFECTIVE_INDEX_LEFT_SECOND,
-            BLAKE3_COL_INPUT_START + HALF_DIGEST_LEN,
-            HALF_DIGEST_LEN,
-        ));
-        buses.extend(memory_lookups_consecutive(
-            BLAKE3_COL_INDEX_RIGHT,
-            BLAKE3_COL_INPUT_START + DIGEST_LEN,
-            DIGEST_LEN,
-        ));
-        buses.extend(memory_lookups_consecutive(
-            BLAKE3_COL_INDEX_RES,
-            BLAKE3_COL_OUTPUT_START,
-            DIGEST_LEN * 2,
-        ));
-        buses
+    fn lookups(&self) -> Vec<LookupIntoMemory> {
+        vec![
+            LookupIntoMemory {
+                index: BLAKE3_COL_EFFECTIVE_INDEX_LEFT_FIRST,
+                values: (BLAKE3_COL_INPUT_START..BLAKE3_COL_INPUT_START + HALF_DIGEST_LEN).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
+                computed_address: None,
+            },
+            LookupIntoMemory {
+                index: BLAKE3_COL_EFFECTIVE_INDEX_LEFT_SECOND,
+                values: (BLAKE3_COL_INPUT_START + HALF_DIGEST_LEN..BLAKE3_COL_INPUT_START + DIGEST_LEN).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
+                computed_address: None,
+            },
+            LookupIntoMemory {
+                index: BLAKE3_COL_INDEX_RIGHT,
+                values: (BLAKE3_COL_INPUT_START + DIGEST_LEN..BLAKE3_COL_INPUT_START + DIGEST_LEN * 2).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
+                computed_address: None,
+            },
+            LookupIntoMemory {
+                index: BLAKE3_COL_INDEX_RES,
+                values: (BLAKE3_COL_OUTPUT_START..BLAKE3_COL_OUTPUT_START + HALF_DIGEST_LEN).collect(),
+                address_offset: 0,
+                conditional_inactive: vec![],
+                computed_address: None,
+            },
+            LookupIntoMemory {
+                index: BLAKE3_COL_INDEX_RES,
+                values: (BLAKE3_COL_OUTPUT_START + HALF_DIGEST_LEN..BLAKE3_COL_OUTPUT_START + DIGEST_LEN).collect(),
+                address_offset: HALF_DIGEST_LEN,
+                conditional_inactive: vec![BLAKE3_COL_FLAG_HALF_OUTPUT],
+                computed_address: None,
+            },
+        ]
     }
 
     fn n_columns_total(&self) -> usize {
         BLAKE3_N_TOTAL_COLS
     }
 
-    fn padding_row(&self, zero_vec_ptr: usize, _null_hash_ptr: usize, _ending_pc: usize) -> Vec<F> {
-        let null_blake3_hash_ptr = zero_vec_ptr;
+    fn bus(&self) -> Bus {
+        let mut data = Vec::with_capacity(4);
+        data.push(BusData::Column(BLAKE3_COL_PRECOMPILE_DATA));
+        data.push(BusData::Column(BLAKE3_COL_INDEX_LEFT));
+        data.push(BusData::Column(BLAKE3_COL_INDEX_RIGHT));
+        data.push(BusData::Column(BLAKE3_COL_INDEX_RES));
+        Bus {
+            direction: BusDirection::Pull,
+            selector: BLAKE3_COL_FLAG,
+            data,
+        }
+    }
+
+    fn padding_row(&self, zero_vec_ptr: usize, _null_hash_ptr: usize, null_blake3_hash_ptr: usize) -> Vec<F> {
         let mut row = vec![F::ZERO; BLAKE3_N_TOTAL_COLS];
         row[BLAKE3_COL_FLAG] = F::ZERO;
         row[BLAKE3_COL_INDEX_RIGHT] = F::from_usize(zero_vec_ptr);
@@ -192,8 +210,6 @@ impl<const BUS: bool> Air for Blake3CompressPrecompile<BUS> {
         BLAKE3_N_COMMITTED_COLS
     }
 
-    fn n_shift_columns(&self) -> usize { 0 }
-
     fn degree_air(&self) -> usize {
         3
     }
@@ -230,13 +246,11 @@ impl<const BUS: bool> Air for Blake3CompressPrecompile<BUS> {
             effective_index_left_second - one_minus_flag_hardcoded_left * AB::F::from_usize(HALF_DIGEST_LEN);
 
         if BUS {
-            eval_bus_virtual::<AB, EF>(
-                builder,
+            builder.assert_zero_ef(eval_virtual_bus_column::<AB, EF>(
                 extra_data,
                 flag_active,
-                precompile_data_reconstructed,
-                &[index_a, index_right, index_res],
-            );
+                &[precompile_data_reconstructed, index_a, index_right, index_res],
+            ));
         } else {
             builder.declare_values(std::slice::from_ref(&flag_active));
             builder.declare_values(&[precompile_data_reconstructed, index_a, index_right, index_res]);

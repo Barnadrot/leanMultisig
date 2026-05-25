@@ -24,11 +24,10 @@ pub struct InnerVerified {
     pub input_data_hash: [F; DIGEST_LEN],
     pub bytecode_evaluation: Evaluation<EF>,
     pub raw_proof: RawProof<F>,
-    pub sorted_table_perm: Vec<usize>,
 }
 
 pub(crate) fn verify_inner(input_data: Vec<F>, proof: Proof<F>) -> Result<InnerVerified, ProofError> {
-    let input_data_hash = poseidon_compress_slice(&input_data);
+    let input_data_hash = poseidon_compress_slice(&input_data, true);
     let bytecode = get_aggregation_bytecode();
     let (verif, raw_proof) = verify_execution(bytecode, &input_data_hash, proof)?;
     Ok(InnerVerified {
@@ -36,6 +35,5 @@ pub(crate) fn verify_inner(input_data: Vec<F>, proof: Proof<F>) -> Result<InnerV
         input_data_hash,
         bytecode_evaluation: verif.bytecode_evaluation,
         raw_proof,
-        sorted_table_perm: verif.sorted_table_perm,
     })
 }

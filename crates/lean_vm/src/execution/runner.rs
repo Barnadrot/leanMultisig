@@ -23,8 +23,6 @@ pub struct ExecutionWitness {
     /// manually by the program at startup.
     pub preamble_memory_len: usize,
     pub hints: HashMap<String, Vec<Vec<F>>>,
-    /// testing purpose
-    pub min_table_log_n_rows: BTreeMap<Table, usize>,
 }
 
 pub fn try_execute_bytecode(
@@ -256,7 +254,6 @@ fn execute_bytecode_helper(
     let mut fp = public_memory_size + witness.preamble_memory_len;
     fp = fp.next_multiple_of(DIMENSION);
     let initial_ap = fp + bytecode.starting_frame_memory;
-    eprintln!("VM: fp={} ap={} starting_frame_memory={} preamble={}", fp, initial_ap, bytecode.starting_frame_memory, witness.preamble_memory_len);
     let mut pc = STARTING_PC;
     let mut ap = initial_ap;
     let mut trace = Trace::new();

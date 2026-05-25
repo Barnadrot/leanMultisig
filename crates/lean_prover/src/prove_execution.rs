@@ -27,12 +27,6 @@ pub fn prove_execution(
     check_rate(whir_config.starting_log_inv_rate)
         .map_err(|err| panic!("{err}"))
         .unwrap();
-    if public_input.len() != bytecode.public_input_size {
-        return Err(ProverError::InvalidPunlicInputSize {
-            expected: bytecode.public_input_size,
-            actual: public_input.len(),
-        });
-    }
     let ExecutionTrace {
         traces,
         public_memory_size,
@@ -41,8 +35,7 @@ pub fn prove_execution(
     } = info_span!("Witness generation").in_scope(|| -> Result<_, ProverError> {
         let execution_result = info_span!("Executing bytecode")
             .in_scope(|| try_execute_bytecode(bytecode, public_input, witness, vm_profiler))?;
-        Ok(info_span!("Building execution trace")
-            .in_scope(|| get_execution_trace(bytecode, execution_result, &witness.min_table_log_n_rows)))
+        Ok(info_span!("Building execution trace").in_scope(|| get_execution_trace(bytecode, execution_result)))
     })?;
 
     // Memory must be at least MIN_LOG_MEMORY_SIZE and at least bytecode size
@@ -53,10 +46,14 @@ pub fn prove_execution(
     }
     let mut prover_state = build_prover_state();
     prover_state.observe_scalars(public_input);
-    prover_state.observe_scalars(&fiat_shamir_domain_sep(bytecode));
+    prover_state.observe_scalars(&poseidon16_compress_pair(&bytecode.hash, &SNARK_DOMAIN_SEP));
     prover_state.add_base_scalars(
         &[
-            vec![whir_config.starting_log_inv_rate, log2_strict_usize(memory.len())],
+            vec![
+                whir_config.starting_log_inv_rate,
+                log2_strict_usize(memory.len()),
+                public_input.len(),
+            ],
             traces.values().map(|t| t.log_n_rows).collect::<Vec<_>>(),
         ]
         .concat()
@@ -88,20 +85,30 @@ pub fn prove_execution(
         ));
     }
     table_log = table_log.trim_end_matches(" | ").to_string();
+    tracing::debug!("Table sizes: {}", table_log);
     tracing::info!("Trace tables sizes: {}", table_log.magenta());
 
     // TODO parrallelize
     let mut memory_acc = F::zero_vec(memory.len());
     info_span!("Building memory access count").in_scope(|| {
         for (table, trace) in &traces {
-            let buses = table.bus_interactions();
-            for group in memory_lookup_groups(&buses) {
-                let idx_col = &trace.columns[group.idx_col];
-                let n = group.value_cols.len();
-                for idx in idx_col {
-                    let base = idx.to_usize();
-                    for ofs in 0..n {
-                        memory_acc[base + ofs] += F::ONE;
+            for lookup in table.lookups() {
+                let inactive_cols: Vec<&[F]> = lookup.conditional_inactive.iter()
+                    .map(|&col| &trace.columns[col][..])
+                    .collect();
+                for row in 0..trace.columns[0].len() {
+                    if inactive_cols.iter().any(|col| col[row] == F::ONE) {
+                        continue;
+                    }
+                    let base_addr = if let Some(ref ca) = lookup.computed_address {
+                        ca.base
+                            + trace.columns[ca.hi_col][row].to_usize() * ca.hi_coeff
+                            + trace.columns[ca.lo_col][row].to_usize()
+                    } else {
+                        trace.columns[lookup.index][row].to_usize()
+                    };
+                    for j in 0..lookup.values.len() {
+                        memory_acc[base_addr + lookup.address_offset + j] += F::ONE;
                     }
                 }
             }
@@ -129,7 +136,7 @@ pub fn prove_execution(
     // logup (GKR)
     let logup_c = prover_state.sample();
     prover_state.duplex();
-    let logup_alphas = prover_state.sample_vec(LOG_MAX_BUS_WIDTH);
+    let logup_alphas = prover_state.sample_vec(log2_ceil_usize(max_bus_width_including_domainsep()));
     let logup_alphas_eq_poly = eval_eq(&logup_alphas);
 
     let logup_statements = prove_generic_logup(
@@ -156,15 +163,20 @@ pub fn prove_execution(
         );
     }
 
+    let bus_beta = prover_state.sample();
+    prover_state.duplex();
     let air_alpha = prover_state.sample();
-    let air_alpha_powers: Vec<EF> = air_alpha.powers().collect_n(total_air_constraints());
+    let air_alpha_powers: Vec<EF> = air_alpha.powers().collect_n(max_air_constraints() + 1);
+    prover_state.duplex();
+    let air_eta: EF = prover_state.sample();
 
     let tables_log_heights: BTreeMap<Table, VarCount> =
         traces.iter().map(|(table, trace)| (*table, trace.log_n_rows)).collect();
+    let tables_sorted = sort_tables_by_height(&tables_log_heights);
 
-    let column_refs: Vec<Vec<&[F]>> = ALL_TABLES
+    let column_refs: Vec<Vec<&[F]>> = tables_sorted
         .iter()
-        .map(|table| {
+        .map(|(table, _)| {
             traces[table].columns[..table.n_columns()]
                 .iter()
                 .map(Vec::as_slice)
@@ -172,38 +184,30 @@ pub fn prove_execution(
         })
         .collect();
     let _span = info_span!("Computing shifted columns for AIR sumcheck").entered();
-    let shifted_rows: Vec<Vec<Vec<F>>> = ALL_TABLES
+    let shifted_rows: Vec<Vec<Vec<F>>> = tables_sorted
         .par_iter()
         .zip(&column_refs)
-        .map(|(table, cols)| compute_shifted_columns(&table.down_column_indexes(), cols))
+        .map(|((table, _), cols)| compute_shifted_columns(&table.down_column_indexes(), cols))
         .collect();
     std::mem::drop(_span);
-    let mut sessions = Vec::with_capacity(ALL_TABLES.len());
-    let mut alpha_offset = 0;
-    for (idx, table) in ALL_TABLES.iter().enumerate() {
-        let log_n_rows = tables_log_heights[table];
-        let n_constraints = table.n_constraints();
+    let mut sessions = Vec::with_capacity(tables_sorted.len());
+    for (idx, (table, log_n_rows)) in tables_sorted.iter().enumerate() {
         let bus_numerator_value = logup_statements.bus_numerators_values[table];
         let bus_denominator_value = logup_statements.bus_denominators_values[table];
-        let signed_numerator = bus_numerator_value
-            * match table.bus_interactions()[0].direction {
+        let bus_final_value = bus_numerator_value
+            * match table.bus().direction {
                 BusDirection::Pull => EF::NEG_ONE,
                 BusDirection::Push => EF::ONE,
-            };
-        // Each table consumes a disjoint range of alpha powers; alpha^offset weights the bus
-        // numerator (multiplicity), alpha^{offset+1} weights the bus fingerprint, alpha^{offset+2..}
-        // weight the remaining AIR constraints.
-        let bus_final_value = air_alpha_powers[alpha_offset] * signed_numerator
-            + air_alpha_powers[alpha_offset + 1] * (logup_c - bus_denominator_value);
+            }
+            + bus_beta * (bus_denominator_value - logup_c);
 
-        let eq_suffix = from_end(gkr_point, log_n_rows).to_vec();
+        let eq_suffix = from_end(gkr_point, *log_n_rows).to_vec();
 
-        let alpha_slice = air_alpha_powers[alpha_offset..alpha_offset + n_constraints].to_vec();
-        let extra_data = ExtraDataForBuses::new(logup_alphas_eq_poly.clone(), alpha_slice);
+        let extra_data = ExtraDataForBuses::new(logup_alphas_eq_poly.clone(), bus_beta, air_alpha_powers.clone());
 
-        let mut flat_and_shift: Vec<&[PF<EF>]> = column_refs[idx].to_vec();
-        flat_and_shift.extend(shifted_rows[idx].iter().map(Vec::as_slice));
-        let packed = MleGroupRef::<EF>::Base(flat_and_shift).pack();
+        let mut up_down: Vec<&[PF<EF>]> = column_refs[idx].to_vec();
+        up_down.extend(shifted_rows[idx].iter().map(Vec::as_slice));
+        let packed = MleGroupRef::<EF>::Base(up_down).pack();
 
         let non_padded = traces[table].non_padded_n_rows;
 
@@ -214,20 +218,19 @@ pub fn prove_execution(
             }};
         }
         sessions.push(delegate_to_inner!(table => make_session));
-        alpha_offset += n_constraints;
     }
 
-    let sumcheck_air_point =
-        info_span!("batched AIR sumcheck").in_scope(|| prove_batched_air_sumcheck(&mut prover_state, &mut sessions));
+    let sumcheck_air_point = info_span!("batched AIR sumcheck")
+        .in_scope(|| prove_batched_air_sumcheck(&mut prover_state, &mut sessions, air_eta));
 
-    for (idx, table) in ALL_TABLES.iter().enumerate() {
+    for (idx, (table, _)) in tables_sorted.iter().enumerate() {
         let col_evals = sessions[idx].final_column_evals();
         prover_state.add_extension_scalars(&col_evals);
 
         let natural_ordering_point =
             natural_ordering_point_for_session(&sumcheck_air_point.0, traces[table].log_n_rows);
         macro_rules! split {
-            ($t:expr) => {{ columns_evals_flat_and_shift($t, &col_evals, &natural_ordering_point) }};
+            ($t:expr) => {{ columns_evals_up_and_down($t, &col_evals, &natural_ordering_point) }};
         }
         let claim = delegate_to_inner!(table => split);
         committed_statements.get_mut(table).unwrap().push(claim);
@@ -264,12 +267,10 @@ pub fn prove_execution(
         stacked_pcs_witness.stacked_n_vars,
         log2_strict_usize(memory.len()),
         bytecode.log_size(),
-        bytecode.ending_pc,
         previous_statements,
         &tables_log_heights,
         &committed_statements,
     );
-
     WhirConfig::new(whir_config, stacked_pcs_witness.global_polynomial.by_ref().n_vars()).prove(
         &mut prover_state,
         global_statements_base,

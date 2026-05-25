@@ -18,11 +18,7 @@ pub trait Air: Send + Sync + 'static {
 
     fn n_constraints(&self) -> usize;
 
-    fn n_shift_columns(&self) -> usize;
-
-    fn down_column_indexes(&self) -> Vec<usize> {
-        (0..self.n_shift_columns()).collect()
-    }
+    fn down_column_indexes(&self) -> Vec<usize>;
 
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData);
 
@@ -54,8 +50,6 @@ pub trait AirBuilder: Sized {
 
     fn up(&self) -> &[Self::IF];
     fn down(&self) -> &[Self::IF];
-    fn flat(&self) -> &[Self::IF] { self.up() }
-    fn shift(&self) -> &[Self::IF] { self.down() }
 
     fn assert_zero(&mut self, x: Self::IF);
     fn assert_zero_ef(&mut self, x: Self::EF);
