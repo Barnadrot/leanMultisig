@@ -35,8 +35,6 @@ def main():
     debug_assert(MAX_N_SIGS + MAX_N_DUPS <= 2**16)  # because of range checking, TODO increase
     pub_mem = 0  # See hashing.py for the memory layout
     build_preamble_memory()
-
-    # Write XOR byte lookup table (65536 entries) from hint into preamble memory
     xor_table_w: Mut = XOR_TABLE_ADDR
     hint_witness("xor_table", xor_table_w)
 
