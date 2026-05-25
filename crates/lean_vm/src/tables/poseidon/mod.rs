@@ -106,8 +106,7 @@ pub const POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_FIRST: ColIndex = 6;
 pub const POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_SECOND: ColIndex = 7;
 pub const POSEIDON_16_COL_FLAG_PERMUTE: ColIndex = 8;
 pub const POSEIDON_16_COL_INPUT_START: ColIndex = 9;
-pub const POSEIDON_16_COL_OUTPUT_LEFT: ColIndex = num_cols_poseidon_16() - 16;
-pub const POSEIDON_16_COL_OUTPUT_RIGHT: ColIndex = num_cols_poseidon_16() - 8;
+pub const POSEIDON_16_COL_OUTPUT_LEFT: ColIndex = num_cols_poseidon_16() - 8;
 /// Non-committed columns ("virtual"):
 pub const POSEIDON_16_COL_INDEX_INPUT_LEFT: ColIndex = num_cols_poseidon_16();
 pub const POSEIDON_16_COL_DOMAINSEP: ColIndex = num_cols_poseidon_16() + 1;
@@ -171,7 +170,7 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
         buses.extend(memory_lookups_consecutive(
             POSEIDON_16_COL_INDEX_INPUT_RES,
             POSEIDON_16_COL_OUTPUT_LEFT,
-            DIGEST_LEN * 2,
+            DIGEST_LEN, // was DIGEST_LEN * 2 (included outputs_right)
         ));
         buses
     }
@@ -193,7 +192,6 @@ impl<const BUS: bool> TableT for Poseidon16Precompile<BUS> {
         *perm.effective_index_left_first = F::from_usize(zero_vec_ptr);
         *perm.effective_index_left_second = F::from_usize(zero_vec_ptr + HALF_DIGEST_LEN);
         *perm.flag_permute = F::ZERO;
-        perm.outputs_right.iter_mut().for_each(|x| **x = F::ZERO);
         row[POSEIDON_16_COL_INDEX_INPUT_LEFT] = F::from_usize(zero_vec_ptr);
         row[POSEIDON_16_COL_DOMAINSEP] = F::from_usize(POSEIDON_DOMAINSEP_BASE);
 
@@ -308,7 +306,7 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
         0
     }
     fn n_constraints(&self) -> usize {
-        2 * BUS as usize + 99
+        2 * BUS as usize + 91 // was 99, removed 8 flag_permute * (state[i+8] - outputs_right[i]) constraints
     }
     fn eval<AB: AirBuilder>(&self, builder: &mut AB, extra_data: &Self::ExtraData) {
         let cols: Poseidon1Cols16<AB::IF> = {
@@ -378,7 +376,6 @@ pub(super) struct Poseidon1Cols16<T> {
     pub partial_rounds: [T; PARTIAL_ROUNDS],
     pub ending_full_rounds: [[T; WIDTH]; HALF_FINAL_FULL_ROUNDS - 1],
     pub outputs_left: [T; WIDTH / 2],
-    pub outputs_right: [T; WIDTH / 2],
 }
 
 fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<AB::IF>) {
@@ -438,7 +435,6 @@ fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<A
         &local.inputs,
         &mut state,
         &local.outputs_left,
-        &local.outputs_right,
         &final_constants[2 * (HALF_FINAL_FULL_ROUNDS - 1)],
         &final_constants[2 * (HALF_FINAL_FULL_ROUNDS - 1) + 1],
         local.flag_half_output,
@@ -486,7 +482,6 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
     initial_state: &[AB::IF; WIDTH],
     state: &mut [AB::IF; WIDTH],
     outputs_left: &[AB::IF; WIDTH / 2],
-    outputs_right: &[AB::IF; WIDTH / 2],
     round_constants_1: &[F; WIDTH],
     round_constants_2: &[F; WIDTH],
     flag_half_output: AB::IF,
@@ -513,7 +508,6 @@ fn eval_last_2_full_rounds_16<AB: AirBuilder>(
         };
         builder.assert_zero(compression_gate * (state[i] + initial_state[i] - outputs_left[i]));
         builder.assert_zero(flag_permute * (state[i] - outputs_left[i]));
-        builder.assert_zero(flag_permute * (state[i + WIDTH / 2] - outputs_right[i]));
     }
 }
 
