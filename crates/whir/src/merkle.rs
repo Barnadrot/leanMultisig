@@ -62,7 +62,6 @@ fn build_merkle_tree_koalabear(
     full_base_width: usize,
     effective_base_width: usize,
 ) -> RoundMerkleTree<KoalaBear> {
-    type P = PFPacking<KoalaBear>;
     let perm = default_koalabear_poseidon1_16();
     let n_zero_suffix_rate_chunks = (full_base_width - effective_base_width) / 8;
     let iv_first = KoalaBear::from_usize(full_base_width);
@@ -71,112 +70,20 @@ fn build_merkle_tree_koalabear(
         iv_first,
         n_zero_suffix_rate_chunks,
     );
-    let packed_state: [P; 16] = std::array::from_fn(|i| P::from_fn(|_| scalar_state[i]));
-    let first_layer = first_digest_layer_koalabear_2x(&perm, &leaf, &packed_state, effective_base_width);
-    let tree = symetric::merkle::MerkleTree::from_first_layer::<P, _, 16>(&perm, first_layer);
+    let packed_state: [PFPacking<KoalaBear>; 16] =
+        std::array::from_fn(|i| PFPacking::<KoalaBear>::from_fn(|_| scalar_state[i]));
+    let first_layer = first_digest_layer_with_initial_state::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(
+        &perm,
+        &leaf,
+        &packed_state,
+        effective_base_width,
+    );
+    let tree = symetric::merkle::MerkleTree::from_first_layer::<PFPacking<KoalaBear>, _, 16>(&perm, first_layer);
     WhirMerkleTree {
         leaf,
         tree,
         full_leaf_base_width: full_base_width,
     }
-}
-
-#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-#[instrument(name = "first digest layer 2x", level = "debug", skip_all)]
-fn first_digest_layer_koalabear_2x(
-    perm: &koala_bear::Poseidon1KoalaBear16,
-    matrix: &DenseMatrix<KoalaBear>,
-    packed_initial_state: &[PFPacking<KoalaBear>; 16],
-    effective_base_width: usize,
-) -> Vec<[KoalaBear; DIGEST_ELEMS]> {
-    use symetric::Compress2x;
-    type P = PFPacking<KoalaBear>;
-    const WIDTH: usize = 16;
-    const RATE: usize = 8;
-
-    let width = P::WIDTH; // 4
-    let height = matrix.height();
-    assert!(height.is_multiple_of(width));
-    let n_pad = (RATE - effective_base_width % RATE) % RATE;
-
-    let mut digests: Vec<[KoalaBear; DIGEST_ELEMS]> = unsafe { uninitialized_vec(height) };
-    let double_width = 2 * width;
-
-    if height.is_multiple_of(double_width) {
-        digests
-            .par_chunks_exact_mut(double_width)
-            .enumerate()
-            .for_each(|(i, digests_chunk)| {
-                let first_row_a = i * double_width;
-                let first_row_b = first_row_a + width;
-                let mut state_a = *packed_initial_state;
-                let mut state_b = *packed_initial_state;
-
-                let mut rtl_a = matrix.vertically_packed_row_rtl::<P>(first_row_a, effective_base_width, n_pad);
-                let mut rtl_b = matrix.vertically_packed_row_rtl::<P>(first_row_b, effective_base_width, n_pad);
-
-                loop {
-                    let ea = rtl_a.next();
-                    let eb = rtl_b.next();
-                    match (ea, eb) {
-                        (Some(va), Some(vb)) => {
-                            state_a[WIDTH - 1] = va;
-                            state_b[WIDTH - 1] = vb;
-                            for pos in (WIDTH - RATE..WIDTH - 1).rev() {
-                                state_a[pos] = rtl_a.next().unwrap();
-                                state_b[pos] = rtl_b.next().unwrap();
-                            }
-                            perm.compress_2x(&mut state_a, &mut state_b);
-                        }
-                        _ => break,
-                    }
-                }
-
-                let (chunk_a, chunk_b) = digests_chunk.split_at_mut(width);
-                let digest_a: [P; DIGEST_ELEMS] = state_a[..DIGEST_ELEMS].try_into().unwrap();
-                let digest_b: [P; DIGEST_ELEMS] = state_b[..DIGEST_ELEMS].try_into().unwrap();
-                for (dst, src) in chunk_a.iter_mut().zip(unpack_array(digest_a)) {
-                    *dst = src;
-                }
-                for (dst, src) in chunk_b.iter_mut().zip(unpack_array(digest_b)) {
-                    *dst = src;
-                }
-            });
-    } else {
-        digests
-            .par_chunks_exact_mut(width)
-            .enumerate()
-            .for_each(|(i, digests_chunk)| {
-                let first_row = i * width;
-                let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
-                let packed_digest: [P; DIGEST_ELEMS] =
-                    symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
-                        perm,
-                        rtl_iter,
-                        packed_initial_state,
-                    );
-                for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                    *dst = src;
-                }
-            });
-    }
-    digests
-}
-
-#[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
-#[instrument(name = "first digest layer 2x", level = "debug", skip_all)]
-fn first_digest_layer_koalabear_2x(
-    perm: &koala_bear::Poseidon1KoalaBear16,
-    matrix: &DenseMatrix<KoalaBear>,
-    packed_initial_state: &[PFPacking<KoalaBear>; 16],
-    effective_base_width: usize,
-) -> Vec<[KoalaBear; DIGEST_ELEMS]> {
-    first_digest_layer_with_initial_state::<PFPacking<KoalaBear>, _, _, DIGEST_ELEMS, 16, 8>(
-        perm,
-        matrix,
-        packed_initial_state,
-        effective_base_width,
-    )
 }
 
 #[allow(clippy::missing_transmute_annotations)]
@@ -321,49 +228,22 @@ where
 
     let mut digests = unsafe { uninitialized_vec(height) };
 
-    let double_width = 2 * width;
-    if height.is_multiple_of(double_width) {
-        digests
-            .par_chunks_exact_mut(double_width)
-            .enumerate()
-            .for_each(|(i, digests_chunk)| {
-                let first_row_a = i * double_width;
-                let first_row_b = first_row_a + width;
-                let rtl_iter_a = matrix.vertically_packed_row_rtl::<P>(first_row_a, effective_base_width, n_pad);
-                let rtl_iter_b = matrix.vertically_packed_row_rtl::<P>(first_row_b, effective_base_width, n_pad);
-                let (packed_digest_a, packed_digest_b): ([P; DIGEST_ELEMS], [P; DIGEST_ELEMS]) =
-                    symetric::hash_rtl_iter_interleaved_2x::<_, _, _, _, WIDTH, RATE, DIGEST_ELEMS>(
-                        perm,
-                        rtl_iter_a,
-                        rtl_iter_b,
-                        packed_initial_state,
-                    );
-                let (chunk_a, chunk_b) = digests_chunk.split_at_mut(width);
-                for (dst, src) in chunk_a.iter_mut().zip(unpack_array(packed_digest_a)) {
-                    *dst = src;
-                }
-                for (dst, src) in chunk_b.iter_mut().zip(unpack_array(packed_digest_b)) {
-                    *dst = src;
-                }
-            });
-    } else {
-        digests
-            .par_chunks_exact_mut(width)
-            .enumerate()
-            .for_each(|(i, digests_chunk)| {
-                let first_row = i * width;
-                let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
-                let packed_digest: [P; DIGEST_ELEMS] =
-                    symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
-                        perm,
-                        rtl_iter,
-                        packed_initial_state,
-                    );
-                for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
-                    *dst = src;
-                }
-            });
-    }
+    digests
+        .par_chunks_exact_mut(width)
+        .enumerate()
+        .for_each(|(i, digests_chunk)| {
+            let first_row = i * width;
+            let rtl_iter = matrix.vertically_packed_row_rtl::<P>(first_row, effective_base_width, n_pad);
+            let packed_digest: [P; DIGEST_ELEMS] =
+                symetric::hash_rtl_iter_with_initial_state::<_, _, _, WIDTH, RATE, DIGEST_ELEMS>(
+                    perm,
+                    rtl_iter,
+                    packed_initial_state,
+                );
+            for (dst, src) in digests_chunk.iter_mut().zip(unpack_array(packed_digest)) {
+                *dst = src;
+            }
+        });
 
     digests
 }

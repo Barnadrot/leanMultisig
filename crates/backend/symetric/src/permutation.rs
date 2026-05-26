@@ -20,15 +20,3 @@ impl<R: Algebra<KoalaBear> + InjectiveMonomial<3> + Send + Sync + 'static> Compr
         self.compress_in_place(input);
     }
 }
-
-#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-impl crate::Compress2x<[koala_bear::PackedKoalaBearNeon; 16]> for Poseidon1KoalaBear16 {
-    #[inline(always)]
-    fn compress_2x(
-        &self,
-        a: &mut [koala_bear::PackedKoalaBearNeon; 16],
-        b: &mut [koala_bear::PackedKoalaBearNeon; 16],
-    ) {
-        self.compress_in_place_2x(a, b);
-    }
-}
