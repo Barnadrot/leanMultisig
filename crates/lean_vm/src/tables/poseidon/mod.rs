@@ -106,8 +106,9 @@ pub const POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_FIRST: ColIndex = 6;
 pub const POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_SECOND: ColIndex = 7;
 pub const POSEIDON_16_COL_FLAG_PERMUTE: ColIndex = 8;
 pub const POSEIDON_16_COL_INPUT_START: ColIndex = 9;
-pub const POSEIDON_16_COL_OUTPUT_LEFT: ColIndex = num_cols_poseidon_16() - 16;
-pub const POSEIDON_16_COL_OUTPUT_RIGHT: ColIndex = num_cols_poseidon_16() - 8;
+pub const POSEIDON_16_COL_OUTPUT_LEFT: ColIndex = 9 + WIDTH;
+pub const POSEIDON_16_COL_OUTPUT_RIGHT: ColIndex = 9 + WIDTH + WIDTH / 2;
+pub const N_COMMITTED_COLS_POSEIDON_16: usize = 9 + WIDTH + WIDTH;
 /// Non-committed columns ("virtual"):
 pub const POSEIDON_16_COL_INDEX_INPUT_LEFT: ColIndex = num_cols_poseidon_16();
 pub const POSEIDON_16_COL_DOMAINSEP: ColIndex = num_cols_poseidon_16() + 1;
@@ -293,6 +294,9 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
     fn n_columns(&self) -> usize {
         num_cols_poseidon_16()
     }
+    fn n_committed_columns(&self) -> usize {
+        N_COMMITTED_COLS_POSEIDON_16
+    }
     fn degree_air(&self) -> usize {
         // Last 4 output constraints (i in 4..8) are gated by the single linear factor
         // `(1 - flag_permute - flag_half_output)`, which is boolean thanks to the mutex
@@ -363,7 +367,8 @@ impl<const BUS: bool> Air for Poseidon16Precompile<BUS> {
 #[repr(C)]
 #[derive(Debug)]
 pub(super) struct Poseidon1Cols16<T> {
-    pub multiplicity: T, // 0 = padding, 1 = active
+    // committed columns (stacked in PCS)
+    pub multiplicity: T,
     pub index_b: T,
     pub index_res: T,
     pub flag_half_output: T,
@@ -372,13 +377,13 @@ pub(super) struct Poseidon1Cols16<T> {
     pub effective_index_left_first: T,
     pub effective_index_left_second: T,
     pub flag_permute: T,
-
     pub inputs: [T; WIDTH],
+    pub outputs_left: [T; WIDTH / 2],
+    pub outputs_right: [T; WIDTH / 2],
+    // virtual intermediate columns (not committed in stacked PCS)
     pub beginning_full_rounds: [[T; WIDTH]; HALF_INITIAL_FULL_ROUNDS],
     pub partial_rounds: [T; PARTIAL_ROUNDS],
     pub ending_full_rounds: [[T; WIDTH]; HALF_FINAL_FULL_ROUNDS - 1],
-    pub outputs_left: [T; WIDTH / 2],
-    pub outputs_right: [T; WIDTH / 2],
 }
 
 fn eval_poseidon1_16<AB: AirBuilder>(builder: &mut AB, local: &Poseidon1Cols16<AB::IF>) {
