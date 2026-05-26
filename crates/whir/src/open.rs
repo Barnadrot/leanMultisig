@@ -3,10 +3,10 @@
 use ::utils::log2_strict_usize;
 use fiat_shamir::{FSProver, MerklePath, ProofResult};
 use field::PrimeCharacteristicRing;
-use field::{ExtensionField, Field, TwoAdicField};
+use field::{ExtensionField, Field, PackedFieldExtension, TwoAdicField};
 use poly::*;
 use rayon::prelude::*;
-use sumcheck::{ProductComputation, run_product_sumcheck, sumcheck_prove_many_rounds};
+use sumcheck::{ProductComputation, run_product_sumcheck_with_round0, compute_product_sumcheck_polynomial, sumcheck_prove_many_rounds};
 use tracing::{info_span, instrument};
 
 use crate::{config::WhirConfig, *};
@@ -45,8 +45,10 @@ where
         assert!(self.validate_witness(&witness, polynomial));
         self.validate_statement(&statement);
 
+        let _t0 = std::time::Instant::now();
         let mut round_state =
             RoundState::initialize_first_round_state(self, prover_state, statement, witness, polynomial).unwrap();
+        eprintln!("  WHIR init: {:.0}ms", _t0.elapsed().as_secs_f64() * 1000.0);
 
         for round in 0..=self.n_rounds() {
             self.round(round, prover_state, &mut round_state).unwrap();
@@ -70,6 +72,7 @@ where
         }
 
         let round_params = &self.round_parameters[round_index];
+        let _round_t = std::time::Instant::now();
 
         // Compute the folding factors for later use
         let folding_factor_next = self.folding_factor.at_round(round_index + 1);
@@ -78,6 +81,7 @@ where
         let domain_reduction = 1 << self.rs_reduction_factor(round_index);
         let new_domain_size = round_state.domain_size / domain_reduction;
         let inv_rate = new_domain_size >> num_variables;
+        let _fft_t = std::time::Instant::now();
         let folded_matrix = info_span!("FFT").in_scope(|| {
             reorder_and_dft(
                 &folded_evaluations.by_ref(),
@@ -86,9 +90,12 @@ where
                 1 << folding_factor_next,
             )
         });
+        let _fft_ms = _fft_t.elapsed().as_secs_f64() * 1000.0;
 
         let full = 1 << folding_factor_next;
+        let _mk_t = std::time::Instant::now();
         let (prover_data, root) = MerkleData::build(folded_matrix, full, full);
+        let _mk_ms = _mk_t.elapsed().as_secs_f64() * 1000.0;
 
         prover_state.add_base_scalars(&root);
 
@@ -160,12 +167,18 @@ where
             &stir_combination_randomness,
         );
 
+        let _sc_t = std::time::Instant::now();
         let next_folding_randomness = round_state.sumcheck_prover.run_sumcheck_many_rounds(
             None,
             prover_state,
             folding_factor_next,
             round_params.folding_pow_bits,
         );
+        let _sc_ms = _sc_t.elapsed().as_secs_f64() * 1000.0;
+        let _rest_ms = _round_t.elapsed().as_secs_f64() * 1000.0 - _fft_ms - _mk_ms - _sc_ms;
+        if _round_t.elapsed().as_secs_f64() * 1000.0 > 30.0 {
+            eprintln!("  WHIR r{}: fft={:.0}ms mk={:.0}ms sc={:.0}ms rest={:.0}ms nv={}", round_index, _fft_ms, _mk_ms, _sc_ms, _rest_ms, num_variables);
+        }
 
         round_state.randomness_vec.extend_from_slice(&next_folding_randomness.0);
 
@@ -419,18 +432,38 @@ where
     ) -> (Self, MultilinearPoint<EF>) {
         assert_ne!(folding_factor, 0);
 
+        let _t_cs = std::time::Instant::now();
         let (weights, sum) = combine_statement::<EF>(statement, combination_randomness);
+        let _cs_ms = _t_cs.elapsed().as_secs_f64() * 1000.0;
+        eprintln!("      combine weights_len={} ({}MB)", weights.len(), weights.len() * std::mem::size_of::<EFPacking<EF>>() / (1 << 20));
 
         let mut evals = evals.pack();
+
+        let _t_r0 = std::time::Instant::now();
+        let first_sumcheck_poly = match evals.by_ref() {
+            MleRef::BasePacked(e) => {
+                compute_product_sumcheck_polynomial(e, &weights, sum, |v| EFPacking::<EF>::to_ext_iter([v]).collect())
+            }
+            MleRef::ExtensionPacked(e) => {
+                compute_product_sumcheck_polynomial(e, &weights, sum, |v| EFPacking::<EF>::to_ext_iter([v]).collect())
+            }
+            _ => unreachable!("initial sumcheck always uses packed representations"),
+        };
+        let _r0_ms = _t_r0.elapsed().as_secs_f64() * 1000.0;
+
         let mut weights = Mle::Owned(MleOwned::ExtensionPacked(weights));
-        let (challengess, new_sum, new_evals, new_weights) = run_product_sumcheck(
+        let _t_ps = std::time::Instant::now();
+        let (challengess, new_sum, new_evals, new_weights) = run_product_sumcheck_with_round0(
             &evals.by_ref(),
             &weights.by_ref(),
             prover_state,
             sum,
             folding_factor,
             pow_bits,
+            first_sumcheck_poly,
         );
+        let _ps_ms = _t_ps.elapsed().as_secs_f64() * 1000.0;
+        eprintln!("    WHIR init sub: combine={:.0}ms round0={:.0}ms prod_sumcheck_r1+={:.0}ms", _cs_ms, _r0_ms, _ps_ms);
 
         evals = new_evals.into();
         weights = new_weights.into();
@@ -567,14 +600,21 @@ where
         start_idx = 0;
     }
 
+    let mut _sparse_count = 0usize;
+    let mut _dense_count = 0usize;
+    let mut _dense_next_count = 0usize;
+    let mut _sparse_evals = 0usize;
     for smt in &statements[start_idx..] {
         if !smt.is_next && (smt.values.len() == 1 || smt.inner_num_variables() < packing_log_width::<EF>()) {
+            _sparse_count += 1;
+            _sparse_evals += smt.values.len();
             for evaluation in &smt.values {
                 compute_sparse_eval_eq_packed::<EF>(evaluation.selector, &smt.point, &mut combined_weights, gamma_pow);
                 combined_sum += evaluation.value * gamma_pow;
                 gamma_pow *= gamma;
             }
         } else {
+            if smt.is_next { _dense_next_count += 1; } else { _dense_count += 1; }
             let inner_poly = if smt.is_next {
                 let next = matrix_next_mle_folded(&smt.point.0);
                 pack_extension(&next)
@@ -619,6 +659,7 @@ where
             gamma_pow = *next_gamma_powers.last().unwrap() * gamma;
         }
     }
+    eprintln!("    combine_stmt: total={} sparse={} (evals={}) dense={} dense_next={}", statements.len(), _sparse_count, _sparse_evals, _dense_count, _dense_next_count);
 
     (combined_weights, combined_sum)
 }

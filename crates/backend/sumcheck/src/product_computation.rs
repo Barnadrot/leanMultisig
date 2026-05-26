@@ -38,11 +38,10 @@ pub fn run_product_sumcheck<EF: ExtensionField<PF<EF>>>(
     pol_a: &MleRef<'_, EF>, // evals
     pol_b: &MleRef<'_, EF>, // weights
     prover_state: &mut impl FSProver<EF>,
-    mut sum: EF,
+    sum: EF,
     n_rounds: usize,
     pow_bits: usize,
 ) -> (MultilinearPoint<EF>, EF, MleOwned<EF>, MleOwned<EF>) {
-    assert!(n_rounds >= 1);
     let first_sumcheck_poly = match (pol_a, pol_b) {
         (MleRef::BasePacked(evals), MleRef::ExtensionPacked(weights)) => {
             compute_product_sumcheck_polynomial(evals, weights, sum, |e| EFPacking::<EF>::to_ext_iter([e]).collect())
@@ -58,6 +57,20 @@ pub fn run_product_sumcheck<EF: ExtensionField<PF<EF>>>(
         }
         _ => unimplemented!(),
     };
+    run_product_sumcheck_with_round0(pol_a, pol_b, prover_state, sum, n_rounds, pow_bits, first_sumcheck_poly)
+}
+
+#[instrument(skip_all)]
+pub fn run_product_sumcheck_with_round0<EF: ExtensionField<PF<EF>>>(
+    pol_a: &MleRef<'_, EF>,
+    pol_b: &MleRef<'_, EF>,
+    prover_state: &mut impl FSProver<EF>,
+    mut sum: EF,
+    n_rounds: usize,
+    pow_bits: usize,
+    first_sumcheck_poly: DensePolynomial<EF>,
+) -> (MultilinearPoint<EF>, EF, MleOwned<EF>, MleOwned<EF>) {
+    assert!(n_rounds >= 1);
 
     prover_state.add_sumcheck_polynomial(&first_sumcheck_poly.coeffs, None);
     prover_state.pow_grinding(pow_bits);
