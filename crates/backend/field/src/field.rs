@@ -620,6 +620,15 @@ pub trait Algebra<F>:
     + Mul<F, Output = Self>
     + MulAssign<F>
 {
+    #[inline]
+    fn mixed_dot_product<const N: usize>(a: &[Self; N], f: &[F; N]) -> Self
+    where
+        F: Copy,
+        Self: Copy,
+    {
+        let products: [Self; N] = core::array::from_fn(|i| a[i] * f[i]);
+        Self::sum_array::<N>(&products)
+    }
 }
 
 // Every ring is an algebra over itself.
