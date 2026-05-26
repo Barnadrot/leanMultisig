@@ -326,7 +326,7 @@ where
     if let Some((low_degree, low_n_constraints)) = computation.low_degree_air() {
         match multilinears {
             MleGroupRef::BasePacked(cols) => {
-                return compute_raw_poly_degree_split_transposed::<EF, A, _, _>(
+                return compute_raw_poly_degree_split::<EF, A, PFPacking<EF>, _, _>(
                     cols,
                     |j| split_eq.get_packed(j),
                     computation,
@@ -397,179 +397,6 @@ where
             |s| s,
         ),
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn compute_raw_poly_degree_split_transposed<EF, A, GetEq, UnpackSum>(
-    cols: &[&[PFPacking<EF>]],
-    get_split_eq: GetEq,
-    computation: &A,
-    extra_data: &A::ExtraData,
-    fold_bit: usize,
-    active_count_pairs: usize,
-    low_degree: usize,
-    low_n_constraints: usize,
-    unpack_sum: UnpackSum,
-) -> Vec<EF>
-where
-    EF: ExtensionField<PF<EF>>,
-    A: Air + 'static,
-    A::ExtraData: AlphaPowers<EF>,
-    EFPacking<EF>: PrimeCharacteristicRing
-        + Mul<PFPacking<EF>, Output = EFPacking<EF>>
-        + Add<PFPacking<EF>, Output = EFPacking<EF>>,
-    GetEq: Fn(usize) -> EFPacking<EF> + Sync + Send,
-    UnpackSum: Fn(EFPacking<EF>) -> EF + Sync + Send,
-{
-    type IF<EF> = PFPacking<EF>;
-
-    let degree = computation.degree_air();
-    let n_cols = cols.len();
-    let n_flat = computation.n_columns();
-    let stride = 1usize << fold_bit;
-    let lo_mask = stride - 1;
-    let n_full = low_degree + 1;
-    let n_skip = degree - n_full;
-
-    // Points where we run the full AIR constraints = {0, 2, 3, …, d_low+1}
-    let low_zs: Vec<_> = (std::iter::once(0).chain(2..=(low_degree + 1)).map(PF::<EF>::from_usize)).collect();
-    // Points where we skip the low-degree constraints = target_z = {d_low+2, …, degree}
-    let hi_zs: Vec<_> = ((low_degree + 2)..=degree).map(PF::<EF>::from_usize).collect();
-    let hi_zs_halved: Vec<_> = hi_zs.iter().map(|&tz| tz.halve()).collect();
-    let lagrange_coeffs = lagrange_basis_evals(&low_zs, &hi_zs);
-
-    // Transpose SoA -> AoS: transposed[i * n_cols + k] = cols[k][i]
-    // Only transpose elements that will actually be accessed.
-    // Compute the max storage index needed.
-    let n_elements = if active_count_pairs > 0 {
-        let max_j = active_count_pairs - 1;
-        let i_hi = max_j >> fold_bit;
-        let i_lo = max_j & lo_mask;
-        let i0_max = (i_hi << (fold_bit + 1)) | i_lo;
-        let i1_max = i0_max | stride;
-        i1_max + 1
-    } else {
-        0
-    };
-
-    let mut transposed: Vec<IF<EF>> = unsafe { uninitialized_vec(n_elements * n_cols) };
-    // Parallel transpose: each column writes its contribution
-    transposed.par_chunks_mut(n_cols).enumerate().for_each(|(i, row)| {
-        for (k, slot) in row.iter_mut().enumerate() {
-            *slot = cols[k][i];
-        }
-    });
-
-    let acc = (0..active_count_pairs)
-        .into_par_iter()
-        .fold(
-            || {
-                (
-                    vec![EFPacking::<EF>::ZERO; degree],
-                    Vec::<IF<EF>>::with_capacity(n_cols),
-                    Vec::<IF<EF>>::with_capacity(n_cols),
-                    vec![EFPacking::<EF>::ZERO; n_full],
-                    Vec::<IF<EF>>::new(),
-                    Vec::<IF<EF>>::new(),
-                    Vec::<IF<EF>>::new(),
-                )
-            },
-            |(mut acc, mut point, mut diff, mut low_evals, mut state_0, mut state_2, mut cached_buf), new_j| {
-                let i_hi = new_j >> fold_bit;
-                let i_lo = new_j & lo_mask;
-                let i0 = (i_hi << (fold_bit + 1)) | i_lo;
-                let i1 = i0 | stride;
-                let partial_eq = get_split_eq(new_j);
-
-                // Load from transposed (row-major) layout: contiguous memory for each row
-                let row0 = &transposed[i0 * n_cols..(i0 + 1) * n_cols];
-                let row1 = &transposed[i1 * n_cols..(i1 + 1) * n_cols];
-                point.clear();
-                diff.clear();
-                for k in 0..n_cols {
-                    point.push(row0[k]);
-                    diff.push(row1[k] - row0[k]);
-                }
-
-                // Phase 1: full AIR constraints
-
-                // z = 0: full eval, capture post-block state.
-                {
-                    let mut folder = ConstraintFolderPacked::new(&point[..n_flat], &point[n_flat..], extra_data);
-                    folder.cached_state = Some(state_0);
-                    Air::eval(computation, &mut folder, extra_data);
-                    acc[0] += folder.accumulator * partial_eq;
-                    low_evals[0] = folder.accumulator_low;
-                    state_0 = folder.cached_state.unwrap();
-                }
-
-                // z = 2: advance `point` by 2·diff, full eval, capture post-block state.
-                for k in 0..n_cols {
-                    point[k] += diff[k].double();
-                }
-                {
-                    let mut folder = ConstraintFolderPacked::new(&point[..n_flat], &point[n_flat..], extra_data);
-                    folder.cached_state = Some(state_2);
-                    Air::eval(computation, &mut folder, extra_data);
-                    acc[1] += folder.accumulator * partial_eq;
-                    low_evals[1] = folder.accumulator_low;
-                    state_2 = folder.cached_state.unwrap();
-                }
-
-                // z = 3, …, d_low+1: still doing full eval
-                for z_idx in 2..n_full {
-                    for k in 0..n_cols {
-                        point[k] += diff[k];
-                    }
-                    let mut folder = ConstraintFolderPacked::new(&point[..n_flat], &point[n_flat..], extra_data);
-                    Air::eval(computation, &mut folder, extra_data);
-                    acc[z_idx] += folder.accumulator * partial_eq;
-                    low_evals[z_idx] = folder.accumulator_low;
-                }
-
-                // Phase 2: skip the low degree constraints of the block
-                for t in 0..n_skip {
-                    for k in 0..n_cols {
-                        point[k] += diff[k];
-                    }
-
-                    cached_buf.clear();
-                    for i in 0..state_0.len() {
-                        cached_buf
-                            .push(state_0[i] + (state_2[i] - state_0[i]) * PFPacking::<EF>::from(hi_zs_halved[t]));
-                    }
-
-                    let mut folder = ConstraintFolderPacked::new(&point[..n_flat], &point[n_flat..], extra_data);
-                    folder.skip_low = true;
-                    folder.cached_state = Some(cached_buf);
-                    folder.low_ci_count = low_n_constraints;
-                    Air::eval(computation, &mut folder, extra_data);
-                    cached_buf = folder.cached_state.unwrap();
-
-                    // low(hi_zs[t]) = Σ_i L_i(hi_zs[t]) · low(low_zs[i])
-                    let mut low_interpolated = EFPacking::<EF>::ZERO;
-                    for (i, lc) in lagrange_coeffs[t].iter().enumerate() {
-                        low_interpolated += low_evals[i] * PFPacking::<EF>::from(*lc);
-                    }
-
-                    acc[n_full + t] += (folder.accumulator + low_interpolated) * partial_eq;
-                }
-
-                (acc, point, diff, low_evals, state_0, state_2, cached_buf)
-            },
-        )
-        .map(|(acc, ..)| acc)
-        .reduce(
-            || vec![EFPacking::<EF>::ZERO; degree],
-            |mut a, b| {
-                for i in 0..degree {
-                    a[i] += b[i];
-                }
-                a
-            },
-        );
-
-    acc.into_iter().map(&unpack_sum).collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -816,13 +643,10 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
     let mut challenges = Vec::with_capacity(n_rounds);
     let mut k: Vec<EF> = vec![EF::ONE; sessions.len()];
 
-    let mut round_times: Vec<f64> = Vec::with_capacity(n_rounds);
     for round in 0..n_rounds {
-        let _rt = std::time::Instant::now();
         let mut combined_coeffs = EF::zero_vec(max_full_degree + 1);
         let mut bare_polys: Vec<Option<DensePolynomial<EF>>> = vec![None; sessions.len()];
 
-        let _tc = std::time::Instant::now();
         for (idx, session) in sessions.iter_mut().enumerate() {
             let join_round = n_rounds - session.initial_n_vars();
             if round < join_round {
@@ -836,13 +660,11 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
                 bare_polys[idx] = Some(bare_poly);
             }
         }
-        let _compute_ms = _tc.elapsed().as_secs_f64() * 1000.0;
 
         prover_state.add_sumcheck_polynomial(&combined_coeffs, None);
         let challenge = prover_state.sample();
         challenges.push(challenge);
 
-        let _tf = std::time::Instant::now();
         for (idx, session) in sessions.iter_mut().enumerate() {
             let join_round = n_rounds - session.initial_n_vars();
             if round < join_round {
@@ -851,13 +673,7 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
                 session.process_challenge(challenge, bare_poly);
             }
         }
-        let _fold_ms = _tf.elapsed().as_secs_f64() * 1000.0;
-        if _compute_ms + _fold_ms > 5.0 {
-            eprintln!("    AIR r{}: compute={:.1}ms fold={:.1}ms", round, _compute_ms, _fold_ms);
-        }
-        round_times.push(_rt.elapsed().as_secs_f64() * 1000.0);
     }
-    eprintln!("  AIR sumcheck rounds: {:?}", round_times.iter().map(|t| format!("{:.1}", t)).collect::<Vec<_>>());
 
     MultilinearPoint(challenges)
 }
