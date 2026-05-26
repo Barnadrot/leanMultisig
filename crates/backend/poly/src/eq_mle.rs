@@ -881,7 +881,6 @@ fn eval_eq_with_packed_output<F: Field, EF: ExtensionField<F>, const INITIALIZED
     }
 }
 
-#[allow(dead_code)]
 #[inline]
 fn eval_eq_with_packed_output_dual<F: Field, EF: ExtensionField<F>>(
     eval_a: &[EF],
@@ -955,85 +954,30 @@ pub fn compute_eval_eq_packed_dual<EF>(
                 *out_elem = EF::ExtensionPacking::from_ext_slice(chunk);
             });
     } else {
-        compute_eval_eq_packed_dual_iterative(eval_a, eval_b, out, scalar_a, scalar_b);
+        let eval_len_min_packing = eval_a.len() - log_packing_width;
+
+        let mut parallel_buffer_a = EF::ExtensionPacking::zero_vec(NUM_THREADS_PADDED);
+        let mut parallel_buffer_b = EF::ExtensionPacking::zero_vec(NUM_THREADS_PADDED);
+        let out_chunk_size = out.len() / NUM_THREADS_PADDED;
+
+        parallel_buffer_a[0] = packed_eq_poly(&eval_a[eval_len_min_packing..], scalar_a);
+        fill_buffer(eval_a[..LOG_NUM_THREADS].iter().rev(), &mut parallel_buffer_a);
+
+        parallel_buffer_b[0] = packed_eq_poly(&eval_b[eval_len_min_packing..], scalar_b);
+        fill_buffer(eval_b[..LOG_NUM_THREADS].iter().rev(), &mut parallel_buffer_b);
+
+        out.par_chunks_exact_mut(out_chunk_size)
+            .enumerate()
+            .for_each(|(i, out_chunk)| {
+                eval_eq_with_packed_output_dual::<PF<EF>, EF>(
+                    &eval_a[LOG_NUM_THREADS..eval_len_min_packing],
+                    &eval_b[LOG_NUM_THREADS..eval_len_min_packing],
+                    out_chunk,
+                    parallel_buffer_a[i],
+                    parallel_buffer_b[i],
+                );
+            });
     }
-}
-
-fn compute_eval_eq_packed_dual_iterative<EF>(
-    eval_a: &[EF],
-    eval_b: &[EF],
-    out: &mut [EF::ExtensionPacking],
-    scalar_a: EF,
-    scalar_b: EF,
-) where
-    EF: ExtensionField<PF<EF>>,
-{
-    let log_packing_width = log2_strict_usize(packing_width::<EF>());
-    let total_levels = eval_a.len() - log_packing_width;
-    let out_len = out.len();
-
-    let mut buf_a_0: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(out_len) };
-    let mut buf_a_1: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(out_len) };
-    let mut buf_b_0: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(out_len) };
-    let mut buf_b_1: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(out_len) };
-
-    buf_a_0[0] = packed_eq_poly(&eval_a[total_levels..], scalar_a);
-    buf_b_0[0] = packed_eq_poly(&eval_b[total_levels..], scalar_b);
-
-    let mut src_a: &mut Vec<EFPacking<EF>> = &mut buf_a_0;
-    let mut dst_a: &mut Vec<EFPacking<EF>> = &mut buf_a_1;
-    let mut src_b: &mut Vec<EFPacking<EF>> = &mut buf_b_0;
-    let mut dst_b: &mut Vec<EFPacking<EF>> = &mut buf_b_1;
-
-    for level in 0..total_levels {
-        let current_size = 1usize << level;
-        let new_size = current_size << 1;
-        let var_idx = level;
-
-        let za = eval_a[var_idx];
-        let zb = eval_b[var_idx];
-
-        if new_size <= PARALLEL_THRESHOLD {
-            for j in 0..current_size {
-                let va = src_a[j];
-                let va_z = va * za;
-                dst_a[2 * j] = va - va_z;
-                dst_a[2 * j + 1] = va_z;
-
-                let vb = src_b[j];
-                let vb_z = vb * zb;
-                dst_b[2 * j] = vb - vb_z;
-                dst_b[2 * j + 1] = vb_z;
-            }
-        } else {
-            dst_a[..new_size]
-                .par_chunks_exact_mut(2)
-                .zip(src_a[..current_size].par_iter())
-                .for_each(|(d, &s)| {
-                    let s_z = s * za;
-                    d[0] = s - s_z;
-                    d[1] = s_z;
-                });
-            dst_b[..new_size]
-                .par_chunks_exact_mut(2)
-                .zip(src_b[..current_size].par_iter())
-                .for_each(|(d, &s)| {
-                    let s_z = s * zb;
-                    d[0] = s - s_z;
-                    d[1] = s_z;
-                });
-        }
-
-        std::mem::swap(&mut src_a, &mut dst_a);
-        std::mem::swap(&mut src_b, &mut dst_b);
-    }
-
-    out.par_iter_mut()
-        .zip(src_a.par_iter())
-        .zip(src_b.par_iter())
-        .for_each(|((o, &a), &b)| {
-            *o = a + b;
-        });
 }
 
 /// Computes the equality polynomial evaluations via a simple recursive algorithm.
