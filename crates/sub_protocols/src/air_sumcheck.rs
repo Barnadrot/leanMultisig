@@ -31,12 +31,12 @@ use tracing::info_span;
 
 const ENDIANNESS_PIVOT_AIR: usize = 12;
 
-pub trait OuterSumcheckSession<EF: ExtensionField<PF<EF>>>: Debug {
+pub trait OuterSumcheckSession<EF: ExtensionField<PF<EF>>>: Debug + Send + Sync {
     fn initial_n_vars(&self) -> usize;
     fn sum(&self) -> EF;
     fn bare_degree(&self) -> usize;
     fn eq_alpha(&self) -> EF;
-    fn compute_bare_round_poly(&mut self) -> DensePolynomial<EF>;
+    fn compute_bare_round_poly(&self) -> DensePolynomial<EF>;
     fn process_challenge(&mut self, challenge: EF, bare_poly: &DensePolynomial<EF>);
     fn final_column_evals(&self) -> Vec<EF>;
 }
@@ -222,7 +222,7 @@ where
         *self.eq_factor.last().unwrap()
     }
 
-    fn compute_bare_round_poly(&mut self) -> DensePolynomial<EF> {
+    fn compute_bare_round_poly(&self) -> DensePolynomial<EF> {
         let split_eq = SplitEq::new(&self.permuted_alphas(self.initial_n_vars - self.rounds_done - 1));
         let active_count_pairs = self.active_count_pairs();
         let storage_shift = if self.in_phase_1() {
@@ -639,25 +639,51 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
 ) -> MultilinearPoint<EF> {
     let n_rounds = sessions.iter().map(|s| s.initial_n_vars()).max().unwrap_or(0);
     let max_full_degree = sessions.iter().map(|s| s.bare_degree() + 1).max().unwrap_or(1);
+    let n_sessions = sessions.len();
 
     let mut challenges = Vec::with_capacity(n_rounds);
-    let mut k: Vec<EF> = vec![EF::ONE; sessions.len()];
+    let mut k: Vec<EF> = vec![EF::ONE; n_sessions];
+
+    let join_rounds: Vec<usize> = sessions
+        .iter()
+        .map(|s| n_rounds - s.initial_n_vars())
+        .collect();
 
     for round in 0..n_rounds {
         let mut combined_coeffs = EF::zero_vec(max_full_degree + 1);
-        let mut bare_polys: Vec<Option<DensePolynomial<EF>>> = vec![None; sessions.len()];
+        let mut bare_polys: Vec<Option<DensePolynomial<EF>>> = vec![None; n_sessions];
 
-        for (idx, session) in sessions.iter_mut().enumerate() {
-            let join_round = n_rounds - session.initial_n_vars();
-            if round < join_round {
-                combined_coeffs[1] += k[idx] * session.sum();
-            } else {
-                let bare_poly = session.compute_bare_round_poly();
-                let full_coeffs = expand_bare_to_full(&bare_poly.coeffs, session.eq_alpha());
+        for idx in 0..n_sessions {
+            if round < join_rounds[idx] {
+                combined_coeffs[1] += k[idx] * sessions[idx].sum();
+            }
+        }
+
+        let active: Vec<usize> = (0..n_sessions)
+            .filter(|&idx| round >= join_rounds[idx])
+            .collect();
+
+        if active.len() > 1 {
+            let sessions_ref: &[Box<dyn OuterSumcheckSession<EF> + 'a>] = &*sessions;
+            let computed: Vec<(usize, DensePolynomial<EF>)> = active
+                .par_iter()
+                .map(|&idx| (idx, sessions_ref[idx].compute_bare_round_poly()))
+                .collect();
+            for (idx, poly) in computed {
+                bare_polys[idx] = Some(poly);
+            }
+        } else {
+            for &idx in &active {
+                bare_polys[idx] = Some(sessions[idx].compute_bare_round_poly());
+            }
+        }
+
+        for idx in 0..n_sessions {
+            if let Some(ref bare_poly) = bare_polys[idx] {
+                let full_coeffs = expand_bare_to_full(&bare_poly.coeffs, sessions[idx].eq_alpha());
                 for (i, &c) in full_coeffs.iter().enumerate() {
                     combined_coeffs[i] += k[idx] * c;
                 }
-                bare_polys[idx] = Some(bare_poly);
             }
         }
 
@@ -665,12 +691,11 @@ pub fn prove_batched_air_sumcheck<'a, EF: ExtensionField<PF<EF>>>(
         let challenge = prover_state.sample();
         challenges.push(challenge);
 
-        for (idx, session) in sessions.iter_mut().enumerate() {
-            let join_round = n_rounds - session.initial_n_vars();
-            if round < join_round {
+        for idx in 0..n_sessions {
+            if round < join_rounds[idx] {
                 k[idx] *= challenge;
-            } else if let Some(bare_poly) = &bare_polys[idx] {
-                session.process_challenge(challenge, bare_poly);
+            } else if let Some(ref bare_poly) = bare_polys[idx] {
+                sessions[idx].process_challenge(challenge, bare_poly);
             }
         }
     }
