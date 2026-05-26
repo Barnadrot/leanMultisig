@@ -36,7 +36,7 @@ use utils::{as_base_slice, log2_strict_usize};
 use crate::{Matrix, RowMajorMatrix, RowMajorMatrixViewMut};
 
 /// The number of layers to compute in each parallelization.
-const LAYERS_PER_GROUP: usize = 4;
+const LAYERS_PER_GROUP: usize = 3;
 
 #[derive(Default, Debug)]
 pub(crate) struct EvalsDft<F> {
@@ -124,16 +124,14 @@ where
 
         // We do `LAYERS_PER_GROUP` layers of the DFT at once, to minimize how much data we need to transfer
         // between threads.
-        for (twiddles_xs, twiddles_small, twiddles_med, twiddles_large) in root_table
-            [..root_table.len() - log_num_par_rows - corr]
+        for (twiddles_small, twiddles_med, twiddles_large) in root_table[..root_table.len() - log_num_par_rows - corr]
             .iter()
             .rev()
             .map(|slice| unsafe { as_base_slice::<EvalsButterfly<F>, F>(slice) })
             .tuples()
         {
-            dft_layer_par_quad(
+            dft_layer_par_triple(
                 &mut mat.as_view_mut(),
-                twiddles_xs,
                 twiddles_small,
                 twiddles_med,
                 twiddles_large,
@@ -345,90 +343,6 @@ fn dft_layer_par_triple<F: Field, B: Butterfly<F>, M: MultiLayerButterfly<F, B>>
         });
 }
 
-/// Applies four layers of a Radix-2 FFT butterfly network making use of parallelization.
-#[inline]
-fn dft_layer_par_quad<F: Field, B: Butterfly<F>, M: MultiLayerButterfly<F, B>>(
-    mat: &mut RowMajorMatrixViewMut<'_, F>,
-    twiddles_xs: &[B],
-    twiddles_small: &[B],
-    twiddles_med: &[B],
-    twiddles_large: &[B],
-    multi_butterfly: M,
-    width: usize,
-) {
-    debug_assert!(
-        mat.height().is_multiple_of(twiddles_xs.len()),
-        "Matrix height must be divisible by the number of twiddles"
-    );
-    assert_eq!(twiddles_small.len(), twiddles_xs.len() * 2);
-    assert_eq!(twiddles_med.len(), twiddles_small.len() * 2);
-    assert_eq!(twiddles_large.len(), twiddles_med.len() * 2);
-
-    let s = twiddles_xs.len();
-
-    mat.values
-        .par_chunks_exact_mut(twiddles_large.len() * 2 * width)
-        .for_each(|block| {
-            // Split into 16 sub-blocks of size s*width each.
-            // Naming: b3_b2_b1_b0 where b3 is the outermost (largest twiddle) bit.
-            let (hi, lo) = block.split_at_mut(s * width * 8);
-
-            let (hi_hi, hi_lo) = hi.split_at_mut(s * width * 4);
-            let (lo_hi, lo_lo) = lo.split_at_mut(s * width * 4);
-
-            let (hi_hi_hi, hi_hi_lo) = hi_hi.split_at_mut(s * width * 2);
-            let (hi_lo_hi, hi_lo_lo) = hi_lo.split_at_mut(s * width * 2);
-            let (lo_hi_hi, lo_hi_lo) = lo_hi.split_at_mut(s * width * 2);
-            let (lo_lo_hi, lo_lo_lo) = lo_lo.split_at_mut(s * width * 2);
-
-            let (b0000, b0001) = hi_hi_hi.split_at_mut(s * width);
-            let (b0010, b0011) = hi_hi_lo.split_at_mut(s * width);
-            let (b0100, b0101) = hi_lo_hi.split_at_mut(s * width);
-            let (b0110, b0111) = hi_lo_lo.split_at_mut(s * width);
-            let (b1000, b1001) = lo_hi_hi.split_at_mut(s * width);
-            let (b1010, b1011) = lo_hi_lo.split_at_mut(s * width);
-            let (b1100, b1101) = lo_lo_hi.split_at_mut(s * width);
-            let (b1110, b1111) = lo_lo_lo.split_at_mut(s * width);
-
-            b0000
-                .par_chunks_exact_mut(width)
-                .zip(b0001.par_chunks_exact_mut(width))
-                .zip(b0010.par_chunks_exact_mut(width))
-                .zip(b0011.par_chunks_exact_mut(width))
-                .zip(b0100.par_chunks_exact_mut(width))
-                .zip(b0101.par_chunks_exact_mut(width))
-                .zip(b0110.par_chunks_exact_mut(width))
-                .zip(b0111.par_chunks_exact_mut(width))
-                .zip(b1000.par_chunks_exact_mut(width))
-                .zip(b1001.par_chunks_exact_mut(width))
-                .zip(b1010.par_chunks_exact_mut(width))
-                .zip(b1011.par_chunks_exact_mut(width))
-                .zip(b1100.par_chunks_exact_mut(width))
-                .zip(b1101.par_chunks_exact_mut(width))
-                .zip(b1110.par_chunks_exact_mut(width))
-                .zip(b1111.par_chunks_exact_mut(width))
-                .enumerate()
-                .for_each(
-                    |(
-                        ind,
-                        (((((((((((((((r0000, r0001), r0010), r0011), r0100), r0101), r0110), r0111), r1000), r1001), r1010), r1011), r1100), r1101), r1110), r1111),
-                    )| {
-                        multi_butterfly.apply_4_layers(
-                            (
-                                (((r0000, r0001), (r0010, r0011)), ((r0100, r0101), (r0110, r0111))),
-                                (((r1000, r1001), (r1010, r1011)), ((r1100, r1101), (r1110, r1111))),
-                            ),
-                            ind,
-                            twiddles_xs,
-                            twiddles_small,
-                            twiddles_med,
-                            twiddles_large,
-                        );
-                    },
-                );
-        });
-}
-
 /// Applies the remaining layers of the Radix-2 FFT butterfly network in parallel.
 ///
 /// This function is used to correct for the fact that the total number of layers
@@ -440,8 +354,8 @@ fn dft_layer_par_extra_layers<F: Field, B: Butterfly<F>, M: MultiLayerButterfly<
     width: usize,
 ) {
     match root_table.len() {
-        0 => {}
         1 => {
+            // Safe as DitButterfly is #[repr(transparent)]
             let fft_layer: &[B] = unsafe { as_base_slice(&root_table[0]) };
             dft_layer_par(mat.values, fft_layer, width);
         }
@@ -456,20 +370,8 @@ fn dft_layer_par_extra_layers<F: Field, B: Butterfly<F>, M: MultiLayerButterfly<
                 width,
             );
         }
-        3 => {
-            let twiddles_small: &[B] = unsafe { as_base_slice(&root_table[2]) };
-            let twiddles_med: &[B] = unsafe { as_base_slice(&root_table[1]) };
-            let twiddles_large: &[B] = unsafe { as_base_slice(&root_table[0]) };
-            dft_layer_par_triple(
-                &mut mat.as_view_mut(),
-                twiddles_small,
-                twiddles_med,
-                twiddles_large,
-                multi_layer,
-                width,
-            );
-        }
-        _ => unreachable!("The number of extra layers must be 0, 1, 2 or 3"),
+        0 => {}
+        _ => unreachable!("The number of layers must be 0, 1 or 2"),
     }
 }
 
@@ -540,90 +442,6 @@ fn fft_triple_layer_quad_twiddle<F: Field, Fly: Butterfly<F>>(
     fly3.apply_to_rows(block.0.1.1, block.1.1.1);
 }
 
-/// A type representing a decomposition of an FFT block into sixteen sub-blocks.
-type QuadLayerBlockDecomposition<'a, F> = (
-    (
-        ((&'a mut [F], &'a mut [F]), (&'a mut [F], &'a mut [F])),
-        ((&'a mut [F], &'a mut [F]), (&'a mut [F], &'a mut [F])),
-    ),
-    (
-        ((&'a mut [F], &'a mut [F]), (&'a mut [F], &'a mut [F])),
-        ((&'a mut [F], &'a mut [F]), (&'a mut [F], &'a mut [F])),
-    ),
-);
-
-#[inline]
-fn fft_quad_layer_single_twiddle<F: Field, Fly: Butterfly<F>>(
-    block: &mut QuadLayerBlockDecomposition<'_, F>,
-    butterfly: Fly,
-) {
-    butterfly.apply_to_rows(block.0.0.0.0, block.0.0.0.1);
-    butterfly.apply_to_rows(block.0.0.1.0, block.0.0.1.1);
-    butterfly.apply_to_rows(block.0.1.0.0, block.0.1.0.1);
-    butterfly.apply_to_rows(block.0.1.1.0, block.0.1.1.1);
-    butterfly.apply_to_rows(block.1.0.0.0, block.1.0.0.1);
-    butterfly.apply_to_rows(block.1.0.1.0, block.1.0.1.1);
-    butterfly.apply_to_rows(block.1.1.0.0, block.1.1.0.1);
-    butterfly.apply_to_rows(block.1.1.1.0, block.1.1.1.1);
-}
-
-#[inline]
-fn fft_quad_layer_double_twiddle<F: Field, Fly0: Butterfly<F>, Fly1: Butterfly<F>>(
-    block: &mut QuadLayerBlockDecomposition<'_, F>,
-    fly0: Fly0,
-    fly1: Fly1,
-) {
-    fly0.apply_to_rows(block.0.0.0.0, block.0.0.1.0);
-    fly1.apply_to_rows(block.0.0.0.1, block.0.0.1.1);
-    fly0.apply_to_rows(block.0.1.0.0, block.0.1.1.0);
-    fly1.apply_to_rows(block.0.1.0.1, block.0.1.1.1);
-    fly0.apply_to_rows(block.1.0.0.0, block.1.0.1.0);
-    fly1.apply_to_rows(block.1.0.0.1, block.1.0.1.1);
-    fly0.apply_to_rows(block.1.1.0.0, block.1.1.1.0);
-    fly1.apply_to_rows(block.1.1.0.1, block.1.1.1.1);
-}
-
-#[inline]
-fn fft_quad_layer_quad_twiddle<F: Field, Fly: Butterfly<F>>(
-    block: &mut QuadLayerBlockDecomposition<'_, F>,
-    fly0: Fly,
-    fly1: Fly,
-    fly2: Fly,
-    fly3: Fly,
-) {
-    fly0.apply_to_rows(block.0.0.0.0, block.0.1.0.0);
-    fly1.apply_to_rows(block.0.0.0.1, block.0.1.0.1);
-    fly2.apply_to_rows(block.0.0.1.0, block.0.1.1.0);
-    fly3.apply_to_rows(block.0.0.1.1, block.0.1.1.1);
-    fly0.apply_to_rows(block.1.0.0.0, block.1.1.0.0);
-    fly1.apply_to_rows(block.1.0.0.1, block.1.1.0.1);
-    fly2.apply_to_rows(block.1.0.1.0, block.1.1.1.0);
-    fly3.apply_to_rows(block.1.0.1.1, block.1.1.1.1);
-}
-
-#[inline]
-#[allow(clippy::too_many_arguments)]
-fn fft_quad_layer_octo_twiddle<F: Field, Fly: Butterfly<F>>(
-    block: &mut QuadLayerBlockDecomposition<'_, F>,
-    fly0: Fly,
-    fly1: Fly,
-    fly2: Fly,
-    fly3: Fly,
-    fly4: Fly,
-    fly5: Fly,
-    fly6: Fly,
-    fly7: Fly,
-) {
-    fly0.apply_to_rows(block.0.0.0.0, block.1.0.0.0);
-    fly1.apply_to_rows(block.0.0.0.1, block.1.0.0.1);
-    fly2.apply_to_rows(block.0.0.1.0, block.1.0.1.0);
-    fly3.apply_to_rows(block.0.0.1.1, block.1.0.1.1);
-    fly4.apply_to_rows(block.0.1.0.0, block.1.1.0.0);
-    fly5.apply_to_rows(block.0.1.0.1, block.1.1.0.1);
-    fly6.apply_to_rows(block.0.1.1.0, block.1.1.1.0);
-    fly7.apply_to_rows(block.0.1.1.1, block.1.1.1.1);
-}
-
 /// Estimates the optimal workload size for `T` to fit in L1 cache.
 #[must_use]
 const fn workload_size<T: Sized>() -> usize {
@@ -653,16 +471,6 @@ trait MultiLayerButterfly<F: Field, B: Butterfly<F>>: Copy + Send + Sync {
         &self,
         chunk_decomposition: TripleLayerBlockDecomposition<'_, F>,
         ind: usize,
-        twiddles_small: &[B],
-        twiddles_med: &[B],
-        twiddles_large: &[B],
-    );
-
-    fn apply_4_layers(
-        &self,
-        chunk_decomposition: QuadLayerBlockDecomposition<'_, F>,
-        ind: usize,
-        twiddles_xs: &[B],
         twiddles_small: &[B],
         twiddles_med: &[B],
         twiddles_large: &[B],
@@ -710,43 +518,6 @@ impl<F: Field> MultiLayerButterfly<F, EvalsButterfly<F>> for MyMultiLayerButterf
             twiddles_large[ind + twiddles_small.len()],
             twiddles_large[ind + 2 * twiddles_small.len()],
             twiddles_large[ind + 3 * twiddles_small.len()],
-        );
-    }
-
-    #[inline]
-    fn apply_4_layers(
-        &self,
-        mut blk_decomp: QuadLayerBlockDecomposition<'_, F>,
-        ind: usize,
-        twiddles_xs: &[EvalsButterfly<F>],
-        twiddles_small: &[EvalsButterfly<F>],
-        twiddles_med: &[EvalsButterfly<F>],
-        twiddles_large: &[EvalsButterfly<F>],
-    ) {
-        let s = twiddles_xs.len();
-        fft_quad_layer_single_twiddle(&mut blk_decomp, twiddles_xs[ind]);
-        fft_quad_layer_double_twiddle(
-            &mut blk_decomp,
-            twiddles_small[ind],
-            twiddles_small[ind + s],
-        );
-        fft_quad_layer_quad_twiddle(
-            &mut blk_decomp,
-            twiddles_med[ind],
-            twiddles_med[ind + s],
-            twiddles_med[ind + 2 * s],
-            twiddles_med[ind + 3 * s],
-        );
-        fft_quad_layer_octo_twiddle(
-            &mut blk_decomp,
-            twiddles_large[ind],
-            twiddles_large[ind + s],
-            twiddles_large[ind + 2 * s],
-            twiddles_large[ind + 3 * s],
-            twiddles_large[ind + 4 * s],
-            twiddles_large[ind + 5 * s],
-            twiddles_large[ind + 6 * s],
-            twiddles_large[ind + 7 * s],
         );
     }
 }
