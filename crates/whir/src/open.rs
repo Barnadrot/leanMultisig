@@ -3,10 +3,15 @@
 use ::utils::log2_strict_usize;
 use fiat_shamir::{FSProver, MerklePath, ProofResult};
 use field::PrimeCharacteristicRing;
-use field::{ExtensionField, Field, TwoAdicField};
+use field::{ExtensionField, Field, PackedFieldExtension, TwoAdicField};
 use poly::*;
 use rayon::prelude::*;
-use sumcheck::{ProductComputation, run_product_sumcheck, sumcheck_prove_many_rounds};
+use sumcheck::{
+    FactoredEqWeights, ProductComputation, SplitEq,
+    compute_product_sumcheck_round0_factored_base,
+    compute_product_sumcheck_round0_factored_ext,
+    run_product_sumcheck, sumcheck_prove_many_rounds,
+};
 use tracing::{info_span, instrument};
 
 use crate::{config::WhirConfig, *};
@@ -419,6 +424,20 @@ where
     ) -> (Self, MultilinearPoint<EF>) {
         assert_ne!(folding_factor, 0);
 
+        let num_variables = statement[0].total_num_variables;
+        let can_factor = can_use_factored_combine(statement, num_variables);
+
+        if can_factor {
+            return Self::run_initial_sumcheck_rounds_factored(
+                evals,
+                statement,
+                combination_randomness,
+                prover_state,
+                folding_factor,
+                pow_bits,
+            );
+        }
+
         let (weights, sum) = combine_statement::<EF>(statement, combination_randomness);
 
         let mut evals = evals.pack();
@@ -442,6 +461,160 @@ where
         };
 
         (sumcheck, challengess)
+    }
+
+    #[instrument(skip_all)]
+    fn run_initial_sumcheck_rounds_factored(
+        evals: &MleRef<'_, EF>,
+        statement: &[SparseStatement<EF>],
+        gamma: EF,
+        prover_state: &mut impl FSProver<EF>,
+        folding_factor: usize,
+        pow_bits: usize,
+    ) -> (Self, MultilinearPoint<EF>) {
+        let num_variables = statement[0].total_num_variables;
+        let (factored_weights, sum) =
+            combine_statement_factored::<EF>(statement, gamma, num_variables);
+
+        let evals_packed = evals.pack();
+        let evals_ref = evals_packed.by_ref();
+
+        // Round 0: factored inner loop — no 2^n materialization
+        let first_poly = match &evals_ref {
+            MleRef::BasePacked(e) => {
+                compute_product_sumcheck_round0_factored_base(*e, &factored_weights, sum)
+            }
+            MleRef::ExtensionPacked(e) => {
+                compute_product_sumcheck_round0_factored_ext(*e, &factored_weights, sum)
+            }
+            _ => unreachable!("evals should be packed after pack()"),
+        };
+        prover_state.add_sumcheck_polynomial(&first_poly.coeffs, None);
+        prover_state.pow_grinding(pow_bits);
+        let r0: EF = prover_state.sample();
+        let current_sum = first_poly.evaluate(r0);
+
+        if folding_factor == 1 {
+            let evals_out = evals_ref.fold(r0);
+            let n = evals_ref.packed_len();
+            let mut weights_flat: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(n) };
+            weights_flat.par_iter_mut().enumerate().for_each(|(i, w)| {
+                *w = factored_weights.get_packed(i);
+            });
+            let weights_out =
+                MleRef::ExtensionPacked(&weights_flat).fold(r0);
+            let sumcheck = Self {
+                evals: evals_out,
+                weights: weights_out,
+                sum: current_sum,
+            };
+            return (sumcheck, MultilinearPoint(vec![r0]));
+        }
+
+        // Round 1: fold evals by r0, materialize+fold weights at half size
+        let n = evals_ref.packed_len();
+        let half = n / 2;
+        let r0_packed = EFPacking::<EF>::from(r0);
+
+        let mut evals_folded: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(half) };
+        let mut weights_folded: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(half) };
+
+        match &evals_ref {
+            MleRef::BasePacked(e) => {
+                evals_folded
+                    .par_iter_mut()
+                    .zip(weights_folded.par_iter_mut())
+                    .enumerate()
+                    .for_each(|(i, (ef, wf))| {
+                        *ef = EFPacking::<EF>::from(e[i])
+                            + r0_packed * (EFPacking::<EF>::from(e[i + half]) - EFPacking::<EF>::from(e[i]));
+                        *wf = factored_weights.get_packed(i)
+                            + r0_packed
+                                * (factored_weights.get_packed(i + half)
+                                    - factored_weights.get_packed(i));
+                    });
+            }
+            MleRef::ExtensionPacked(e) => {
+                evals_folded
+                    .par_iter_mut()
+                    .zip(weights_folded.par_iter_mut())
+                    .enumerate()
+                    .for_each(|(i, (ef, wf))| {
+                        *ef = e[i] + r0_packed * (e[i + half] - e[i]);
+                        *wf = factored_weights.get_packed(i)
+                            + r0_packed
+                                * (factored_weights.get_packed(i + half)
+                                    - factored_weights.get_packed(i));
+                    });
+            }
+            _ => unreachable!(),
+        };
+
+        let fold_size = half / 2;
+        let (c0_packed, c2_packed) = evals_folded[..fold_size]
+            .par_iter()
+            .zip(evals_folded[fold_size..].par_iter())
+            .zip(
+                weights_folded[..fold_size]
+                    .par_iter()
+                    .zip(weights_folded[fold_size..].par_iter()),
+            )
+            .map(sumcheck::sumcheck_quadratic)
+            .reduce(
+                || (EFPacking::<EF>::ZERO, EFPacking::<EF>::ZERO),
+                |(a0, a2), (b0, b2)| (a0 + b0, a2 + b2),
+            );
+
+        let c0: EF = EFPacking::<EF>::to_ext_iter([c0_packed]).sum();
+        let c2: EF = EFPacking::<EF>::to_ext_iter([c2_packed]).sum();
+        let c1 = current_sum - c0.double() - c2;
+        let second_poly = DensePolynomial::new(vec![c0, c1, c2]);
+
+        prover_state.add_sumcheck_polynomial(&second_poly.coeffs, None);
+        prover_state.pow_grinding(pow_bits);
+        let r1: EF = prover_state.sample();
+        let current_sum = second_poly.evaluate(r1);
+
+        if folding_factor == 2 {
+            let evals_out =
+                MleRef::ExtensionPacked(&evals_folded).fold(r1);
+            let weights_out =
+                MleRef::ExtensionPacked(&weights_folded).fold(r1);
+            let sumcheck = Self {
+                evals: evals_out,
+                weights: weights_out,
+                sum: current_sum,
+            };
+            return (sumcheck, MultilinearPoint(vec![r0, r1]));
+        }
+
+        // Rounds 2..folding_factor: standard product sumcheck on the materialized data
+        let folded_group = MleGroupOwned::ExtensionPacked(vec![evals_folded, weights_folded]);
+        let (mut tail_challenges, folds, new_sum) = sumcheck_prove_many_rounds(
+            folded_group,
+            Some(r1),
+            &ProductComputation {},
+            &vec![],
+            None,
+            prover_state,
+            current_sum,
+            None,
+            folding_factor - 2,
+            false,
+            pow_bits,
+        );
+
+        let mut all_challenges = vec![r0, r1];
+        all_challenges.append(&mut tail_challenges.0);
+
+        let [evals_final, weights_final] = folds.split().try_into().unwrap();
+        let sumcheck = Self {
+            evals: evals_final,
+            weights: weights_final,
+            sum: new_sum,
+        };
+
+        (sumcheck, MultilinearPoint(all_challenges))
     }
 }
 
@@ -621,4 +794,127 @@ where
     }
 
     (combined_weights, combined_sum)
+}
+
+fn is_full_domain_statement<EF: ExtensionField<PF<EF>>>(
+    s: &SparseStatement<EF>,
+    num_variables: usize,
+) -> bool {
+    !s.is_next
+        && s.values.len() == 1
+        && s.values[0].selector == 0
+        && s.inner_num_variables() == num_variables
+}
+
+fn can_use_factored_combine<EF: ExtensionField<PF<EF>>>(
+    statements: &[SparseStatement<EF>],
+    num_variables: usize,
+) -> bool {
+    !statements.is_empty()
+        && is_full_domain_statement(&statements[0], num_variables)
+        && num_variables > packing_log_width::<EF>() + 4
+}
+
+#[instrument(skip_all, fields(num_constraints = statements.len(), n_vars = statements[0].total_num_variables))]
+fn combine_statement_factored<EF>(
+    statements: &[SparseStatement<EF>],
+    gamma: EF,
+    num_variables: usize,
+) -> (FactoredEqWeights<EF>, EF)
+where
+    EF: ExtensionField<PF<EF>>,
+{
+    assert!(!statements.is_empty());
+    let out_len = 1 << (num_variables - packing_log_width::<EF>());
+
+    let mut combined_sum = EF::ZERO;
+    let mut gamma_pow = EF::ONE;
+    let mut split_eq_terms: Vec<(SplitEq<EF>, EF)> = Vec::new();
+
+    let mut start_idx = 0;
+    for smt in statements.iter() {
+        if !is_full_domain_statement(smt, num_variables) {
+            break;
+        }
+        let split_eq = SplitEq::new(&smt.point.0);
+        split_eq_terms.push((split_eq, gamma_pow));
+        combined_sum += smt.values[0].value * gamma_pow;
+        gamma_pow *= gamma;
+        start_idx += 1;
+    }
+
+    assert!(!split_eq_terms.is_empty());
+
+    let has_remaining = start_idx < statements.len();
+    let sparse = if has_remaining {
+        let mut sparse_table = EFPacking::<EF>::zero_vec(out_len);
+        for smt in &statements[start_idx..] {
+            if !smt.is_next
+                && (smt.values.len() == 1
+                    || smt.inner_num_variables() < packing_log_width::<EF>())
+            {
+                for evaluation in &smt.values {
+                    compute_sparse_eval_eq_packed::<EF>(
+                        evaluation.selector,
+                        &smt.point,
+                        &mut sparse_table,
+                        gamma_pow,
+                    );
+                    combined_sum += evaluation.value * gamma_pow;
+                    gamma_pow *= gamma;
+                }
+            } else {
+                let inner_poly = if smt.is_next {
+                    let next = matrix_next_mle_folded(&smt.point.0);
+                    pack_extension(&next)
+                } else {
+                    eval_eq_packed(&smt.point)
+                };
+                let shift = smt.inner_num_variables() - packing_log_width::<EF>();
+                let mut indexed_smt_values =
+                    smt.values.iter().enumerate().collect::<Vec<_>>();
+                indexed_smt_values.sort_by_key(|(_, e)| e.selector);
+                indexed_smt_values.dedup_by_key(|(_, e)| e.selector);
+                assert_eq!(
+                    indexed_smt_values.len(),
+                    smt.values.len(),
+                    "Duplicate selectors in sparse statement"
+                );
+                let mut chunks_mut = split_at_mut_many(
+                    &mut sparse_table,
+                    &indexed_smt_values
+                        .iter()
+                        .map(|(_, e)| e.selector << shift)
+                        .collect::<Vec<_>>(),
+                );
+                chunks_mut.remove(0);
+                let mut next_gamma_powers = vec![gamma_pow];
+                for _ in 1..indexed_smt_values.len() {
+                    next_gamma_powers
+                        .push(*next_gamma_powers.last().unwrap() * gamma);
+                }
+                for (e, &scalar) in smt.values.iter().zip(&next_gamma_powers) {
+                    combined_sum += e.value * scalar;
+                }
+                chunks_mut
+                    .into_par_iter()
+                    .zip(&indexed_smt_values)
+                    .for_each(|(out_buff, &(origin_index, _))| {
+                        out_buff[..1 << shift]
+                            .par_iter_mut()
+                            .zip(&inner_poly)
+                            .for_each(|(out_elem, &poly_elem)| {
+                                *out_elem += poly_elem * next_gamma_powers[origin_index];
+                            });
+                    });
+                gamma_pow = *next_gamma_powers.last().unwrap() * gamma;
+            }
+        }
+        Some(sparse_table)
+    } else {
+        None
+    };
+
+    let factored = FactoredEqWeights::new(split_eq_terms, sparse);
+    (factored, combined_sum)
 }
