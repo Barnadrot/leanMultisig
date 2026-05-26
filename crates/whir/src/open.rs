@@ -2,11 +2,14 @@
 
 use ::utils::log2_strict_usize;
 use fiat_shamir::{FSProver, MerklePath, ProofResult};
-use field::PrimeCharacteristicRing;
+use field::{PackedFieldExtension, PrimeCharacteristicRing};
 use field::{ExtensionField, Field, TwoAdicField};
 use poly::*;
 use rayon::prelude::*;
-use sumcheck::{ProductComputation, run_product_sumcheck, sumcheck_prove_many_rounds};
+use sumcheck::{
+    ProductComputation, fold_and_compute_product_sumcheck_polynomial, run_product_sumcheck,
+    sumcheck_prove_many_rounds,
+};
 use tracing::{info_span, instrument};
 
 use crate::{config::WhirConfig, *};
@@ -419,29 +422,100 @@ where
     ) -> (Self, MultilinearPoint<EF>) {
         assert_ne!(folding_factor, 0);
 
-        let (weights, sum) = combine_statement::<EF>(statement, combination_randomness);
+        let packed_evals = evals.pack();
 
-        let mut evals = evals.pack();
-        let mut weights = Mle::Owned(MleOwned::ExtensionPacked(weights));
-        let (challengess, new_sum, new_evals, new_weights) = run_product_sumcheck(
-            &evals.by_ref(),
-            &weights.by_ref(),
-            prover_state,
-            sum,
-            folding_factor,
-            pow_bits,
-        );
-
-        evals = new_evals.into();
-        weights = new_weights.into();
-
-        let sumcheck = Self {
-            evals: evals.as_owned().unwrap(),
-            weights: weights.as_owned().unwrap(),
-            sum: new_sum,
+        // Try the fused path: generate weights AND compute round-0 sumcheck
+        // polynomial in a single pass over the data.
+        let fused_result = match &packed_evals.by_ref() {
+            MleRef::BasePacked(packed) => {
+                combine_statement_with_round0::<EF>(statement, combination_randomness, packed)
+            }
+            _ => None,
         };
 
-        (sumcheck, challengess)
+        if let Some((weights_vec, _sum, first_sumcheck_poly)) = fused_result {
+            // Fused path succeeded: weights are generated and round-0 polynomial is computed.
+            // Continue with rounds 1+ of the product sumcheck.
+            let evals_ref = packed_evals.by_ref();
+            let evals_packed = evals_ref.as_packed_base().unwrap();
+            let weights_packed = &weights_vec;
+
+            prover_state.add_sumcheck_polynomial(&first_sumcheck_poly.coeffs, None);
+            prover_state.pow_grinding(pow_bits);
+            let r1: EF = prover_state.sample();
+            let mut current_sum = first_sumcheck_poly.evaluate(r1);
+
+            if folding_factor == 1 {
+                let folded_evals = MleRef::BasePacked(evals_packed).fold(r1);
+                let folded_weights = MleRef::ExtensionPacked(weights_packed).fold(r1);
+
+                let sumcheck = Self {
+                    evals: folded_evals,
+                    weights: folded_weights,
+                    sum: current_sum,
+                };
+                return (sumcheck, MultilinearPoint(vec![r1]));
+            }
+
+            let (second_sumcheck_poly, folded) =
+                fold_and_compute_product_sumcheck_polynomial(evals_packed, weights_packed, r1, current_sum, |e| {
+                    EFPacking::<EF>::to_ext_iter([e]).collect()
+                });
+
+            prover_state.add_sumcheck_polynomial(&second_sumcheck_poly.coeffs, None);
+            prover_state.pow_grinding(pow_bits);
+            let r2: EF = prover_state.sample();
+            current_sum = second_sumcheck_poly.evaluate(r2);
+
+            let (mut challenges, folds, final_sum) = sumcheck_prove_many_rounds(
+                MleGroupOwned::ExtensionPacked(folded),
+                Some(r2),
+                &ProductComputation {},
+                &vec![],
+                None,
+                prover_state,
+                current_sum,
+                None,
+                folding_factor - 2,
+                false,
+                pow_bits,
+            );
+
+            challenges.splice(0..0, [r1, r2]);
+            let [new_evals, new_weights]: [MleOwned<EF>; 2] = folds.split().try_into().unwrap();
+
+            let sumcheck = Self {
+                evals: new_evals,
+                weights: new_weights,
+                sum: final_sum,
+            };
+            (sumcheck, challenges)
+        } else {
+            // Fallback: use the original two-pass approach.
+            let (weights, sum) = combine_statement::<EF>(statement, combination_randomness);
+
+            let mut evals_mle = packed_evals;
+            let mut weights_mle = Mle::Owned(MleOwned::ExtensionPacked(weights));
+            let (challengess, new_sum, new_evals, new_weights) = run_product_sumcheck(
+                &evals_mle.by_ref(),
+                &weights_mle.by_ref(),
+                prover_state,
+                sum,
+                folding_factor,
+                pow_bits,
+            );
+
+            evals_mle = new_evals.into();
+            weights_mle = new_weights.into();
+
+            let sumcheck = Self {
+                evals: evals_mle.as_owned().unwrap(),
+                weights: weights_mle.as_owned().unwrap(),
+                sum: new_sum,
+            };
+
+            (sumcheck, challengess)
+        }
     }
 }
 
@@ -621,4 +695,253 @@ where
     }
 
     (combined_weights, combined_sum)
+}
+
+/// Fused combine_statement + round-0 sumcheck polynomial computation.
+///
+/// For the common dual-eq path, generates the weight table and computes the
+/// round-0 sumcheck polynomial in a single pass, avoiding a separate second
+/// pass over the weights array. The remaining sparse statements compute their
+/// sumcheck corrections incrementally.
+///
+/// Returns `None` if the fused path is not applicable (falls back to the
+/// original two-pass approach).
+#[instrument(skip_all, fields(num_constraints = statements.len(), n_vars = statements[0].total_num_variables))]
+fn combine_statement_with_round0<EF>(
+    statements: &[SparseStatement<EF>],
+    gamma: EF,
+    evals: &[PFPacking<EF>],
+) -> Option<(Vec<EFPacking<EF>>, EF, DensePolynomial<EF>)>
+where
+    EF: ExtensionField<PF<EF>>,
+{
+    let num_variables = statements[0].total_num_variables;
+    assert!(statements.iter().all(|e| e.total_num_variables == num_variables));
+
+    let out_len = 1 << (num_variables - packing_log_width::<EF>());
+    assert_eq!(evals.len(), out_len);
+
+    let first = &statements[0];
+    let first_is_full_initializer = !first.is_next
+        && first.values.len() == 1
+        && first.values[0].selector == 0
+        && first.inner_num_variables() == num_variables;
+
+    if !first_is_full_initializer {
+        return None;
+    }
+
+    let second = statements.get(1);
+    let second_is_full_domain = second.is_some_and(|s| {
+        !s.is_next && s.values.len() == 1 && s.values[0].selector == 0 && s.inner_num_variables() == num_variables
+    });
+
+    if !second_is_full_domain {
+        return None;
+    }
+
+    let second = &statements[1];
+
+    let mut combined_sum = EF::ZERO;
+    let mut gamma_pow = EF::ONE;
+
+    let first_scalar = gamma_pow;
+    combined_sum += first.values[0].value * gamma_pow;
+    gamma_pow *= gamma;
+
+    // Fused dual eq generation + round-0 sumcheck dot product.
+    let mut combined_weights: Vec<EFPacking<EF>> = unsafe { uninitialized_vec(out_len) };
+    let mut round0_poly = compute_eval_eq_packed_dual_with_dotproduct::<PFPacking<EF>, EF>(
+        &first.point.0,
+        &second.point.0,
+        &mut combined_weights,
+        first_scalar,
+        gamma_pow,
+        evals,
+        EF::ZERO, // placeholder sum; we'll fix c1 after computing combined_sum
+    );
+
+    combined_sum += second.values[0].value * gamma_pow;
+    gamma_pow *= gamma;
+
+    let half = out_len / 2;
+
+    // Process remaining statements, applying corrections to the sumcheck polynomial.
+    for smt in &statements[2..] {
+        if !smt.is_next && (smt.values.len() == 1 || smt.inner_num_variables() < packing_log_width::<EF>()) {
+            for evaluation in &smt.values {
+                // Compute the eq polynomial delta for this sparse entry.
+                // The delta is the eq values that will be added to weights.
+                let inner_n_vars = smt.inner_num_variables();
+                let log_packing = packing_log_width::<EF>();
+
+                if inner_n_vars < log_packing {
+                    // Very small: the modification is sub-packed-element.
+                    // Fall back to the original approach for correctness.
+                    // Snapshot affected entries, apply modification, compute correction.
+                    let packed_idx = evaluation.selector >> (log_packing - inner_n_vars);
+                    let old_weight = combined_weights[packed_idx];
+
+                    compute_sparse_eval_eq_packed::<EF>(
+                        evaluation.selector,
+                        &smt.point,
+                        &mut combined_weights,
+                        gamma_pow,
+                    );
+
+                    let new_weight = combined_weights[packed_idx];
+                    let delta = new_weight - old_weight;
+
+                    // Compute sumcheck correction for this single packed element.
+                    if packed_idx < half {
+                        let paired_idx = packed_idx + half;
+                        let e_lo = evals[packed_idx];
+                        let e_hi = evals[paired_idx];
+                        round0_poly.coeffs[0] += EFPacking::<EF>::to_ext_iter([delta * e_lo]).sum::<EF>();
+                        let diff_e = e_hi - e_lo;
+                        round0_poly.coeffs[2] -= EFPacking::<EF>::to_ext_iter([delta * diff_e]).sum::<EF>();
+                    } else {
+                        let paired_idx = packed_idx - half;
+                        let e_lo = evals[paired_idx];
+                        let e_hi = evals[packed_idx];
+                        let diff_e = e_hi - e_lo;
+                        round0_poly.coeffs[2] += EFPacking::<EF>::to_ext_iter([delta * diff_e]).sum::<EF>();
+                    }
+                } else {
+                    let region_size = 1 << (inner_n_vars - log_packing);
+                    let region_start = evaluation.selector * region_size;
+
+                    // Snapshot the affected region before modification.
+                    let old_weights: Vec<EFPacking<EF>> =
+                        combined_weights[region_start..region_start + region_size].to_vec();
+
+                    compute_sparse_eval_eq_packed::<EF>(
+                        evaluation.selector,
+                        &smt.point,
+                        &mut combined_weights,
+                        gamma_pow,
+                    );
+
+                    // Compute sumcheck correction from the delta.
+                    sumcheck_correction_for_region(
+                        &combined_weights[region_start..region_start + region_size],
+                        &old_weights,
+                        evals,
+                        region_start,
+                        half,
+                        &mut round0_poly.coeffs,
+                    );
+                }
+
+                combined_sum += evaluation.value * gamma_pow;
+                gamma_pow *= gamma;
+            }
+        } else {
+            let inner_poly = if smt.is_next {
+                let next = matrix_next_mle_folded(&smt.point.0);
+                pack_extension(&next)
+            } else {
+                eval_eq_packed(&smt.point)
+            };
+            let shift = smt.inner_num_variables() - packing_log_width::<EF>();
+            let region_size = 1 << shift;
+            let mut indexed_smt_values = smt.values.iter().enumerate().collect::<Vec<_>>();
+            indexed_smt_values.sort_by_key(|(_, e)| e.selector);
+            indexed_smt_values.dedup_by_key(|(_, e)| e.selector);
+            assert_eq!(
+                indexed_smt_values.len(),
+                smt.values.len(),
+                "Duplicate selectors in sparse statement"
+            );
+
+            let mut next_gamma_powers = vec![gamma_pow];
+            for _ in 1..indexed_smt_values.len() {
+                next_gamma_powers.push(*next_gamma_powers.last().unwrap() * gamma);
+            }
+            for (e, &scalar) in smt.values.iter().zip(&next_gamma_powers) {
+                combined_sum += e.value * scalar;
+            }
+
+            // For each selector region, apply the modification and compute correction.
+            for &(origin_index, sv) in &indexed_smt_values {
+                let region_start = sv.selector << shift;
+                let region_end = region_start + region_size;
+
+                // Snapshot old weights for this region.
+                let old_weights: Vec<EFPacking<EF>> =
+                    combined_weights[region_start..region_end].to_vec();
+
+                // Apply the modification.
+                let scalar = next_gamma_powers[origin_index];
+                combined_weights[region_start..region_end]
+                    .iter_mut()
+                    .zip(&inner_poly)
+                    .for_each(|(out_elem, &poly_elem)| {
+                        *out_elem += poly_elem * scalar;
+                    });
+
+                // Compute sumcheck correction.
+                sumcheck_correction_for_region(
+                    &combined_weights[region_start..region_end],
+                    &old_weights,
+                    evals,
+                    region_start,
+                    half,
+                    &mut round0_poly.coeffs,
+                );
+            }
+
+            gamma_pow = *next_gamma_powers.last().unwrap() * gamma;
+        }
+    }
+
+    // Fix c1 using the final combined_sum.
+    // c0 and c2 are correct, c1 = sum - 2*c0 - c2.
+    round0_poly.coeffs[1] = combined_sum - round0_poly.coeffs[0].double() - round0_poly.coeffs[2];
+
+    Some((combined_weights, combined_sum, round0_poly))
+}
+
+/// Compute the sumcheck correction when weights in a region change.
+///
+/// For each position j in [region_start..region_start+region_len]:
+///   delta = new_weights[j - region_start] - old_weights[j - region_start]
+///   if j < half: c0 += evals[j] * delta; c2 -= (evals[j+half] - evals[j]) * delta
+///   if j >= half: c2 += (evals[j] - evals[j-half]) * delta
+#[inline]
+fn sumcheck_correction_for_region<EF>(
+    new_weights: &[EFPacking<EF>],
+    old_weights: &[EFPacking<EF>],
+    evals: &[PFPacking<EF>],
+    region_start: usize,
+    half: usize,
+    coeffs: &mut [EF],
+) where
+    EF: ExtensionField<PF<EF>>,
+{
+    let region_len = new_weights.len();
+    debug_assert_eq!(old_weights.len(), region_len);
+
+    let mut c0_acc = EFPacking::<EF>::ZERO;
+    let mut c2_acc = EFPacking::<EF>::ZERO;
+
+    for k in 0..region_len {
+        let j = region_start + k;
+        let delta = new_weights[k] - old_weights[k];
+
+        if j < half {
+            let e_lo = evals[j];
+            let e_hi = evals[j + half];
+            c0_acc += delta * e_lo;
+            c2_acc -= delta * (e_hi - e_lo);
+        } else {
+            let paired = j - half;
+            let e_lo = evals[paired];
+            let e_hi = evals[j];
+            c2_acc += delta * (e_hi - e_lo);
+        }
+    }
+
+    coeffs[0] += EFPacking::<EF>::to_ext_iter([c0_acc]).sum::<EF>();
+    coeffs[2] += EFPacking::<EF>::to_ext_iter([c2_acc]).sum::<EF>();
 }
