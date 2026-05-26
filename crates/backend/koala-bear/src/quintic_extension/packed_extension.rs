@@ -77,21 +77,7 @@ impl<F: QuinticExtendable, PF: PackedField<Scalar = F>> Algebra<QuinticExtension
 {
 }
 
-impl<F: QuinticExtendable, PF: PackedField<Scalar = F>> Algebra<PF> for PackedQuinticExtensionField<F, PF> {
-    #[inline]
-    fn mixed_dot_product<const N: usize>(a: &[Self; N], f: &[PF; N]) -> Self
-    where
-        PF: Copy,
-        Self: Copy,
-    {
-        let mut result = Self::default();
-        for k in 0..5 {
-            let coord_k: [PF; N] = core::array::from_fn(|i| a[i].value[k]);
-            result.value[k] = PF::dot_product::<N>(&coord_k, f);
-        }
-        result
-    }
-}
+impl<F: QuinticExtendable, PF: PackedField<Scalar = F>> Algebra<PF> for PackedQuinticExtensionField<F, PF> {}
 
 #[allow(unused_macros)]
 macro_rules! impl_packed_ext_scalar_ops {

@@ -120,26 +120,6 @@ pub fn run_product_sumcheck<EF: ExtensionField<PF<EF>>>(
     (challenges, sum, pol_a, pol_b)
 }
 
-const K: usize = 8;
-
-#[inline(always)]
-fn chunk_round_step<F, EFP>(
-    e_lo: &[F; K],
-    e_hi: &[F; K],
-    w_lo: &[EFP; K],
-    w_hi: &[EFP; K],
-) -> (EFP, EFP)
-where
-    F: PrimeCharacteristicRing + Copy,
-    EFP: Algebra<F> + Copy,
-{
-    let acc0 = EFP::mixed_dot_product::<K>(w_lo, e_lo);
-    let diffs_e: [F; K] = core::array::from_fn(|i| e_hi[i] - e_lo[i]);
-    let diffs_w: [EFP; K] = core::array::from_fn(|i| w_hi[i] - w_lo[i]);
-    let acc_inf = EFP::mixed_dot_product::<K>(&diffs_w, &diffs_e);
-    (acc0, acc_inf)
-}
-
 pub fn compute_product_sumcheck_polynomial<
     F: PrimeCharacteristicRing + Copy + Send + Sync,
     EF: Field,
@@ -154,56 +134,28 @@ pub fn compute_product_sumcheck_polynomial<
     assert_eq!(n, pol_1.len());
     assert!(n.is_power_of_two());
 
-    let half = n / 2;
-    let (e_lo, e_hi) = pol_0.split_at(half);
-    let (w_lo, w_hi) = pol_1.split_at(half);
+    let num_elements = n;
 
-    let body = (half / K) * K;
-    let (e_lo_main, e_lo_tail) = e_lo.split_at(body);
-    let (e_hi_main, e_hi_tail) = e_hi.split_at(body);
-    let (w_lo_main, w_lo_tail) = w_lo.split_at(body);
-    let (w_hi_main, w_hi_tail) = w_hi.split_at(body);
-
-    let tile = |i: usize| {
-        let el: &[F; K] = e_lo_main[i..i + K].try_into().unwrap();
-        let eh: &[F; K] = e_hi_main[i..i + K].try_into().unwrap();
-        let wl: &[EFPacking; K] = w_lo_main[i..i + K].try_into().unwrap();
-        let wh: &[EFPacking; K] = w_hi_main[i..i + K].try_into().unwrap();
-        chunk_round_step::<F, EFPacking>(el, eh, wl, wh)
-    };
-
-    let n_tiles = body / K;
-    let main = if n >= PARALLEL_THRESHOLD {
-        (0..n_tiles)
-            .into_par_iter()
-            .fold(
-                || (EFPacking::ZERO, EFPacking::ZERO),
-                |acc, t| {
-                    let chunk = tile(t * K);
-                    (acc.0 + chunk.0, acc.1 + chunk.1)
-                },
-            )
+    let (c0_packed, c2_packed) = if num_elements < PARALLEL_THRESHOLD {
+        pol_0[..n / 2]
+            .iter()
+            .zip(pol_0[n / 2..].iter())
+            .zip(pol_1[..n / 2].iter().zip(pol_1[n / 2..].iter()))
+            .map(sumcheck_quadratic)
+            .fold((EFPacking::ZERO, EFPacking::ZERO), |(a0, a2), (b0, b2)| {
+                (a0 + b0, a2 + b2)
+            })
+    } else {
+        pol_0[..n / 2]
+            .par_iter()
+            .zip(pol_0[n / 2..].par_iter())
+            .zip(pol_1[..n / 2].par_iter().zip(pol_1[n / 2..].par_iter()))
+            .map(sumcheck_quadratic)
             .reduce(
                 || (EFPacking::ZERO, EFPacking::ZERO),
-                |(a0, a1), (b0, b1)| (a0 + b0, a1 + b1),
+                |(a0, a2), (b0, b2)| (a0 + b0, a2 + b2),
             )
-    } else {
-        (0..n_tiles).fold((EFPacking::ZERO, EFPacking::ZERO), |acc, t| {
-            let chunk = tile(t * K);
-            (acc.0 + chunk.0, acc.1 + chunk.1)
-        })
     };
-
-    let tail = e_lo_tail
-        .iter()
-        .zip(e_hi_tail.iter())
-        .zip(w_lo_tail.iter().zip(w_hi_tail.iter()))
-        .fold((EFPacking::ZERO, EFPacking::ZERO), |(a0, a2), ((&e0, &e1), (&w0, &w1))| {
-            (a0 + w0 * e0, a2 + (w1 - w0) * (e1 - e0))
-        });
-
-    let c0_packed = main.0 + tail.0;
-    let c2_packed = main.1 + tail.1;
 
     let c0 = decompose(c0_packed).into_iter().sum::<EF>();
     let c2 = decompose(c2_packed).into_iter().sum::<EF>();
