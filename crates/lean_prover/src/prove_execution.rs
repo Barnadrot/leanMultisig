@@ -110,7 +110,7 @@ pub fn prove_execution(
     // // TODO parrallelize
     let mut bytecode_acc = F::zero_vec(bytecode.padded_size());
     info_span!("Building bytecode access count").in_scope(|| {
-        for pc in traces[&Table::execution()].columns[COL_PC].iter() {
+        for pc in traces[&Table::execution()].columns[EXEC_COL_PC].iter() {
             bytecode_acc[pc.to_usize()] += F::ONE;
         }
     });

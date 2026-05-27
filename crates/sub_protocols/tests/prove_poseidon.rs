@@ -2,9 +2,8 @@ use std::time::Instant;
 
 use backend::*;
 use lean_vm::{
-    EF, ExtraDataForBuses, F, POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_FIRST, POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_SECOND,
-    POSEIDON_16_COL_INPUT_START, POSEIDON_16_COL_MULTIPLICITY, Poseidon16Precompile, fill_trace_poseidon_16,
-    num_cols_poseidon_16,
+    EF, ExtraDataForBuses, F, POSEIDON_COL_ADDR_LEFT_HI, POSEIDON_COL_ADDR_LEFT_LO, POSEIDON_COL_INPUT_START,
+    POSEIDON_COL_MULTIPLICITY, Poseidon16Precompile, fill_trace_poseidon_16, num_cols_poseidon_16,
 };
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use sub_protocols::{
@@ -28,12 +27,12 @@ fn prove_air_poseidon_16(log_n_rows: usize) {
     let mut rng = StdRng::seed_from_u64(0);
     let n_cols = num_cols_poseidon_16();
     let mut trace = vec![vec![F::ZERO; n_rows]; n_cols];
-    for t in trace.iter_mut().skip(POSEIDON_16_COL_INPUT_START).take(WIDTH) {
+    for t in trace.iter_mut().skip(POSEIDON_COL_INPUT_START).take(WIDTH) {
         *t = (0..n_rows).map(|_| rng.random()).collect();
     }
-    trace[POSEIDON_16_COL_MULTIPLICITY] = vec![F::ONE; n_rows];
-    trace[POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_FIRST] = vec![F::ZERO; n_rows];
-    trace[POSEIDON_16_COL_EFFECTIVE_INDEX_LEFT_SECOND] = vec![F::from_usize(HALF_DIGEST_LEN); n_rows];
+    trace[POSEIDON_COL_MULTIPLICITY] = vec![F::ONE; n_rows];
+    trace[POSEIDON_COL_ADDR_LEFT_LO] = vec![F::ZERO; n_rows];
+    trace[POSEIDON_COL_ADDR_LEFT_HI] = vec![F::from_usize(HALF_DIGEST_LEN); n_rows];
     fill_trace_poseidon_16(&mut trace);
 
     let air = Poseidon16Precompile::<false>;

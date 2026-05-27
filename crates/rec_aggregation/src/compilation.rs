@@ -259,7 +259,7 @@ fn build_replacements(log_inner_bytecode: usize, bytecode_zero_eval: F) -> BTree
         "LOG_GUEST_BYTECODE_LEN_PLACEHOLDER".to_string(),
         log_inner_bytecode.to_string(),
     );
-    replacements.insert("COL_PC_PLACEHOLDER".to_string(), COL_PC.to_string());
+    replacements.insert("COL_PC_PLACEHOLDER".to_string(), EXEC_COL_PC.to_string());
     let bytecode_point_n_vars = log_inner_bytecode + log2_ceil_usize(N_INSTRUCTION_COLUMNS);
     replacements.insert(
         "BYTECODE_SUMCHECK_PROOF_SIZE_PLACEHOLDER".to_string(),

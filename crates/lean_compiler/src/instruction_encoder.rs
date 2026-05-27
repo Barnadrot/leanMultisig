@@ -12,10 +12,10 @@ pub fn field_representation(instr: &Instruction) -> [F; N_INSTRUCTION_COLUMNS] {
         } => {
             match operation {
                 Operation::Add => {
-                    fields[instr_idx(COL_AUX)] = F::ONE; // ADD = P_1(AUX=1) = 1
+                    fields[instr_idx(EXEC_COL_AUX_1)] = F::ONE; // ADD = P_1(aux_1=1) = 1
                 }
                 Operation::Mul => {
-                    fields[instr_idx(COL_MUL)] = F::ONE;
+                    fields[instr_idx(EXEC_COL_FLAG_MUL)] = F::ONE;
                 }
             }
 
@@ -24,14 +24,14 @@ pub fn field_representation(instr: &Instruction) -> [F; N_INSTRUCTION_COLUMNS] {
             set_nu_c(&mut fields, arg_c);
         }
         Instruction::Deref { shift_0, shift_1, res } => {
-            // AUX=2: DEREF = P_2(AUX=2) = 1
-            fields[instr_idx(COL_AUX)] = F::TWO;
+            // aux_1=2: DEREF = P_2(aux_1=2) = 1
+            fields[instr_idx(EXEC_COL_AUX_1)] = F::TWO;
             // value_A = m[fp + shift_0]
-            fields[instr_idx(COL_FLAG_A)] = F::ZERO;
-            fields[instr_idx(COL_OPERAND_A)] = F::from_usize(*shift_0);
+            fields[instr_idx(EXEC_COL_FLAG_A)] = F::ZERO;
+            fields[instr_idx(EXEC_COL_OPERAND_A)] = F::from_usize(*shift_0);
             // addr_B = value_A + operand_B, flag_B=1 so standard addr_b constraint is vacuous
-            fields[instr_idx(COL_FLAG_B)] = F::ONE;
-            fields[instr_idx(COL_OPERAND_B)] = F::from_usize(*shift_1);
+            fields[instr_idx(EXEC_COL_FLAG_B)] = F::ONE;
+            fields[instr_idx(EXEC_COL_OPERAND_B)] = F::from_usize(*shift_1);
             // encodes the result via nu_C
             set_nu_c(&mut fields, res);
         }
@@ -41,7 +41,7 @@ pub fn field_representation(instr: &Instruction) -> [F; N_INSTRUCTION_COLUMNS] {
             dest,
             updated_fp,
         } => {
-            fields[instr_idx(COL_JUMP)] = F::ONE;
+            fields[instr_idx(EXEC_COL_FLAG_JUMP)] = F::ONE;
             set_nu_a(&mut fields, condition);
             set_nu_b(&mut fields, dest);
             set_nu_c(&mut fields, updated_fp);
@@ -54,24 +54,24 @@ pub fn field_representation(instr: &Instruction) -> [F; N_INSTRUCTION_COLUMNS] {
                     permute,
                 } => {
                     let flag_left = hardcoded_offset_left.is_some() as usize;
-                    let hardcoded_offset_left_val = hardcoded_offset_left.unwrap_or(0);
+                    let offset_left_val = hardcoded_offset_left.unwrap_or(0);
                     POSEIDON_DOMAINSEP_BASE
-                        + POSEIDON_PERMUTE_SHIFT * (*permute as usize)
-                        + POSEIDON_HALF_OUTPUT_SHIFT * (*half_output as usize)
-                        + POSEIDON_HARDCODED_LEFT_4_FLAG_SHIFT * flag_left
-                        + POSEIDON_HARDCODED_LEFT_4_OFFSET_SHIFT * hardcoded_offset_left_val
+                        + POSEIDON_FLAG_PERMUTE_SHIFT * (*permute as usize)
+                        + POSEIDON_FLAG_SHORT_SHIFT * (*half_output as usize)
+                        + POSEIDON_FLAG_LEFT_SHIFT * flag_left
+                        + POSEIDON_OFFSET_LEFT_SHIFT * offset_left_val
                 }
                 PrecompileCompTimeArgs::ExtensionOp { size, mode } => {
                     assert!(*size >= 1, "invalid extension_op size={size}");
                     mode.flag_encoding() + EXT_OP_LEN_MULTIPLIER * size
                 }
             };
-            fields[instr_idx(COL_PRECOMPILE_DOMAINSEP)] = F::from_usize(domainsep);
+            fields[instr_idx(EXEC_COL_AUX_2)] = F::from_usize(domainsep);
             match (precompile.arg_0, precompile.arg_1) {
                 (MemOrFpOrConstant::FpRelative { offset: off_a }, MemOrFpOrConstant::FpRelative { offset: off_b }) => {
-                    fields[instr_idx(COL_FLAG_AB_FP)] = F::ONE;
-                    fields[instr_idx(COL_OPERAND_A)] = F::from_usize(off_a);
-                    fields[instr_idx(COL_OPERAND_B)] = F::from_usize(off_b);
+                    fields[instr_idx(EXEC_COL_FLAG_AB_FP)] = F::ONE;
+                    fields[instr_idx(EXEC_COL_OPERAND_A)] = F::from_usize(off_a);
+                    fields[instr_idx(EXEC_COL_OPERAND_B)] = F::from_usize(off_b);
                 }
                 (a, b) => {
                     set_nu_a(&mut fields, &a.as_mem_or_constant());
@@ -87,12 +87,12 @@ pub fn field_representation(instr: &Instruction) -> [F; N_INSTRUCTION_COLUMNS] {
 fn set_nu_a(fields: &mut [F; N_INSTRUCTION_COLUMNS], a: &MemOrConstant) {
     match a {
         MemOrConstant::Constant(cst) => {
-            fields[instr_idx(COL_FLAG_A)] = F::ONE;
-            fields[instr_idx(COL_OPERAND_A)] = *cst;
+            fields[instr_idx(EXEC_COL_FLAG_A)] = F::ONE;
+            fields[instr_idx(EXEC_COL_OPERAND_A)] = *cst;
         }
         MemOrConstant::MemoryAfterFp { offset } => {
-            fields[instr_idx(COL_FLAG_A)] = F::ZERO;
-            fields[instr_idx(COL_OPERAND_A)] = F::from_usize(*offset);
+            fields[instr_idx(EXEC_COL_FLAG_A)] = F::ZERO;
+            fields[instr_idx(EXEC_COL_OPERAND_A)] = F::from_usize(*offset);
         }
     }
 }
@@ -100,12 +100,12 @@ fn set_nu_a(fields: &mut [F; N_INSTRUCTION_COLUMNS], a: &MemOrConstant) {
 fn set_nu_b(fields: &mut [F; N_INSTRUCTION_COLUMNS], b: &MemOrConstant) {
     match b {
         MemOrConstant::Constant(cst) => {
-            fields[instr_idx(COL_FLAG_B)] = F::ONE;
-            fields[instr_idx(COL_OPERAND_B)] = *cst;
+            fields[instr_idx(EXEC_COL_FLAG_B)] = F::ONE;
+            fields[instr_idx(EXEC_COL_OPERAND_B)] = *cst;
         }
         MemOrConstant::MemoryAfterFp { offset } => {
-            fields[instr_idx(COL_FLAG_B)] = F::ZERO;
-            fields[instr_idx(COL_OPERAND_B)] = F::from_usize(*offset);
+            fields[instr_idx(EXEC_COL_FLAG_B)] = F::ZERO;
+            fields[instr_idx(EXEC_COL_OPERAND_B)] = F::from_usize(*offset);
         }
     }
 }
@@ -114,16 +114,16 @@ fn set_nu_b(fields: &mut [F; N_INSTRUCTION_COLUMNS], b: &MemOrConstant) {
 fn set_nu_c(fields: &mut [F; N_INSTRUCTION_COLUMNS], c: &MemOrFpOrConstant) {
     match c {
         MemOrFpOrConstant::FpRelative { offset } => {
-            fields[instr_idx(COL_FLAG_C_FP)] = F::ONE;
-            fields[instr_idx(COL_OPERAND_C)] = F::from_usize(*offset);
+            fields[instr_idx(EXEC_COL_FLAG_C_FP)] = F::ONE;
+            fields[instr_idx(EXEC_COL_OPERAND_C)] = F::from_usize(*offset);
         }
         MemOrFpOrConstant::MemoryAfterFp { offset } => {
-            fields[instr_idx(COL_FLAG_C)] = F::ZERO;
-            fields[instr_idx(COL_OPERAND_C)] = F::from_usize(*offset);
+            fields[instr_idx(EXEC_COL_FLAG_C)] = F::ZERO;
+            fields[instr_idx(EXEC_COL_OPERAND_C)] = F::from_usize(*offset);
         }
         MemOrFpOrConstant::Constant(cst) => {
-            fields[instr_idx(COL_FLAG_C)] = F::ONE;
-            fields[instr_idx(COL_OPERAND_C)] = *cst;
+            fields[instr_idx(EXEC_COL_FLAG_C)] = F::ONE;
+            fields[instr_idx(EXEC_COL_OPERAND_C)] = *cst;
         }
     }
 }

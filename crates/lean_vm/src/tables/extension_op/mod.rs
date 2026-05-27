@@ -6,26 +6,26 @@ use air::*;
 mod exec;
 pub use exec::fill_trace_extension_op;
 
-// Domainsep encoding: see `tables/mod.rs`.
-pub(crate) const EXT_OP_FLAG_IS_BE: usize = 4;
+// aux_2 encoding: see `tables/mod.rs`.
+pub(crate) const EXT_OP_FLAG_BE: usize = 4;
 pub(crate) const EXT_OP_FLAG_ADD: usize = 8;
-pub(crate) const EXT_OP_FLAG_MUL: usize = 16;
-pub(crate) const EXT_OP_FLAG_POLY_EQ: usize = 32;
+pub(crate) const EXT_OP_FLAG_DOT_PRODUCT: usize = 16;
+pub(crate) const EXT_OP_FLAG_EQ: usize = 32;
 pub const EXT_OP_LEN_MULTIPLIER: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ExtensionOp {
     Add,
-    Mul,
-    PolyEq,
+    DotProduct,
+    Eq,
 }
 
 impl ExtensionOp {
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "add" => Some(Self::Add),
-            "dot_product" => Some(Self::Mul),
-            "poly_eq" => Some(Self::PolyEq),
+            "dot_product" => Some(Self::DotProduct),
+            "poly_eq" => Some(Self::Eq),
             _ => None,
         }
     }
@@ -33,8 +33,8 @@ impl ExtensionOp {
     pub(crate) const fn flag(self) -> usize {
         match self {
             Self::Add => EXT_OP_FLAG_ADD,
-            Self::Mul => EXT_OP_FLAG_MUL,
-            Self::PolyEq => EXT_OP_FLAG_POLY_EQ,
+            Self::DotProduct => EXT_OP_FLAG_DOT_PRODUCT,
+            Self::Eq => EXT_OP_FLAG_EQ,
         }
     }
 }
@@ -42,35 +42,35 @@ impl ExtensionOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExtensionOpMode {
     pub op: ExtensionOp,
-    pub is_be: bool,
+    pub flag_be: bool,
 }
 
 impl ExtensionOpMode {
     pub fn from_name(name: &str) -> Option<Self> {
         let (prefix, suffix) = name.rsplit_once('_')?;
-        let is_be = match suffix {
+        let flag_be = match suffix {
             "ee" => false,
             "be" => true,
             _ => return None,
         };
         Some(Self {
             op: ExtensionOp::from_name(prefix)?,
-            is_be,
+            flag_be,
         })
     }
 
     pub const fn flag_encoding(self) -> usize {
-        self.op.flag() + self.is_be as usize * EXT_OP_FLAG_IS_BE
+        self.op.flag() + self.flag_be as usize * EXT_OP_FLAG_BE
     }
 
     pub const fn name(self) -> &'static str {
-        match (self.op, self.is_be) {
+        match (self.op, self.flag_be) {
             (ExtensionOp::Add, false) => "add_ee",
             (ExtensionOp::Add, true) => "add_be",
-            (ExtensionOp::Mul, false) => "dot_product_ee",
-            (ExtensionOp::Mul, true) => "dot_product_be",
-            (ExtensionOp::PolyEq, false) => "poly_eq_ee",
-            (ExtensionOp::PolyEq, true) => "poly_eq_be",
+            (ExtensionOp::DotProduct, false) => "dot_product_ee",
+            (ExtensionOp::DotProduct, true) => "dot_product_be",
+            (ExtensionOp::Eq, false) => "poly_eq_ee",
+            (ExtensionOp::Eq, true) => "poly_eq_be",
         }
     }
 }
@@ -98,9 +98,9 @@ impl<const BUS: bool> TableT for ExtensionOpPrecompile<BUS> {
                 BusData::Column(COL_IDX_RES),
             ],
         }];
-        buses.extend(memory_lookups_consecutive(COL_IDX_A, COL_VA, DIMENSION));
-        buses.extend(memory_lookups_consecutive(COL_IDX_B, COL_VB, DIMENSION));
-        buses.extend(memory_lookups_consecutive(COL_IDX_RES, COL_VRES, DIMENSION));
+        buses.extend(memory_lookups_consecutive(COL_IDX_A, COL_V_A, DIMENSION));
+        buses.extend(memory_lookups_consecutive(COL_IDX_B, COL_V_B, DIMENSION));
+        buses.extend(memory_lookups_consecutive(COL_IDX_RES, COL_RES, DIMENSION));
         buses
     }
 
@@ -110,7 +110,7 @@ impl<const BUS: bool> TableT for ExtensionOpPrecompile<BUS> {
 
     fn padding_row(&self, zero_vec_ptr: usize, _null_hash_ptr: usize, _ending_pc: usize) -> Vec<F> {
         let mut row = vec![F::ZERO; self.n_columns_total()];
-        row[COL_START] = F::ONE;
+        row[COL_FLAG_START] = F::ONE;
         row[COL_LEN] = F::ONE;
         row[COL_DOMAINSEP_EXTENSION_OP] = F::from_usize(EXT_OP_LEN_MULTIPLIER);
         row[COL_IDX_A] = F::from_usize(zero_vec_ptr);
@@ -132,6 +132,6 @@ impl<const BUS: bool> TableT for ExtensionOpPrecompile<BUS> {
             unreachable!("ExtensionOp table called with non-ExtensionOp args");
         };
         let trace = ctx.traces.get_mut(&self.table()).unwrap();
-        exec_multi_row(arg_a, arg_b, arg_c, size, mode.is_be, mode.op, ctx.memory, trace)
+        exec_multi_row(arg_a, arg_b, arg_c, size, mode.flag_be, mode.op, ctx.memory, trace)
     }
 }

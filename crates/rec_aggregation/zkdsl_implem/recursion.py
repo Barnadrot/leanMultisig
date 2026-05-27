@@ -38,7 +38,7 @@ N_INSTRUCTION_COLUMNS = N_INSTRUCTION_COLUMNS_PLACEHOLDER
 N_COMMITTED_EXEC_COLUMNS = N_COMMITTED_EXEC_COLUMNS_PLACEHOLDER
 
 LOG_GUEST_BYTECODE_LEN = LOG_GUEST_BYTECODE_LEN_PLACEHOLDER
-COL_PC = COL_PC_PLACEHOLDER
+EXEC_COL_PC = COL_PC_PLACEHOLDER
 TOTAL_WHIR_STATEMENTS = TOTAL_WHIR_STATEMENTS_PLACEHOLDER
 STARTING_PC = STARTING_PC_PLACEHOLDER
 ENDING_PC = ENDING_PC_PLACEHOLDER
@@ -491,7 +491,7 @@ def recursion(inner_public_memory, initial_fiat_shamir_cap):
 
         if table_index == EXECUTION_TABLE_INDEX:
             prefix_pc_start = multilinear_location_prefix(
-                table_offset + COL_PC * two_exp(log_n_cycles),
+                table_offset + EXEC_COL_PC * two_exp(log_n_cycles),
                 stacked_n_vars,
                 folding_randomness_global,
             )
@@ -499,7 +499,7 @@ def recursion(inner_public_memory, initial_fiat_shamir_cap):
             curr_randomness += DIM
 
             prefix_pc_end = multilinear_location_prefix(
-                table_offset + (COL_PC + 1) * two_exp(log_n_cycles) - 1,
+                table_offset + (EXEC_COL_PC + 1) * two_exp(log_n_cycles) - 1,
                 stacked_n_vars,
                 folding_randomness_global,
             )

@@ -47,10 +47,10 @@ N_VARS_TO_SEND_GKR_COEFFS = 5
 N_RUNTIME_COLUMNS, N_INSTRUCTION_COLUMNS = 8, 12
 
 LOGUP_MEMORY_DOMAINSEP, LOGUP_BYTECODE_DOMAINSEP = 1, 2
-POSEIDON_DISCRIMINATOR_BASE = 3  # odd ≥ 3
-POSEIDON_PERMUTE_SHIFT, POSEIDON_HALF_OUTPUT_SHIFT = 1 << 1, 1 << 2
-POSEIDON_HARDCODED_LEFT_4_FLAG_SHIFT, POSEIDON_HARDCODED_LEFT_4_OFFSET_SHIFT = 1 << 3, 1 << 4
-EXT_OP_FLAG_IS_BE, EXT_OP_FLAG_ADD, EXT_OP_FLAG_MUL, EXT_OP_FLAG_POLY_EQ, EXT_OP_LEN_MULTIPLIER = 4, 8, 16, 32, 64
+POSEIDON_DOMAINSEP_BASE = 3  # odd ≥ 3
+POSEIDON_FLAG_PERMUTE_SHIFT, POSEIDON_FLAG_SHORT_SHIFT = 1 << 1, 1 << 2
+POSEIDON_FLAG_LEFT_SHIFT, POSEIDON_OFFSET_LEFT_SHIFT = 1 << 3, 1 << 4
+EXT_OP_FLAG_BE, EXT_OP_FLAG_ADD, EXT_OP_FLAG_DOT_PRODUCT, EXT_OP_FLAG_EQ, EXT_OP_LEN_MULTIPLIER = 4, 8, 16, 32, 64
 
 STARTING_PC = 0  # every program starts at PC = 0, and ends at PC = len(bytecode) - 1
 
@@ -576,9 +576,9 @@ def verify_gkr_quotient(fiat_shamir: FiatShamir, n_vars: int) -> tuple[EF, list[
     return quotient, point, claim_num, claim_den
 
 
-def finger_print(discriminator: Fp | EF, data: Sequence[EF], beta_eq: Sequence[EF]) -> EF:
+def finger_print(domainsep: Fp | EF, data: Sequence[EF], beta_eq: Sequence[EF]) -> EF:
     assert len(beta_eq) > len(data)
-    return dot_product(beta_eq, data) + beta_eq[-1] * discriminator
+    return dot_product(beta_eq, data) + beta_eq[-1] * domainsep
 
 
 def sort_tables_by_height(tables: Sequence[Table], heights: dict[str, int]) -> list[tuple[Table, int]]:
@@ -751,20 +751,20 @@ def eval_precompile_bus_virtual_columns(
     folder: "ConstraintFolder",
     logup_beta_eq: list[EF],
     multiplicity: EF,
-    discriminator: EF,
+    domainsep: EF,
     data: Sequence[EF],
 ) -> None:
     folder.assert_zero(multiplicity)
-    folder.assert_zero(finger_print(discriminator, data, logup_beta_eq))
+    folder.assert_zero(finger_print(domainsep, data, logup_beta_eq))
 
 
 def eval_air_execution(folder: ConstraintFolder, logup_beta_eq: list[EF]) -> None:
     c, n = folder.flat, folder.next
     (pc, fp, addr_a, addr_b, addr_c, value_a, value_b, value_c, operand_a, operand_b, operand_c,
-     flag_a, flag_b, flag_c, flag_c_fp, flag_ab_fp, mul, jump, aux, discriminator) = (c[k] for k in (
+     flag_a, flag_b, flag_c, flag_c_fp, flag_ab_fp, flag_mul, flag_jump, aux_1, aux_2) = (c[k] for k in (
         "pc", "fp", "addr_a", "addr_b", "addr_c", "value_a", "value_b", "value_c",
         "operand_a", "operand_b", "operand_c", "flag_a", "flag_b", "flag_c", "flag_c_fp",
-        "flag_ab_fp", "mul", "jump", "aux", "discriminator"))  # fmt: skip
+        "flag_ab_fp", "flag_mul", "flag_jump", "aux_1", "aux_2"))  # fmt: skip
     pc_shift, fp_shift = n["pc"], n["fp"]
 
     # nu_x = flag·operand + (1 − flag − flag_ab_fp)·value + flag_ab_fp·(fp + operand)
@@ -775,20 +775,20 @@ def eval_air_execution(folder: ConstraintFolder, logup_beta_eq: list[EF]) -> Non
     nu_b = flag_b * operand_b + nfb * value_b + flag_ab_fp * (fp + operand_b)
     nu_c = flag_c * operand_c + nfc * value_c + flag_c_fp * (fp + operand_c)
 
-    # aux ∈ {0,1,2}: 0=nothing, 1=add, 2=deref.
-    add = aux * 2 - aux * aux
-    deref = aux * (aux - ONE) * ((P + 1) // 2)  # (P+1)/2 is the inverse of 2 mod P
-    is_precompile = ONE - add - mul - deref - jump
+    # aux_1 ∈ {0,1,2}: 0=nothing, 1=add, 2=deref.
+    flag_add = aux_1 * 2 - aux_1 * aux_1
+    flag_deref = aux_1 * (aux_1 - ONE) * ((P + 1) // 2)  # (P+1)/2 is the inverse of 2 mod P
+    flag_precompile = ONE - flag_add - flag_mul - flag_deref - flag_jump
 
-    eval_precompile_bus_virtual_columns(folder, logup_beta_eq, is_precompile, discriminator, [nu_a, nu_b, nu_c])
+    eval_precompile_bus_virtual_columns(folder, logup_beta_eq, flag_precompile, aux_2, [nu_a, nu_b, nu_c])
     folder.assert_zero(nfa * (addr_a - (fp + operand_a)))
     folder.assert_zero(nfb * (addr_b - (fp + operand_b)))
     folder.assert_zero(nfc * (addr_c - (fp + operand_c)))
-    folder.assert_zero(add * (nu_b - (nu_a + nu_c)))
-    folder.assert_zero(mul * (nu_b - nu_a * nu_c))
-    folder.assert_zero(deref * (addr_b - (value_a + operand_b)))
-    folder.assert_zero(deref * (value_b - nu_c))
-    jc = jump * nu_a
+    folder.assert_zero(flag_add * (nu_b - (nu_a + nu_c)))
+    folder.assert_zero(flag_mul * (nu_b - nu_a * nu_c))
+    folder.assert_zero(flag_deref * (addr_b - (value_a + operand_b)))
+    folder.assert_zero(flag_deref * (value_b - nu_c))
+    jc = flag_jump * nu_a
     folder.assert_zero(jc * (nu_a - ONE))
     folder.assert_zero(jc * (pc_shift - nu_b))
     folder.assert_zero(jc * (fp_shift - nu_c))
@@ -799,60 +799,60 @@ def eval_air_execution(folder: ConstraintFolder, logup_beta_eq: list[EF]) -> Non
 
 def eval_air_extension(folder: ConstraintFolder, logup_beta_eq: list[EF]) -> None:
     c, n = folder.flat, folder.next
-    is_be, start, len_col = c["is_be"], c["start"], c["len"]
-    flag_add, flag_mul, flag_poly_eq = c["flag_add"], c["flag_mul"], c["flag_poly_eq"]
-    idx_a, idx_b, idx_res = c["idx_a"], c["idx_b"], c["idx_res"]
-    comp, va, vb, vres = c.arr("comp", 5), c.arr("va", 5), c.arr("vb", 5), c.arr("vres", 5)
-    is_be_sh, start_sh, len_sh = n["is_be"], n["start"], n["len"]
-    flag_add_sh, flag_mul_sh, flag_poly_eq_sh = n["flag_add"], n["flag_mul"], n["flag_poly_eq"]
+    flag_be, flag_start, len_col = c["flag_be"], c["flag_start"], c["len"]
+    flag_add, flag_dot_product, flag_eq = c["flag_add"], c["flag_dot_product"], c["flag_eq"]
+    idx_a, idx_b, idx_r = c["idx_a"], c["idx_b"], c["idx_r"]
+    acc, v_a, v_b, res = c.arr("acc", 5), c.arr("v_a", 5), c.arr("v_b", 5), c.arr("res", 5)
+    flag_be_sh, flag_start_sh, len_sh = n["flag_be"], n["flag_start"], n["len"]
+    flag_add_sh, flag_dot_product_sh, flag_eq_sh = n["flag_add"], n["flag_dot_product"], n["flag_eq"]
     idx_a_sh, idx_b_sh = n["idx_a"], n["idx_b"]
-    comp_sh = n.arr("comp", 5)
+    acc_sh = n.arr("acc", 5)
 
-    aux = (
-        is_be * EXT_OP_FLAG_IS_BE
+    aux_2 = (
+        flag_be * EXT_OP_FLAG_BE
         + flag_add * EXT_OP_FLAG_ADD
-        + flag_mul * EXT_OP_FLAG_MUL
-        + flag_poly_eq * EXT_OP_FLAG_POLY_EQ
+        + flag_dot_product * EXT_OP_FLAG_DOT_PRODUCT
+        + flag_eq * EXT_OP_FLAG_EQ
         + len_col * EXT_OP_LEN_MULTIPLIER
     )
     eval_precompile_bus_virtual_columns(
-        folder, logup_beta_eq, start * (flag_add + flag_mul + flag_poly_eq), aux, [idx_a, idx_b, idx_res]
+        folder, logup_beta_eq, flag_start * (flag_add + flag_dot_product + flag_eq), aux_2, [idx_a, idx_b, idx_r]
     )
 
-    for x in (is_be, start, flag_add, flag_mul, flag_poly_eq):
+    for x in (flag_be, flag_start, flag_add, flag_dot_product, flag_eq):
         folder.assert_bool(x)
 
-    is_ee, not_start_sh = ONE - is_be, ONE - start_sh
-    va_x = [va[0]] + [va[k] * is_ee for k in range(1, 5)]
-    comp_tail = [comp_sh[k] * not_start_sh for k in range(5)]
-    va_vb = quintic_mul(va_x, vb, ZERO)
+    is_ee, not_start_sh = ONE - flag_be, ONE - flag_start_sh
+    v_a_tilde = [v_a[0]] + [v_a[k] * is_ee for k in range(1, 5)]
+    acc_tail = [acc_sh[k] * not_start_sh for k in range(5)]
+    v_a_v_b = quintic_mul(v_a_tilde, v_b, ZERO)
 
     for k in range(5):
-        folder.assert_zero((comp[k] - (va_x[k] + vb[k] + comp_tail[k])) * flag_add)
+        folder.assert_zero((acc[k] - (v_a_tilde[k] + v_b[k] + acc_tail[k])) * flag_add)
     for k in range(5):
-        folder.assert_zero((comp[k] - (va_vb[k] + comp_tail[k])) * flag_mul)
+        folder.assert_zero((acc[k] - (v_a_v_b[k] + acc_tail[k])) * flag_dot_product)
 
-    # poly_eq: comp ← (2·va·vb − va − vb + 1) · comp_sh_or_one.
-    poly_eq_val = [2 * va_vb[k] - va_x[k] - vb[k] + (ONE if k == 0 else ZERO) for k in range(5)]
-    comp_sh_or_one = [comp_sh[0] * not_start_sh + start_sh] + [comp_sh[k] * not_start_sh for k in range(1, 5)]
-    poly_eq_result = quintic_mul(poly_eq_val, comp_sh_or_one, ZERO)
+    # eq: acc ← (2·v_a·v_b − v_a − v_b + 1) · (acc_tail or 1 at group end).
+    e_eq = [2 * v_a_v_b[k] - v_a_tilde[k] - v_b[k] + (ONE if k == 0 else ZERO) for k in range(5)]
+    acc_tail_or_one = [acc_sh[0] * not_start_sh + flag_start_sh] + [acc_sh[k] * not_start_sh for k in range(1, 5)]
+    eq_result = quintic_mul(e_eq, acc_tail_or_one, ZERO)
     for k in range(5):
-        folder.assert_zero((comp[k] - poly_eq_result[k]) * flag_poly_eq)
+        folder.assert_zero((acc[k] - eq_result[k]) * flag_eq)
     for k in range(5):
-        folder.assert_zero((comp[k] - vres[k]) * start)
+        folder.assert_zero((acc[k] - res[k]) * flag_start)
 
     for x, y in [
         (len_col, len_sh + ONE),
-        (is_be, is_be_sh),
+        (flag_be, flag_be_sh),
         (flag_add, flag_add_sh),
-        (flag_mul, flag_mul_sh),
-        (flag_poly_eq, flag_poly_eq_sh),
+        (flag_dot_product, flag_dot_product_sh),
+        (flag_eq, flag_eq_sh),
     ]:
         folder.assert_zero(not_start_sh * (x - y))
 
-    folder.assert_zero(not_start_sh * (idx_a_sh - idx_a - (is_be + is_ee * 5)))
+    folder.assert_zero(not_start_sh * (idx_a_sh - idx_a - (flag_be + is_ee * 5)))
     folder.assert_zero(not_start_sh * (idx_b_sh - idx_b - 5))
-    folder.assert_zero(start_sh * (len_col - ONE))
+    folder.assert_zero(flag_start_sh * (len_col - ONE))
 
 
 def _full_round(state: list[EF], rc1: list[Fp], rc2: list[Fp]) -> list[EF]:
@@ -868,36 +868,36 @@ def eval_air_poseidon16(folder: ConstraintFolder, logup_beta_eq: list[EF]) -> No
     half_pairs = POSEIDON_HALF_FULL_ROUNDS // 2
 
     multiplicity = c["multiplicity"]
-    index_b, index_res = c["index_b"], c["index_res"]
-    flag_half_output, flag_hardcoded_left = c["flag_half_output"], c["flag_hardcoded_left"]
-    offset_hardcoded_left = c["offset_hardcoded_left"]
-    eff_idx_left_first, eff_idx_left_second = c["eff_idx_left_first"], c["eff_idx_left_second"]
+    nu_b, nu_c = c["nu_b"], c["nu_c"]
+    flag_short, flag_left = c["flag_short"], c["flag_left"]
+    offset_left = c["offset_left"]
+    addr_left_lo, addr_left_hi = c["addr_left_lo"], c["addr_left_hi"]
     flag_permute = c["flag_permute"]
     inputs = c.arr("input", POSEIDON_WIDTH)
     beginning_full_rounds = [c.arr(f"begin_r{r}", POSEIDON_WIDTH) for r in range(half_pairs)]
     partial_cols = c.arr("partial", POSEIDON_PARTIAL_ROUNDS)
     ending_full_rounds = [c.arr(f"end_r{r}", POSEIDON_WIDTH) for r in range(half_pairs - 1)]
-    outputs_left = c.arr("out_left", POSEIDON_WIDTH // 2)
-    outputs_right = c.arr("out_right", POSEIDON_WIDTH // 2)
+    out_lo = c.arr("out_lo", POSEIDON_WIDTH // 2)
+    out_hi = c.arr("out_hi", POSEIDON_WIDTH // 2)
 
-    discriminator = (
-        POSEIDON_DISCRIMINATOR_BASE
-        + flag_permute * POSEIDON_PERMUTE_SHIFT
-        + flag_half_output * POSEIDON_HALF_OUTPUT_SHIFT
-        + flag_hardcoded_left * POSEIDON_HARDCODED_LEFT_4_FLAG_SHIFT
-        + flag_hardcoded_left * offset_hardcoded_left * POSEIDON_HARDCODED_LEFT_4_OFFSET_SHIFT
+    domainsep = (
+        POSEIDON_DOMAINSEP_BASE
+        + flag_permute * POSEIDON_FLAG_PERMUTE_SHIFT
+        + flag_short * POSEIDON_FLAG_SHORT_SHIFT
+        + flag_left * POSEIDON_FLAG_LEFT_SHIFT
+        + flag_left * offset_left * POSEIDON_OFFSET_LEFT_SHIFT
     )
-    not_hcl = ONE - flag_hardcoded_left
-    index_a = eff_idx_left_second - not_hcl * (DIGEST_ELEMS // 2)
+    not_flag_left = ONE - flag_left
+    nu_a = addr_left_hi - not_flag_left * (DIGEST_ELEMS // 2)
 
     eval_precompile_bus_virtual_columns(
-        folder, logup_beta_eq, multiplicity, discriminator, [index_a, index_b, index_res]
+        folder, logup_beta_eq, multiplicity, domainsep, [nu_a, nu_b, nu_c]
     )
-    for f in (multiplicity, flag_half_output, flag_hardcoded_left, flag_permute):
+    for f in (multiplicity, flag_short, flag_left, flag_permute):
         folder.assert_bool(f)
-    folder.assert_zero(flag_permute * (flag_half_output + flag_hardcoded_left))
-    folder.assert_zero(flag_hardcoded_left * (offset_hardcoded_left - eff_idx_left_first))
-    folder.assert_zero(not_hcl * (index_a - eff_idx_left_first))
+    folder.assert_zero(flag_permute * (flag_short + flag_left))
+    folder.assert_zero(flag_left * (offset_left - addr_left_lo))
+    folder.assert_zero(not_flag_left * (nu_a - addr_left_lo))
 
     # --- Poseidon1-16 permutation AIR: each committed `post` row pins the intermediate
     # state then re-binds it, capping polynomial degree across the long round sequence.
@@ -932,41 +932,41 @@ def eval_air_poseidon16(folder: ConstraintFolder, logup_beta_eq: list[EF]) -> No
             folder.assert_eq(state[i], post)
             state[i] = post
 
-    # Last full round: compression mode adds `inputs` back (gated by flag_half_output for lanes 4..8);
+    # Last full round: compression mode adds `inputs` back (gated by flag_short for lanes 4..8);
     # permute mode (flag_permute=1) outputs raw state.
     last = 2 * (half_pairs - 1)
     state = _full_round(state, POSEIDON_AIR_FINAL_CONSTANTS[last], POSEIDON_AIR_FINAL_CONSTANTS[last + 1])
     not_permute = ONE - flag_permute
-    compression_last4 = not_permute - flag_half_output
+    compression_last4 = not_permute - flag_short
     for i in range(POSEIDON_WIDTH // 2):
         gate = not_permute if i < (DIGEST_ELEMS // 2) else compression_last4
-        folder.assert_zero(gate * (state[i] + inputs[i] - outputs_left[i]))
-        folder.assert_zero(flag_permute * (state[i] - outputs_left[i]))
-        folder.assert_zero(flag_permute * (state[i + POSEIDON_WIDTH // 2] - outputs_right[i]))
+        folder.assert_zero(gate * (state[i] + inputs[i] - out_lo[i]))
+        folder.assert_zero(flag_permute * (state[i] - out_lo[i]))
+        folder.assert_zero(flag_permute * (state[i + POSEIDON_WIDTH // 2] - out_hi[i]))
 
 
 EXECUTION_COLUMNS = (
     "pc", "fp", "addr_a", "addr_b", "addr_c", "value_a", "value_b", "value_c", # 8 runtime cols
-    "operand_a", "operand_b", "operand_c", "flag_a", "flag_b", "flag_c", "flag_c_fp", "flag_ab_fp", "mul", "jump", "aux", "discriminator", # 12 instruction cols.
+    "operand_a", "operand_b", "operand_c", "flag_a", "flag_b", "flag_c", "flag_c_fp", "flag_ab_fp", "flag_mul", "flag_jump", "aux_1", "aux_2", # 12 instruction cols.
 )  # fmt: skip
 
 EXTENSION_COLUMNS = (
-    "is_be", "start", "len", "flag_add", "flag_mul", "flag_poly_eq", "idx_a", "idx_b",
-    *(f"comp_{i}" for i in range(5)),
-    "idx_res",
-    *(f"va_{i}" for i in range(5)),
-    *(f"vb_{i}" for i in range(5)),
-    *(f"vres_{i}" for i in range(5)),
+    "flag_be", "flag_start", "len", "flag_add", "flag_dot_product", "flag_eq", "idx_a", "idx_b",
+    *(f"acc_{i}" for i in range(5)),
+    "idx_r",
+    *(f"v_a_{i}" for i in range(5)),
+    *(f"v_b_{i}" for i in range(5)),
+    *(f"res_{i}" for i in range(5)),
 )  # fmt: skip
 
 POSEIDON_COLUMNS = (
-    "multiplicity", "index_b", "index_res", "flag_half_output", "flag_hardcoded_left", "offset_hardcoded_left", "eff_idx_left_first", "eff_idx_left_second", "flag_permute",
+    "multiplicity", "nu_b", "nu_c", "flag_short", "flag_left", "offset_left", "addr_left_lo", "addr_left_hi", "flag_permute",
     *(f"input_{i}" for i in range(POSEIDON_WIDTH)),
     *(f"begin_r{r}_{i}" for r in range(POSEIDON_HALF_FULL_ROUNDS // 2) for i in range(POSEIDON_WIDTH)),
     *(f"partial_{i}" for i in range(POSEIDON_PARTIAL_ROUNDS)),
     *(f"end_r{r}_{i}" for r in range(POSEIDON_HALF_FULL_ROUNDS // 2 - 1) for i in range(POSEIDON_WIDTH)),
-    *(f"out_left_{i}" for i in range(POSEIDON_WIDTH // 2)),
-    *(f"out_right_{i}" for i in range(POSEIDON_WIDTH // 2)),
+    *(f"out_lo_{i}" for i in range(POSEIDON_WIDTH // 2)),
+    *(f"out_hi_{i}" for i in range(POSEIDON_WIDTH // 2)),
 )  # fmt: skip
 
 TABLES = [
@@ -991,9 +991,9 @@ TABLES = [
         columns=EXTENSION_COLUMNS,
         buses=(
             (BusInteraction.PRECOMPILE, BusDirection.PULL),
-            (BusInteraction.MEMORY, "idx_a", "va_0", 5),
-            (BusInteraction.MEMORY, "idx_b", "vb_0", 5),
-            (BusInteraction.MEMORY, "idx_res", "vres_0", 5),
+            (BusInteraction.MEMORY, "idx_a", "v_a_0", 5),
+            (BusInteraction.MEMORY, "idx_b", "v_b_0", 5),
+            (BusInteraction.MEMORY, "idx_r", "res_0", 5),
         ),
         air_degree=6,
         n_constraints=35,
@@ -1006,10 +1006,10 @@ TABLES = [
         columns=POSEIDON_COLUMNS,
         buses=(
             (BusInteraction.PRECOMPILE, BusDirection.PULL),
-            (BusInteraction.MEMORY, "eff_idx_left_first", "input_0", 4),
-            (BusInteraction.MEMORY, "eff_idx_left_second", "input_4", 4),
-            (BusInteraction.MEMORY, "index_b", "input_8", 8),
-            (BusInteraction.MEMORY, "index_res", "out_left_0", 16),
+            (BusInteraction.MEMORY, "addr_left_lo", "input_0", 4),
+            (BusInteraction.MEMORY, "addr_left_hi", "input_4", 4),
+            (BusInteraction.MEMORY, "nu_b", "input_8", 8),
+            (BusInteraction.MEMORY, "nu_c", "out_lo_0", 16),
         ),
         air_degree=10,
         n_constraints=101,
