@@ -16,7 +16,9 @@ use crate::bytecode_claims::reduce_bytecode_claims;
 use crate::compilation::{
     BYTECODE_CLAIM_OFFSET, MAX_RECURSIONS, PREAMBLE_MEMORY_LEN, TYPE2_FLAG, get_aggregation_bytecode,
 };
-use crate::type_1_aggregation::{TypeOneInfo, TypeOneMultiSignature, extract_merkle_hint_blobs, verify_type_1};
+use crate::type_1_aggregation::{
+    TypeOneInfo, TypeOneMultiSignature, check_type_one_pubkeys, extract_merkle_hint_blobs, verify_type_1,
+};
 use crate::verify_inner;
 
 /// A bundle of `n` type-1 multi-signatures with potentially distinct (message, slot) per component, attested by a single snark.
@@ -169,6 +171,9 @@ pub fn merge_many_type_1(
 pub fn verify_type_2(sig: &TypeTwoMultiSignature) -> Result<InnerVerified, ProofError> {
     if sig.info.is_empty() || sig.info.len() > MAX_RECURSIONS {
         return Err(ProofError::InvalidProof);
+    }
+    for info in &sig.info {
+        check_type_one_pubkeys(&info.pubkeys).map_err(|_| ProofError::InvalidProof)?;
     }
     let digests = sig
         .info
