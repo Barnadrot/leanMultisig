@@ -237,6 +237,17 @@ def main():
 }
 
 #[test]
+fn test_reject_undefined_array_assignment_target() {
+    let program = r#"
+def main():
+    arr[0] = 1
+    return
+"#;
+    let res = try_compile_program(&ProgramSource::Raw(program.to_string()));
+    assert!(res.is_err(), "undefined array base must be rejected at compile time");
+}
+
+#[test]
 fn test_reject_dead_code_after_return() {
     let program = r#"
 def main():
