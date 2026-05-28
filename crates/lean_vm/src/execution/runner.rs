@@ -453,6 +453,8 @@ fn handle_parallel_batch(
                     cursor.index += i * delta;
                 }
             }
+            let seg_start_indices: HashMap<_, _> =
+                seg_named_hints.iter().map(|(name, c)| (name.clone(), c.index)).collect();
             let mut hints = HintState {
                 diagnostics: None,
                 named_hints: &mut seg_named_hints,
@@ -467,6 +469,14 @@ fn handle_parallel_batch(
                 &mut hints,
                 Some(batch.batch_pc),
             )?;
+            for (name, delta) in &named_per_iter {
+                let consumed = seg_named_hints[name].index - seg_start_indices[name];
+                if consumed != *delta {
+                    return Err(RunnerError::InvalidHintWitness(format!(
+                        "hint '{name}' consumed {consumed} entries in a parallel iteration but {delta} in iteration 0; parallel iterations must consume hints uniformly"
+                    )));
+                }
+            }
             let deferred = seg_mem.into_deferred_writes();
             Ok((seg_trace, deferred))
         })
