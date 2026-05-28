@@ -75,25 +75,32 @@ pub fn stacked_pcs_global_statements(
                 EF::from_usize(ending_pc),
             ));
         }
+        let n_committed = table.n_committed_columns();
         for (point, eq_values, next_values) in &committed_statements[&table] {
-            if !next_values.is_empty() {
+            let committed_next: Vec<_> = next_values
+                .iter()
+                .filter(|&(&col_index, _)| col_index < n_committed)
+                .map(|(&col_index, &value)| SparseValue::new((offset >> n_vars) + col_index, value))
+                .collect();
+            if !committed_next.is_empty() {
                 global_statements.push(SparseStatement::new_next(
                     stacked_n_vars,
                     point.clone(),
-                    next_values
-                        .iter()
-                        .map(|(&col_index, &value)| SparseValue::new((offset >> n_vars) + col_index, value))
-                        .collect(),
+                    committed_next,
                 ));
             }
-            global_statements.push(SparseStatement::new(
-                stacked_n_vars,
-                point.clone(),
-                eq_values
-                    .iter()
-                    .map(|(&col_index, &value)| SparseValue::new((offset >> n_vars) + col_index, value))
-                    .collect(),
-            ));
+            let committed_eq: Vec<_> = eq_values
+                .iter()
+                .filter(|&(&col_index, _)| col_index < n_committed)
+                .map(|(&col_index, &value)| SparseValue::new((offset >> n_vars) + col_index, value))
+                .collect();
+            if !committed_eq.is_empty() {
+                global_statements.push(SparseStatement::new(
+                    stacked_n_vars,
+                    point.clone(),
+                    committed_eq,
+                ));
+            }
         }
     }
     global_statements
@@ -220,10 +227,11 @@ pub fn total_whir_statements() -> usize {
                     }
                 }
             }
-            table.n_committed_columns() + table.n_shift_columns() + seen_cols.len()
+            let n_committed = table.n_committed_columns();
+            let committed_seen = seen_cols.iter().filter(|&&c| c < n_committed).count();
+            n_committed + table.n_shift_columns() + committed_seen
         })
         .sum::<usize>()
-        // bytecode lookup
-        + 1 // PC
-        + N_INSTRUCTION_COLUMNS
+        // bytecode lookup: only committed columns count as WHIR claims
+        + 1 // PC (column 0, always committed)
 }
