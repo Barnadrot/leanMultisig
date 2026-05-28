@@ -14,6 +14,7 @@ pub enum RunnerError {
     },
     NotAPointer,
     DivByZero,
+    NonBooleanJumpCondition(F),
     NotEqual(F, F),
     UndefinedMemory(usize),
     PCOutOfBounds,
@@ -42,6 +43,9 @@ impl Display for RunnerError {
             }
             Self::NotAPointer => write!(f, "not a pointer"),
             Self::DivByZero => write!(f, "division by zero"),
+            Self::NonBooleanJumpCondition(value) => {
+                write!(f, "non-boolean jump condition: {value}")
+            }
             Self::NotEqual(left, right) => write!(f, "not equal: {left} != {right}"),
             Self::UndefinedMemory(address) => write!(f, "undefined memory: {address}"),
             Self::PCOutOfBounds => write!(f, "pc out of bounds"),

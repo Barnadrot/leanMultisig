@@ -217,7 +217,9 @@ impl Instruction {
                 updated_fp,
             } => {
                 let condition_value = condition.read_value(ctx.memory, *ctx.fp)?;
-                assert!([F::ZERO, F::ONE].contains(&condition_value),);
+                if ![F::ZERO, F::ONE].contains(&condition_value) {
+                    return Err(RunnerError::NonBooleanJumpCondition(condition_value));
+                }
                 if condition_value == F::ZERO {
                     *ctx.pc += 1;
                 } else {
