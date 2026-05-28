@@ -24,9 +24,7 @@ pub fn prove_execution(
     whir_config: &WhirConfigBuilder,
     vm_profiler: bool,
 ) -> Result<ExecutionProof, ProverError> {
-    check_rate(whir_config.starting_log_inv_rate)
-        .map_err(|err| panic!("{err}"))
-        .unwrap();
+    check_rate(whir_config.starting_log_inv_rate).map_err(|_| ProverError::InvalidRate)?;
     let ExecutionTrace {
         traces,
         mut memory, // padded with zeros to next power of two
