@@ -1,7 +1,7 @@
 use backend::*;
 use lean_vm::{
-    ALL_TABLES, ColIndex, CommittedStatements, EXEC_COL_PC, MIN_LOG_MEMORY_SIZE, MIN_LOG_N_ROWS_PER_TABLE,
-    N_INSTRUCTION_COLUMNS, STARTING_PC, sort_tables_by_height,
+    ALL_TABLES, ColIndex, CommittedStatements, EXEC_COL_PC, MIN_LOG_MEMORY_SIZE, MIN_LOG_N_ROWS_PER_TABLE, STARTING_PC,
+    sort_tables_by_height,
 };
 use lean_vm::{EF, F, Table, TableT, TableTrace};
 use std::collections::BTreeMap;
@@ -83,11 +83,7 @@ pub fn stacked_pcs_global_statements(
                 .map(|(&col_index, &value)| SparseValue::new((offset >> n_vars) + col_index, value))
                 .collect();
             if !committed_next.is_empty() {
-                global_statements.push(SparseStatement::new_next(
-                    stacked_n_vars,
-                    point.clone(),
-                    committed_next,
-                ));
+                global_statements.push(SparseStatement::new_next(stacked_n_vars, point.clone(), committed_next));
             }
             let committed_eq: Vec<_> = eq_values
                 .iter()
@@ -95,11 +91,7 @@ pub fn stacked_pcs_global_statements(
                 .map(|(&col_index, &value)| SparseValue::new((offset >> n_vars) + col_index, value))
                 .collect();
             if !committed_eq.is_empty() {
-                global_statements.push(SparseStatement::new(
-                    stacked_n_vars,
-                    point.clone(),
-                    committed_eq,
-                ));
+                global_statements.push(SparseStatement::new(stacked_n_vars, point.clone(), committed_eq));
             }
         }
     }
@@ -145,9 +137,17 @@ pub fn stack_polynomials_and_commit(
         }
     }
     assert_eq!(log2_ceil_usize(offset), stacked_n_vars);
-    eprintln!("  STACKED: offset={} nv={} mem={} bytecode_acc={} tables={:?}",
-        offset, stacked_n_vars, memory.len(), bytecode_acc.len(),
-        tables_heights_sorted.iter().map(|(t,h)| format!("{}:2^{}", t.name(), h)).collect::<Vec<_>>());
+    eprintln!(
+        "  STACKED: offset={} nv={} mem={} bytecode_acc={} tables={:?}",
+        offset,
+        stacked_n_vars,
+        memory.len(),
+        bytecode_acc.len(),
+        tables_heights_sorted
+            .iter()
+            .map(|(t, h)| format!("{}:2^{}", t.name(), h))
+            .collect::<Vec<_>>()
+    );
     tracing::info!(
         "{}",
         format!(

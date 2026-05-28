@@ -338,7 +338,11 @@ fn build_replacements(log_inner_bytecode: usize, bytecode_zero_eval: F) -> BTree
         let committed_seen: Vec<ColIndex> = sorted_seen.iter().copied().filter(|&c| c < n_committed).collect();
         one_buses_committed_cols.push(format!(
             "[{}]",
-            committed_seen.iter().map(usize::to_string).collect::<Vec<_>>().join(", ")
+            committed_seen
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
 
         num_cols_air.push(n_committed.to_string());
