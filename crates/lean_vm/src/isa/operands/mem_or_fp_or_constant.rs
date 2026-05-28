@@ -20,8 +20,8 @@ impl MemOrFpOrConstant {
     /// Read the value from memory, return fp, or return the constant
     pub fn read_value(&self, memory: &impl MemoryAccess, fp: usize) -> Result<F, RunnerError> {
         match self {
-            Self::MemoryAfterFp { offset } => memory.get(fp + *offset),
-            Self::FpRelative { offset } => Ok(F::from_usize(fp + *offset)),
+            Self::MemoryAfterFp { offset } => memory.get(fp.checked_add(*offset).ok_or(RunnerError::OutOfMemory)?),
+            Self::FpRelative { offset } => Ok(F::from_usize(fp.checked_add(*offset).ok_or(RunnerError::OutOfMemory)?)),
             Self::Constant(c) => Ok(*c),
         }
     }
@@ -32,9 +32,9 @@ impl MemOrFpOrConstant {
     }
 
     /// Get the memory address (returns error for Fp and constants)
-    pub const fn memory_address(&self, fp: usize) -> Result<usize, RunnerError> {
+    pub fn memory_address(&self, fp: usize) -> Result<usize, RunnerError> {
         match self {
-            Self::MemoryAfterFp { offset } => Ok(fp + *offset),
+            Self::MemoryAfterFp { offset } => fp.checked_add(*offset).ok_or(RunnerError::OutOfMemory),
             Self::FpRelative { .. } => Err(RunnerError::NotAPointer),
             Self::Constant(_) => Err(RunnerError::NotAPointer),
         }
