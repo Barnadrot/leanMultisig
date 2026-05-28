@@ -108,7 +108,7 @@ pub const POSEIDON_16_COL_FLAG_PERMUTE: ColIndex = 8;
 pub const POSEIDON_16_COL_INPUT_START: ColIndex = 9;
 pub const POSEIDON_16_COL_OUTPUT_LEFT: ColIndex = 9 + WIDTH;
 pub const POSEIDON_16_COL_OUTPUT_RIGHT: ColIndex = 9 + WIDTH + WIDTH / 2;
-pub const N_COMMITTED_COLS_POSEIDON_16: usize = 9 + WIDTH + WIDTH;
+pub const N_COMMITTED_COLS_POSEIDON_16: usize = 9 + WIDTH;
 /// Non-committed columns ("virtual"):
 pub const POSEIDON_16_COL_INDEX_INPUT_LEFT: ColIndex = num_cols_poseidon_16();
 pub const POSEIDON_16_COL_DOMAINSEP: ColIndex = num_cols_poseidon_16() + 1;
