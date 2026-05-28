@@ -21,7 +21,8 @@ use crate::bytecode_claims::flatten_bytecode_claim;
 use crate::bytecode_claims::reduce_bytecode_claims;
 use crate::compilation::{
     BYTECODE_CLAIM_OFFSET, MAX_RECURSIONS, MAX_XMSS_AGGREGATED, MAX_XMSS_DUPLICATES, N_MERKLE_CHUNKS_FOR_SLOT,
-    PREAMBLE_MEMORY_LEN, TYPE1_FLAG, get_aggregation_bytecode, type1_input_data_size_padded,
+    PREAMBLE_MEMORY_LEN, TYPE1_FLAG, get_aggregation_bytecode, try_get_aggregation_bytecode,
+    type1_input_data_size_padded,
 };
 use crate::decompress_size_prepended_bounded;
 use crate::verify_inner;
@@ -60,7 +61,9 @@ impl<'de> Deserialize<'de> for TypeOneInfo {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let (message, slot, pubkeys, bytecode_claim_point) =
             <([F; MESSAGE_LEN_FE], u32, Vec<XmssPublicKey>, MultilinearPoint<EF>)>::deserialize(d)?;
-        if bytecode_claim_point.len() != get_aggregation_bytecode().cumulated_n_vars() {
+        let bytecode =
+            try_get_aggregation_bytecode().ok_or_else(|| serde::de::Error::custom("bytecode not initialized"))?;
+        if bytecode_claim_point.len() != bytecode.cumulated_n_vars() {
             return Err(serde::de::Error::custom("invalid bytecode point"));
         }
         check_type_one_pubkeys(&pubkeys).map_err(serde::de::Error::custom)?;

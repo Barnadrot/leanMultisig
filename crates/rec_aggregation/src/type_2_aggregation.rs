@@ -15,6 +15,7 @@ use crate::bytecode_claims::flatten_bytecode_claim;
 use crate::bytecode_claims::reduce_bytecode_claims;
 use crate::compilation::{
     BYTECODE_CLAIM_OFFSET, MAX_RECURSIONS, PREAMBLE_MEMORY_LEN, TYPE2_FLAG, get_aggregation_bytecode,
+    try_get_aggregation_bytecode,
 };
 use crate::decompress_size_prepended_bounded;
 use crate::type_1_aggregation::{
@@ -40,7 +41,9 @@ impl<'de> Deserialize<'de> for TypeTwoMultiSignature {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let (info, bytecode_claim_point, proof) =
             <(Vec<TypeOneInfo>, MultilinearPoint<EF>, ExecutionProof)>::deserialize(d)?;
-        if bytecode_claim_point.len() != get_aggregation_bytecode().cumulated_n_vars() {
+        let bytecode =
+            try_get_aggregation_bytecode().ok_or_else(|| serde::de::Error::custom("bytecode not initialized"))?;
+        if bytecode_claim_point.len() != bytecode.cumulated_n_vars() {
             return Err(serde::de::Error::custom("invalid bytecode point"));
         }
         let bytecode_value = compute_bytecode_value_at(&bytecode_claim_point);

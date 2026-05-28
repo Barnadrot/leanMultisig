@@ -33,6 +33,10 @@ pub fn get_aggregation_bytecode() -> &'static Bytecode {
         .unwrap_or_else(|| panic!("call init_aggregation_bytecode() first"))
 }
 
+pub fn try_get_aggregation_bytecode() -> Option<&'static Bytecode> {
+    BYTECODE.get()
+}
+
 pub fn init_aggregation_bytecode() {
     BYTECODE.get_or_init(compile_main_program_self_referential);
 }
