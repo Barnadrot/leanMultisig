@@ -64,7 +64,7 @@ pub fn prove_gkr_quotient<'a, EF: ExtensionField<PF<EF>>>(
     let (top_nums, top_dens) = layers.pop().unwrap().materialise_in_full();
     prover_state.add_extension_scalars(&top_nums);
     prover_state.add_extension_scalars(&top_dens);
-    let quotient = compute_quotient(&top_nums, &top_dens);
+    let quotient = compute_quotient(&top_nums, &top_dens).expect("prover produced a zero denominator"); // completeness error, happens with proba arround 1/2^128
 
     let mut point = MultilinearPoint(prover_state.sample_vec(N_VARS_TO_SEND_GKR_COEFFS));
     let mut claim_num = top_nums.evaluate(&point);
@@ -140,8 +140,12 @@ fn prove_gkr_layer<EF: ExtensionField<PF<EF>>>(
     (MultilinearPoint(q_natural), next_num, next_den)
 }
 
-fn compute_quotient<EF: ExtensionField<PF<EF>>>(numerators: &[EF], denominators: &[EF]) -> EF {
-    numerators.iter().zip(denominators).map(|(&n, &d)| n / d).sum()
+fn compute_quotient<EF: ExtensionField<PF<EF>>>(numerators: &[EF], denominators: &[EF]) -> Option<EF> {
+    let mut acc = EF::ZERO;
+    for (&n, &d) in numerators.iter().zip(denominators) {
+        acc += n * d.try_inverse()?;
+    }
+    Some(acc)
 }
 
 pub fn verify_gkr_quotient<EF: ExtensionField<PF<EF>>>(
@@ -152,7 +156,7 @@ pub fn verify_gkr_quotient<EF: ExtensionField<PF<EF>>>(
     let send_len = 1 << N_VARS_TO_SEND_GKR_COEFFS;
     let last_nums = verifier_state.next_extension_scalars_vec(send_len)?;
     let last_dens = verifier_state.next_extension_scalars_vec(send_len)?;
-    let quotient: EF = compute_quotient(&last_nums, &last_dens);
+    let quotient: EF = compute_quotient(&last_nums, &last_dens).ok_or(ProofError::InvalidProof)?;
     let mut point = MultilinearPoint(verifier_state.sample_vec(N_VARS_TO_SEND_GKR_COEFFS));
     let mut claims_num = last_nums.evaluate(&point);
     let mut claims_den = last_dens.evaluate(&point);
