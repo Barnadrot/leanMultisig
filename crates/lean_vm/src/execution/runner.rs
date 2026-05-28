@@ -386,9 +386,8 @@ fn handle_parallel_batch(
 ) -> Result<(), RunnerError> {
     let start_value = memory.get(batch.batch_fp + 2)?.to_usize();
     let end_value = batch.end_value.read_value(memory, batch.batch_fp)?.to_usize();
-    let n_iters = end_value - start_value;
-
-    if n_iters == 1 {
+    let n_iters = end_value.saturating_sub(start_value);
+    if n_iters <= 1 {
         return Ok(());
     }
 

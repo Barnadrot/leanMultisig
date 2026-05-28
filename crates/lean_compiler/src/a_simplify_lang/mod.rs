@@ -2409,6 +2409,16 @@ fn simplify_lines(
                     }
                 }
 
+                res.push(SimpleLine::DebugAssert {
+                    expr: BooleanExpr {
+                        kind: Boolean::LessOrEqual,
+                        left: start_simplified.clone(),
+                        right: end_simplified.clone(),
+                    },
+                    location: *location,
+                    preceds_runtime_inequality: false,
+                });
+
                 // Create function arguments: iterator + external variables
                 let mut func_args = vec![iterator.clone()];
                 func_args.extend(external_vars.clone());
