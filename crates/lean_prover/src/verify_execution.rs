@@ -12,6 +12,7 @@ pub struct ProofVerificationDetails {
     pub sorted_table_perm: Vec<usize>,
 }
 
+/// `bytecode` is trusted to be well-formed here (valid hash, valid instructions, etc)
 pub fn verify_execution(
     bytecode: &Bytecode,
     public_input: &[F; PUBLIC_INPUT_LEN],
